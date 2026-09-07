@@ -1,5 +1,5 @@
 """
-build_patterns_erreurs.py — ChessCoach (issue Bridge_Agent #3)
+build_patterns_erreurs.py — ChessCoach (issue Bridge_Agent #3, étendu issue #7)
 
 Analyse Stockfish (profondeur réduite) sur les N parties les plus récentes
 d'Alain (pseudo athanatos123, tri par date PGN décroissante, tous types de
@@ -11,6 +11,11 @@ patterns_erreurs.{ouverture,milieu_de_partie,finale} de coach_memory.json.
 Ce premier lot (200-300 parties) sert d'amorçage : traiter l'historique
 complet (3532 parties) prendrait trop longtemps en une seule passe — voir
 le rapport affiché en fin d'exécution pour calibrer la taille d'un futur lot.
+
+Issue #7 : sauvegarde en plus, dans data/erreurs_detectees.json, le détail
+individuel de chaque erreur détectée (FEN avant coup, coup joué, meilleur
+coup Stockfish...) — nécessaire pour le mode "Exercice", qui a besoin de
+positions réelles précises plutôt que des statistiques agrégées.
 
 Détection, volontairement simple (pas d'appel LLM — RESEAU=non sur cette
 issue) :
@@ -35,6 +40,7 @@ sont préservées telles quelles.
 """
 
 import io
+import json
 import statistics
 import time
 from collections import defaultdict
@@ -44,7 +50,7 @@ import chess.engine
 import chess.pgn
 
 import library_manager
-from config import COACH_MEMORY_PATH
+from config import COACH_MEMORY_PATH, ERREURS_DETECTEES_PATH
 from engine_stockfish import classifier_coup, find_stockfish
 from llm_coach import load_coach_memory, save_coach_memory
 
@@ -78,6 +84,17 @@ def _select_recent_games(collection_id: str, n: int) -> list:
     return games_sorted[:n]
 
 
+def board_avant_move_san(fen: str, move_uci: str) -> str | None:
+    """SAN d'un coup UCI joué depuis une position FEN donnée, sans muter
+    l'appelant (utilisé pour convertir le meilleur coup Stockfish en SAN
+    lisible dans erreurs_detectees.json)."""
+    board = chess.Board(fen)
+    move = chess.Move.from_uci(move_uci)
+    if move not in board.legal_moves:
+        return None
+    return board.san(move)
+
+
 def _phase(board: chess.Board) -> str:
     if board.fullmove_number <= 10:
         return "ouverture"
@@ -87,16 +104,22 @@ def _phase(board: chess.Board) -> str:
 
 
 def _analyse_game(engine: chess.engine.SimpleEngine, game: chess.pgn.Game,
-                   alain_color: chess.Color, erreurs: list) -> int:
+                   alain_color: chess.Color, erreurs: list, game_ref: dict) -> int:
     """Évalue chaque position du plan principal une seule fois et détecte les
     coups d'Alain en erreur significative. Retourne le nombre de coups d'Alain
-    examinés."""
+    examinés.
+
+    game_ref (référence de la partie, pour erreurs_detectees.json) est
+    fusionné tel quel dans chaque erreur enregistrée."""
     board = chess.Board()
     moves = list(game.mainline_moves())
 
     cp_blanc = [None] * (len(moves) + 1)
+    pv_uci = [None] * (len(moves) + 1)  # meilleur coup UCI suggéré à chaque position
     info = engine.analyse(board, chess.engine.Limit(depth=PROFONDEUR))
     cp_blanc[0] = info["score"].white().score(mate_score=100000)
+    pv0 = info.get("pv")
+    pv_uci[0] = pv0[0].uci() if pv0 else None
 
     nb_coups_alain = 0
 
@@ -106,10 +129,14 @@ def _analyse_game(engine: chess.engine.SimpleEngine, game: chess.pgn.Game,
 
         board_avant_fullmove = board.fullmove_number
         board_avant_pieces = chess.popcount(board.occupied)
+        fen_avant = board.fen()
+        san_joue = board.san(move)
 
         board.push(move)
         info = engine.analyse(board, chess.engine.Limit(depth=PROFONDEUR))
         cp_blanc[ply] = info["score"].white().score(mate_score=100000)
+        pv = info.get("pv")
+        pv_uci[ply] = pv[0].uci() if pv else None
 
         if mover != alain_color:
             continue
@@ -151,12 +178,26 @@ def _analyse_game(engine: chess.engine.SimpleEngine, game: chess.pgn.Game,
                 if piece and piece.piece_type in PIECE_VALUES:
                     materiel = True
 
+        meilleur_coup_uci = pv_uci[ply - 1]
+        meilleur_coup_san = None
+        if meilleur_coup_uci:
+            try:
+                meilleur_coup_san = board_avant_move_san(fen_avant, meilleur_coup_uci)
+            except Exception:
+                meilleur_coup_san = None
+
         erreurs.append({
+            **game_ref,
             "phase": phase,
             "qualite": qualite,
             "delta_cp": delta,
             "materiel": materiel,
             "coup_plein": board_avant_fullmove,
+            "fen_avant": fen_avant,
+            "coup_joue_san": san_joue,
+            "coup_joue_uci": move.uci(),
+            "meilleur_coup_uci": meilleur_coup_uci,
+            "meilleur_coup_san": meilleur_coup_san,
         })
 
     return nb_coups_alain
@@ -239,8 +280,17 @@ def main():
                 parties_ignorees += 1
                 continue
 
+            game_ref = {
+                "collection_id": collection_id,
+                "game_index": game_entry["index"],
+                "white": white,
+                "black": black,
+                "date": game.headers.get("Date", "????.??.??"),
+                "camp_alain": "blancs" if alain_color == chess.WHITE else "noirs",
+            }
+
             try:
-                total_coups_alain += _analyse_game(engine, game, alain_color, erreurs)
+                total_coups_alain += _analyse_game(engine, game, alain_color, erreurs, game_ref)
                 parties_analysees += 1
             except Exception as e:
                 print(f"Partie {game_entry['index']} ignorée (erreur d'analyse) : {e}")
@@ -259,6 +309,33 @@ def main():
     memory["patterns_erreurs"]["finale"] = patterns["finale"]
     save_coach_memory(COACH_MEMORY_PATH, memory)
 
+    erreurs_detectees = [
+        {
+            "collection_id": e["collection_id"],
+            "game_index": e["game_index"],
+            "white": e["white"],
+            "black": e["black"],
+            "date": e["date"],
+            "camp_alain": e["camp_alain"],
+            "coup_plein": e["coup_plein"],
+            "phase": e["phase"],
+            "sous_type": "materiel" if e["materiel"] else "positionnel",
+            "qualite": e["qualite"],
+            "delta_cp": e["delta_cp"],
+            "fen_avant": e["fen_avant"],
+            "coup_joue_san": e["coup_joue_san"],
+            "coup_joue_uci": e["coup_joue_uci"],
+            "meilleur_coup_uci": e["meilleur_coup_uci"],
+            "meilleur_coup_san": e["meilleur_coup_san"],
+        }
+        for e in erreurs
+    ]
+    ERREURS_DETECTEES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = ERREURS_DETECTEES_PATH.with_suffix(ERREURS_DETECTEES_PATH.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(erreurs_detectees, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(ERREURS_DETECTEES_PATH)
+
     par_phase_count = defaultdict(int)
     for e in erreurs:
         par_phase_count[e["phase"]] += 1
@@ -272,6 +349,7 @@ def main():
     print(f"  dont milieu_de_partie : {par_phase_count['milieu_de_partie']}")
     print(f"  dont finale : {par_phase_count['finale']}")
     print(f"Durée totale : {duree:.1f}s ({duree/max(1,parties_analysees):.2f}s/partie)")
+    print(f"Détail individuel sauvegardé : {ERREURS_DETECTEES_PATH} ({len(erreurs_detectees)} erreurs)")
 
 
 if __name__ == "__main__":

@@ -88,11 +88,22 @@ def _build_context_text(context) -> str:
     fen  = (context.get("fen") or "").strip()
     move = (context.get("move") or "").strip()
     pgn  = (context.get("pgn") or "").strip()
+    # Mode "Exercice" (issue #7) : comparaison coup proposé / coup réellement
+    # joué / meilleur coup Stockfish, plutôt qu'un chat libre sur une partie.
+    coup_propose  = (context.get("coup_propose") or "").strip()
+    coup_reel     = (context.get("coup_reel") or "").strip()
+    meilleur_coup = (context.get("meilleur_coup") or "").strip()
     lines = []
     if fen:
         lines.append(f"Position actuelle (FEN) : {fen}")
     if move:
         lines.append(f"Coup actuel : {move}")
+    if coup_propose:
+        lines.append(f"Coup proposé par le joueur pour cet exercice : {coup_propose}")
+    if coup_reel:
+        lines.append(f"Coup réellement joué par le joueur dans la partie d'origine : {coup_reel}")
+    if meilleur_coup:
+        lines.append(f"Meilleur coup selon Stockfish : {meilleur_coup}")
     if pgn:
         lines.append(f"PGN de la partie :\n{pgn}")
     return "\n".join(lines)

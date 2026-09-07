@@ -138,6 +138,15 @@
         </div>
         <div id="free-play-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
       </div>
+
+      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
+        <h2>Mode exercice</h2>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <button onclick="startExercise()">Nouvel exercice</button>
+          <button onclick="startExercise()">Position suivante</button>
+        </div>
+        <div id="exercise-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+      </div>
     </div>
 
     <!-- ── Colonne chat coach ───────────────────────────────────────────── -->
@@ -199,6 +208,7 @@
   <script src="{{ url_for('static', filename='board.js') }}"></script>
   <script src="{{ url_for('static', filename='pgn_library.js') }}"></script>
   <script src="{{ url_for('static', filename='free_play.js') }}"></script>
+  <script src="{{ url_for('static', filename='exercise.js') }}"></script>
   <script>
     // Position de départ affichée immédiatement, avant même le retour de la
     // bibliothèque PGN (cf. socket.on("pgn_lib_game_loaded", ...) qui prendra
