@@ -1,0 +1,145 @@
+/*
+ * board.css — ChessCoach (extrait/adapté de nicsoft/web/static/css/main.css, AlChess)
+ *
+ * Styles du plateau virtuel, de l'historique des coups, de la barre
+ * d'évaluation Stockfish et des flèches d'annotation, en mode analyse.
+ * Retiré : tout ce qui concernait les écrans pédagogique/exercices/humain
+ * d'AlChess (sélecteurs #ex-board, #retrans-board, .ex-hint, spinner
+ * d'exercice, etc.) — ne restent que les sélecteurs génériques renommés
+ * #board / #arrows-svg / #eval-* pour coller aux IDs utilisés par board.js.
+ */
+
+:root {
+  --bd-size: min(70vh, 560px);
+}
+
+#board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  overflow: hidden;
+  width: var(--bd-size);
+  height: var(--bd-size);
+}
+
+#board-wrapper {
+  display: flex;
+  align-items: flex-start;
+  border: 2px solid #a0b8d0;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.square {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+  cursor: default;
+  position: relative;
+  transition: background 0.3s;
+  aspect-ratio: 1;
+  line-height: 1;
+  user-select: none;
+}
+.square img {
+  width: 85%;
+  height: 85%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.square.light { background: #f0d9b5; }
+.square.dark  { background: #b58863; }
+.square.last-move-from       { background: #cdd16f !important; }
+.square.last-move-to         { background: #aaa23a !important; }
+.square.highlight-best-from  { background: #50c8f0 !important; }
+.square.highlight-best-to    { background: #1a9bc0 !important; }
+.square.feedback-bon         { background: #4caf50 !important; }
+.square.feedback-imprecision { background: #ff9800 !important; }
+.square.feedback-erreur      { background: #f44336 !important; }
+.square.feedback-blunder     { background: #9c27b0 !important; }
+
+/* ── Flèches d'annotation (superposées au plateau) ── */
+#arrows-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* ── Matériel capturé ── */
+#material-top, #material-bottom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 1.05rem;
+  flex-shrink: 0;
+}
+.mat-score {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #e94560;
+  margin-left: 6px;
+}
+
+/* ── Historique des coups ── */
+#historique { overflow-y: auto; flex: 1; }
+#historique table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+#historique td { padding: 2px 4px; white-space: nowrap; color: #1a2a3a; }
+#historique th { padding: 2px 4px; font-weight: 700; color: #1a2a3a; font-size: 0.8rem; border-bottom: 1px solid #a0b8d0; }
+
+.move-chip {
+  display: inline-block;
+  padding: 2px 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  width: 56px;
+  text-align: left;
+  color: #1a2a3a;
+}
+.move-chip.bon         { color: #1a2a3a; }
+.move-chip.imprecision { color: #cc7700; }
+.move-chip.erreur      { color: #cc2200; }
+.move-chip.blunder     { color: #7b00b0; }
+
+/* ── Barre d'évaluation Stockfish ── */
+.eval-bar-wrap  { display: flex; flex-direction: column; align-items: center; width: 18px; flex-shrink: 0; }
+.eval-score     { font-size: 0.62rem; color: #445; margin-bottom: 2px; white-space: nowrap; }
+.eval-bar-track { flex: 1; width: 14px; border-radius: 4px; overflow: hidden; border: 1px solid #333; background: #111; display: flex; flex-direction: column; }
+.eval-fill-black { background: #222;    width: 100%; flex: 1; transition: flex 0.4s ease; }
+.eval-fill-white { background: #e0e0e0; width: 100%; flex: 1; transition: flex 0.4s ease; }
+
+/* ── Panneau de chat avec le coach ── */
+.coach-drawer {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+}
+.coach-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px;
+}
+.coach-input-row { display: flex; gap: 8px; align-items: center; }
+.coach-send-btn  { margin: 0; padding: 6px 12px; font-size: 0.82rem; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.coach-spinner {
+  display: none;
+  width: 16px;
+  height: 16px;
+  border: 3px solid #a0b8d0;
+  border-top-color: #e94560;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
