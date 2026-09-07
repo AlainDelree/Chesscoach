@@ -4,12 +4,18 @@
  * Panneau de bibliothèque PGN personnelle : liste des collections (issue
  * #2/#3), liste des parties d'une collection, import d'un fichier PGN,
  * chargement d'une partie dans le plateau (délègue à parsePgn de board.js).
+ * Recherche adversaire + filtre par résultat (issue #5) : filtrage côté
+ * client sur la liste déjà reçue du serveur, pas de nouvel événement.
  *
  * Dépendances externes : un objet global `socket` déjà connecté, et les
  * fonctions de static/board.js (parsePgn).
  */
 
+// Pseudo utilisé par Alain sur Chess.com/Lichess (cf. build_patterns_erreurs.py).
+const ALAIN_PSEUDO = "athanatos123";
+
 let _pgnLibSelectedCollection = null;
+let _pgnLibCurrentGames = [];
 
 function pgnLibRenderCollections(collections) {
   const sel = document.getElementById("pgn-lib-collection-select");
@@ -29,8 +35,51 @@ function pgnLibRenderCollections(collections) {
     socket.emit("pgn_lib_list_games", { collection_id: _pgnLibSelectedCollection });
   } else {
     _pgnLibSelectedCollection = null;
+    _pgnLibCurrentGames = [];
     pgnLibRenderGames([]);
   }
+}
+
+// ── Recherche adversaire + filtre par résultat (filtrage côté client) ──────
+
+function pgnLibOpponentColor(game) {
+  const white = (game.white || "").toLowerCase();
+  const black = (game.black || "").toLowerCase();
+  if (white === ALAIN_PSEUDO) return "white";
+  if (black === ALAIN_PSEUDO) return "black";
+  return null;
+}
+
+function pgnLibOpponentName(game) {
+  const color = pgnLibOpponentColor(game);
+  if (color === "white") return game.black;
+  if (color === "black") return game.white;
+  return `${game.white} ${game.black}`;
+}
+
+function pgnLibResultForAlain(game) {
+  const color = pgnLibOpponentColor(game);
+  if (!color) return null;
+  if (game.result === "1-0") return color === "white" ? "victoire" : "defaite";
+  if (game.result === "0-1") return color === "black" ? "victoire" : "defaite";
+  if (game.result === "1/2-1/2") return "nulle";
+  return null;
+}
+
+function pgnLibApplyFilters() {
+  const searchInput = document.getElementById("pgn-lib-search");
+  const resultSelect = document.getElementById("pgn-lib-result-filter");
+  const searchTerm = ((searchInput && searchInput.value) || "").trim().toLowerCase();
+  const resultFilter = resultSelect ? resultSelect.value : "";
+
+  let filtered = _pgnLibCurrentGames;
+  if (searchTerm) {
+    filtered = filtered.filter(g => pgnLibOpponentName(g).toLowerCase().includes(searchTerm));
+  }
+  if (resultFilter) {
+    filtered = filtered.filter(g => pgnLibResultForAlain(g) === resultFilter);
+  }
+  pgnLibRenderGames(filtered);
 }
 
 function pgnLibRenderGames(games) {
@@ -92,7 +141,8 @@ if (typeof socket !== "undefined") {
 
   socket.on("pgn_lib_games", (data) => {
     if (data && data.collection_id === _pgnLibSelectedCollection) {
-      pgnLibRenderGames(data.games || []);
+      _pgnLibCurrentGames = data.games || [];
+      pgnLibApplyFilters();
     }
   });
 

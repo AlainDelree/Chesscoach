@@ -35,14 +35,21 @@
     }
     #board-row { display: flex; align-items: flex-start; gap: 4px; }
     #coord-file { display: flex; justify-content: space-around; width: var(--bd-size); }
-    #coord-rank { display: flex; flex-direction: column-reverse; justify-content: space-around; }
+    #coord-rank { display: flex; flex-direction: column; justify-content: space-around; height: var(--bd-size); }
     .material-row { min-height: 22px; }
     #review-controls { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
-    #middle-column {
+    #historique-column {
       display: flex;
       flex-direction: column;
       gap: 12px;
-      width: 260px;
+      width: 240px;
+      flex-shrink: 0;
+    }
+    #library-column {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 300px;
       flex-shrink: 0;
     }
     .panel {
@@ -52,8 +59,8 @@
       padding: 8px;
     }
     .panel h2 { font-size: 0.9rem; margin: 0 0 6px; }
-    #historique { max-height: 260px; }
-    #pgn-lib-games { list-style: none; margin: 0; padding: 0; max-height: 160px; overflow-y: auto; }
+    #historique { max-height: 420px; }
+    #pgn-lib-games { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
     #coach-column {
       display: flex;
       flex-direction: column;
@@ -67,6 +74,14 @@
   <header><h1>ChessCoach — plateau &amp; revue de partie</h1></header>
 
   <div id="app">
+
+    <!-- ── Colonne historique des coups ─────────────────────────────────── -->
+    <div id="historique-column">
+      <div class="panel">
+        <h2>Historique des coups</h2>
+        <div id="historique"></div>
+      </div>
+    </div>
 
     <!-- ── Colonne plateau ─────────────────────────────────────────────── -->
     <div id="board-column">
@@ -112,32 +127,6 @@
       </div>
     </div>
 
-    <!-- ── Colonne historique + bibliothèque PGN ───────────────────────── -->
-    <div id="middle-column">
-      <div class="panel">
-        <h2>Historique des coups</h2>
-        <div id="historique"></div>
-      </div>
-
-      <div class="panel">
-        <h2>Bibliothèque PGN</h2>
-        <div style="display:flex; gap:4px; margin-bottom:6px;">
-          <select id="pgn-lib-collection-select" style="flex:1;" onchange="pgnLibOnCollectionChange()"></select>
-        </div>
-        <div style="display:flex; gap:4px; margin-bottom:6px;">
-          <input id="pgn-lib-new-name" type="text" placeholder="Nouvelle collection" style="flex:1;">
-          <button onclick="pgnLibCreateCollection()">+</button>
-        </div>
-        <ul id="pgn-lib-games"></ul>
-        <div style="margin-top:6px;">
-          <label style="font-size:0.82rem;">Importer un PGN dans la collection :
-            <input type="file" accept=".pgn,.txt" onchange="pgnLibImportFile(event)">
-          </label>
-        </div>
-        <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
-      </div>
-    </div>
-
     <!-- ── Colonne chat coach ───────────────────────────────────────────── -->
     <div id="coach-column">
       <div class="panel coach-drawer">
@@ -152,6 +141,38 @@
           <button id="coach-send-btn" class="coach-send-btn" onclick="coachSend()">Envoyer</button>
           <div id="coach-spinner" class="coach-spinner"></div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── Colonne bibliothèque PGN ─────────────────────────────────────── -->
+    <div id="library-column">
+      <div class="panel">
+        <h2>Bibliothèque PGN</h2>
+        <div style="display:flex; gap:4px; margin-bottom:6px;">
+          <select id="pgn-lib-collection-select" style="flex:1;" onchange="pgnLibOnCollectionChange()"></select>
+        </div>
+        <div style="display:flex; gap:4px; margin-bottom:6px;">
+          <input id="pgn-lib-new-name" type="text" placeholder="Nouvelle collection" style="flex:1;">
+          <button onclick="pgnLibCreateCollection()">+</button>
+        </div>
+        <div style="display:flex; gap:4px; margin-bottom:6px;">
+          <input id="pgn-lib-search" type="text" placeholder="Rechercher un adversaire..." style="flex:1;" oninput="pgnLibApplyFilters()">
+        </div>
+        <div style="display:flex; gap:4px; margin-bottom:6px;">
+          <select id="pgn-lib-result-filter" style="flex:1;" onchange="pgnLibApplyFilters()">
+            <option value="">Tous les résultats</option>
+            <option value="victoire">Victoires (Alain)</option>
+            <option value="defaite">Défaites (Alain)</option>
+            <option value="nulle">Nulles</option>
+          </select>
+        </div>
+        <ul id="pgn-lib-games"></ul>
+        <div style="margin-top:6px;">
+          <label style="font-size:0.82rem;">Importer un PGN dans la collection :
+            <input type="file" accept=".pgn,.txt" onchange="pgnLibImportFile(event)">
+          </label>
+        </div>
+        <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
       </div>
     </div>
 
