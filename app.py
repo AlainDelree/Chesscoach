@@ -19,6 +19,7 @@ from flask_socketio import SocketIO, emit
 
 import config
 import llm_coach
+import opening_book
 from engine_stockfish import EngineManager, find_stockfish
 from socketio_pgn_handlers import register_pgn_library_handlers
 
@@ -305,6 +306,223 @@ def on_pedagogic_move(data):
         emit("pedagogic_comment", {
             "text": response,
             "coup_propose": coup_alain_san,
+            "meilleur_coup": meilleur_coup_san,
+        })
+
+
+# État du mode "travail d'ouverture" en cours (issue #9) — comme
+# _pedagogic_camp_alain, une seule partie active à la fois (application
+# locale mono-utilisateur, cf. CONTEXTE.md). _opening_in_book bascule
+# définitivement à False dès que la partie sort du livre gm2001.bin (position
+# non couverte, ou coup d'Alain absent des entrées) : elle ne revient jamais
+# à True, même si une position ultérieure existait par coïncidence dans le
+# livre.
+_opening_camp_alain: str | None = None
+_opening_in_book: bool = False
+
+
+@socketio.on("opening_start")
+def on_opening_start(data):
+    """Démarre le mode "travail d'ouverture" (issue #9) : Alain choisit son
+    camp et le nom d'une ouverture. Claude identifie d'abord les quelques
+    coups caractéristiques de cette ouverture (llm_coach.get_opening_moves,
+    appel dédié) pour atteindre la position de départ réelle de
+    l'entraînement ; ensuite, l'adversaire automatique suit le livre Polyglot
+    réel (gm2001.bin) tant que la position y figure, avec bascule sur
+    Stockfish affaibli (comme le mode pédagogique, issue #8) dès la sortie du
+    livre."""
+    global _opening_camp_alain, _opening_in_book
+
+    if not engine_manager:
+        emit("opening_error", {"error": "stockfish_indisponible"})
+        return
+    if not opening_book.book_available(config.BOOK_PATH):
+        emit("opening_error", {"error": "livre_indisponible"})
+        return
+
+    camp_alain = (data or {}).get("camp", "blancs")
+    if camp_alain not in ("blancs", "noirs"):
+        camp_alain = "blancs"
+
+    opening_name = ((data or {}).get("opening_name") or "").strip()
+    if not opening_name:
+        emit("opening_error", {"error": "nom_ouverture_manquant"})
+        return
+
+    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    moves_san, error = llm_coach.get_opening_moves(opening_name, llm_config)
+    if error:
+        emit("opening_error", {"error": error})
+        return
+
+    board = chess.Board()
+    try:
+        for san in moves_san:
+            move = board.parse_san(san)
+            board.push(move)
+    except ValueError:
+        emit("opening_error", {"error": "sequence_invalide"})
+        return
+
+    _opening_camp_alain = camp_alain
+    _opening_in_book = True
+
+    # Si la séquence caractéristique laisse la main à l'adversaire (ex. camp
+    # Alain = noirs après 1.e4), il joue immédiatement son premier coup,
+    # comme le coup d'ouverture du mode pédagogique.
+    camp_alain_color = chess.WHITE if camp_alain == "blancs" else chess.BLACK
+    coup_ouverture = None
+    if board.turn != camp_alain_color and not board.is_game_over():
+        move = opening_book.choose_weighted_move(config.BOOK_PATH, board)
+        if move is None:
+            _opening_in_book = False
+            move = engine_manager.get_move_pedagogique(board)
+        if move:
+            board.push(move)
+            coup_ouverture = move.uci()
+
+    emit("opening_started", {
+        "fen": board.fen(),
+        "camp_alain": camp_alain,
+        "opening_name": opening_name,
+        "moves_ouverture": moves_san,
+        "coup_ouverture": coup_ouverture,
+        "in_book": _opening_in_book,
+    })
+
+
+@socketio.on("opening_move")
+def on_opening_move(data):
+    """Traite un coup joué par Alain en mode "travail d'ouverture" (issue #9).
+
+    Tant que la partie reste dans le livre gm2001.bin : vérifie si le coup
+    correspond à une entrée du livre pour cette position (et sa popularité
+    relative), et l'adversaire répond lui aussi via le livre (tirage pondéré,
+    opening_book.choose_weighted_move). Dès que la position sort du livre
+    (plus d'entrée pour la position courante, ou coup d'Alain absent des
+    entrées) : bascule définitivement sur le comportement du mode pédagogique
+    (issue #8, Stockfish affaibli + comparaison au meilleur coup Stockfish)."""
+    global _opening_in_book
+
+    if not engine_manager:
+        emit("opening_error", {"error": "stockfish_indisponible"})
+        return
+
+    fen_avant = (data or {}).get("fen_avant", "")
+    uci = (data or {}).get("uci", "")
+    try:
+        board = chess.Board(fen_avant)
+        move = chess.Move.from_uci(uci)
+        if move not in board.legal_moves:
+            emit("opening_error", {"error": "coup_illegal"})
+            return
+    except Exception:
+        emit("opening_error", {"error": "fen_ou_coup_invalide"})
+        return
+
+    coup_alain_san = board.san(move)
+
+    etait_dans_le_livre = _opening_in_book
+    dans_le_livre = False
+    popularite_pct = None
+    coup_livre_top_san = None
+    meilleur_coup_san = ""
+
+    if etait_dans_le_livre:
+        entries = opening_book.get_book_entries(config.BOOK_PATH, board)
+        if entries:
+            total_weight = sum(e["weight"] for e in entries)
+            coup_livre_top_san = entries[0]["san"]
+            matched = next((e for e in entries if e["uci"] == move.uci()), None)
+            if matched:
+                dans_le_livre = True
+                if total_weight:
+                    popularite_pct = round(matched["weight"] / total_weight * 100, 1)
+        _opening_in_book = dans_le_livre
+
+    if not dans_le_livre:
+        # Hors livre à partir de ce coup (ou déjà avant) : comparaison au
+        # meilleur coup Stockfish, comme le mode pédagogique (issue #8).
+        eval_avant = engine_manager.evaluate(board, depth=8)
+        meilleur_coup_uci = eval_avant.get("best_move")
+        if meilleur_coup_uci:
+            try:
+                meilleur_coup_san = board.san(chess.Move.from_uci(meilleur_coup_uci))
+            except Exception:
+                meilleur_coup_san = meilleur_coup_uci
+
+    board.push(move)
+
+    # Réponse automatique de l'adversaire : livre tant que la partie y reste,
+    # sinon Stockfish affaibli (mode pédagogique).
+    stockfish_move_uci = None
+    if not board.is_game_over():
+        reply = None
+        if _opening_in_book:
+            reply = opening_book.choose_weighted_move(config.BOOK_PATH, board)
+            if reply is None:
+                _opening_in_book = False
+        if reply is None:
+            reply = engine_manager.get_move_pedagogique(board)
+        if reply:
+            board.push(reply)
+            stockfish_move_uci = reply.uci()
+
+    emit("opening_stockfish_move", {
+        "fen": board.fen(),
+        "uci": stockfish_move_uci,
+        "game_over": board.is_game_over(),
+        "in_book": _opening_in_book,
+    })
+
+    if etait_dans_le_livre and dans_le_livre:
+        instruction = (
+            "Je m'entraîne sur une ouverture précise à l'aide d'un livre "
+            "d'ouvertures réel. Le coup que je viens de jouer correspond à "
+            "une entrée du livre pour cette position : confirme que je reste "
+            "dans la théorie, commente sa popularité relative si elle est "
+            "fournie en contexte, et donne un bref conseil sur l'idée du "
+            "coup. Sois concis."
+        )
+    elif etait_dans_le_livre and not dans_le_livre:
+        instruction = (
+            "Je m'entraîne sur une ouverture précise à l'aide d'un livre "
+            "d'ouvertures réel. Le coup que je viens de jouer n'est pas dans "
+            "le livre pour cette position : signale que je sors de la "
+            "théorie, propose le coup le plus joué du livre à la place "
+            "(fourni en contexte) et explique brièvement pourquoi il est "
+            "préférable. Sois concis."
+        )
+    else:
+        instruction = (
+            "Je m'entraîne sur une ouverture précise, mais je suis "
+            "maintenant sorti de la théorie du livre. Commente le coup que "
+            "je viens de jouer comme dans une partie pédagogique normale : "
+            "est-il bon ou mauvais, et pourquoi ? Si le meilleur coup selon "
+            "Stockfish était différent, explique-le aussi. Sois concis."
+        )
+
+    messages = [{"role": "user", "content": instruction}]
+    context = {
+        "fen": fen_avant,
+        "coup_propose": coup_alain_san,
+        "meilleur_coup": meilleur_coup_san,
+        "dans_le_livre": dans_le_livre,
+        "popularite_pct": popularite_pct,
+        "coup_livre_recommande": coup_livre_top_san or "",
+    }
+    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+
+    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    if error:
+        emit("opening_error", {"error": error})
+    else:
+        emit("opening_comment", {
+            "text": response,
+            "coup_propose": coup_alain_san,
+            "dans_le_livre": dans_le_livre,
+            "popularite_pct": popularite_pct,
+            "coup_livre_recommande": coup_livre_top_san,
             "meilleur_coup": meilleur_coup_san,
         })
 

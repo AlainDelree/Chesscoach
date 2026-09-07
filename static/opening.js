@@ -1,0 +1,192 @@
+/*
+ * opening.js — ChessCoach (issue #9)
+ *
+ * Mode "travail d'ouverture" : reprend la mécanique du mode pédagogique
+ * (issue #8, plateau interactif clic-pour-jouer, réponse automatique de
+ * l'adversaire, commentaire du coach après chaque coup d'Alain), avec une
+ * différence pendant la phase d'ouverture : l'adversaire suit le livre
+ * Polyglot réel gm2001.bin plutôt que Stockfish, jusqu'à la sortie du livre
+ * (bascule transparente vers le comportement du mode pédagogique, gérée
+ * côté serveur — voir app.py on_opening_move).
+ *
+ * Réutilise buildBoard()/renderBoard() de board.js et
+ * freeSquareIdToAlgebraic()/freeAlgebraicToSquareId() de free_play.js, comme
+ * pedagogic.js.
+ */
+
+let openingGame       = null;  // instance chess.js (mode travail d'ouverture)
+let openingActive     = false;
+let openingCampAlain  = "blancs";
+let openingSelected   = null;  // case algébrique sélectionnée ou null
+let openingWaiting    = false; // coup en cours de traitement côté serveur
+let openingInBook     = false; // la partie est encore dans le livre Polyglot
+
+function startOpeningGame(camp) {
+  const nameEl = document.getElementById("opening-name-input");
+  const openingName = nameEl ? nameEl.value.trim() : "";
+  if (!openingName) {
+    const statusEl = document.getElementById("opening-status");
+    if (statusEl) statusEl.textContent = "Indiquez le nom d'une ouverture.";
+    return;
+  }
+  openingCampAlain = (camp === "noirs") ? "noirs" : "blancs";
+  openingWaiting   = true;
+  const statusEl = document.getElementById("opening-status");
+  if (statusEl) statusEl.textContent = `Recherche de la théorie pour "${openingName}"...`;
+  socket.emit("opening_start", { camp: openingCampAlain, opening_name: openingName });
+}
+
+function renderOpeningBoard(lastFrom, lastTo) {
+  if (!openingGame) return;
+  const fenBoard = openingGame.fen().split(" ")[0];
+  const from = lastFrom ? freeAlgebraicToSquareId(lastFrom) : null;
+  const to   = lastTo   ? freeAlgebraicToSquareId(lastTo)   : null;
+  renderBoard(fenBoard, from, to, null, null, null, null);
+  if (openingSelected) {
+    const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(openingSelected)}`);
+    if (sq) sq.classList.add("free-play-selected");
+  }
+}
+
+function updateOpeningStatus() {
+  const statusEl = document.getElementById("opening-status");
+  if (!statusEl || !openingGame) return;
+  let text = openingGame.turn() === "w" ? "Trait aux Blancs" : "Trait aux Noirs";
+  if (openingGame.in_checkmate())      text = "Échec et mat.";
+  else if (openingGame.in_stalemate()) text = "Pat.";
+  else if (openingGame.in_draw())      text = "Partie nulle.";
+  else if (openingGame.in_check())     text += " (échec)";
+  text += openingInBook ? " — dans le livre" : " — hors du livre (Stockfish affaibli)";
+  if (openingWaiting) text += " — le coach réfléchit...";
+  statusEl.textContent = text;
+}
+
+function openingIsAlainTurn() {
+  if (!openingGame) return false;
+  const trait = openingGame.turn() === "w" ? "blancs" : "noirs";
+  return trait === openingCampAlain;
+}
+
+function onOpeningBoardClick(e) {
+  if (!openingActive || !openingGame || openingWaiting) return;
+  if (!openingIsAlainTurn()) return;
+  const sqEl = e.target.closest(".square");
+  if (!sqEl) return;
+  const square = freeSquareIdToAlgebraic(sqEl.id.replace("sq-", ""));
+
+  if (!openingSelected) {
+    const piece = openingGame.get(square);
+    if (piece && piece.color === openingGame.turn()) {
+      openingSelected = square;
+      renderOpeningBoard();
+    }
+    return;
+  }
+
+  if (openingSelected === square) {
+    openingSelected = null;
+    renderOpeningBoard();
+    return;
+  }
+
+  const fenAvant = openingGame.fen();
+  const move = openingGame.move({ from: openingSelected, to: square, promotion: "q" });
+  openingSelected = null;
+
+  if (!move) {
+    const piece = openingGame.get(square);
+    if (piece && piece.color === openingGame.turn()) {
+      openingSelected = square;
+    }
+    renderOpeningBoard();
+    return;
+  }
+
+  renderOpeningBoard(move.from, move.to);
+  openingWaiting = true;
+  updateOpeningStatus();
+  _coachRenderBubble("user", `Travail d'ouverture — je joue ${move.san}`);
+  socket.emit("opening_move", {
+    fen_avant: fenAvant,
+    uci: move.from + move.to + (move.promotion || ""),
+  });
+}
+
+if (typeof socket !== "undefined") {
+  socket.on("opening_started", (data) => {
+    if (!data || !data.fen) return;
+    openingGame      = new Chess(data.fen);
+    openingActive    = true;
+    openingWaiting   = false;
+    openingSelected  = null;
+    openingCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
+    openingInBook    = !!data.in_book;
+
+    _boardFlipped = (openingCampAlain === "noirs");
+    buildBoard();
+    const boardEl = document.getElementById("board");
+    if (boardEl) boardEl.onclick = onOpeningBoardClick;
+
+    let lastFrom = null, lastTo = null;
+    if (data.coup_ouverture) {
+      lastFrom = data.coup_ouverture.slice(0, 2);
+      lastTo   = data.coup_ouverture.slice(2, 4);
+    }
+    renderOpeningBoard(lastFrom, lastTo);
+    updateOpeningStatus();
+
+    const moves = (data.moves_ouverture || []).join(" ");
+    _coachRenderBubble("assistant", `Ouverture "${data.opening_name}" : ${moves}. À vous de jouer.`);
+  });
+
+  socket.on("opening_stockfish_move", (data) => {
+    openingWaiting = false;
+    if (!openingActive || !openingGame || !data) return;
+    openingInBook = !!data.in_book;
+
+    if (data.uci) {
+      const move = openingGame.move({
+        from: data.uci.slice(0, 2),
+        to: data.uci.slice(2, 4),
+        promotion: data.uci.slice(4, 5) || "q",
+      });
+      if (move) {
+        renderOpeningBoard(move.from, move.to);
+      }
+    }
+    updateOpeningStatus();
+  });
+
+  socket.on("opening_comment", (data) => {
+    let text = stripMarkdownForChat((data && data.text) || "");
+    if (data && data.dans_le_livre && data.popularite_pct !== null && data.popularite_pct !== undefined) {
+      text += `\n\n(Popularité dans le livre : ${data.popularite_pct}%)`;
+    } else if (data && !data.dans_le_livre && data.coup_livre_recommande) {
+      text += `\n\n(Coup le plus joué du livre : ${data.coup_livre_recommande})`;
+    }
+    if (text) _coachRenderBubble("assistant", text);
+  });
+
+  socket.on("opening_error", (data) => {
+    openingWaiting = false;
+    const err = data && data.error;
+    const msg = (err === "stockfish_indisponible")
+      ? "Stockfish indisponible sur ce système."
+      : (err === "livre_indisponible")
+      ? "Livre d'ouvertures introuvable (data/books/gm2001.bin manquant)."
+      : (err === "nom_ouverture_manquant")
+      ? "Indiquez le nom d'une ouverture."
+      : (err === "ouverture_non_reconnue")
+      ? "Ouverture non reconnue par le coach — vérifiez l'orthographe ou essayez un nom plus standard."
+      : (err === "sequence_invalide")
+      ? "La séquence de coups proposée par le coach pour cette ouverture est invalide."
+      : (err === "no_api_key")
+      ? "Clé API Claude manquante — configurez-la dans les paramètres."
+      : (err === "coup_illegal")
+      ? "Coup illégal détecté côté serveur."
+      : "Le coach n'a pas pu répondre, réessayez.";
+    const statusEl = document.getElementById("opening-status");
+    if (statusEl) statusEl.textContent = msg;
+    console.warn("[travail d'ouverture]", msg, data);
+  });
+}

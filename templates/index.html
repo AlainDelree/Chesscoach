@@ -149,6 +149,18 @@
       </div>
 
       <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
+        <h2>Travail d'ouverture</h2>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <input id="opening-name-input" type="text" placeholder="Nom de l'ouverture (ex. Défense française)" style="flex:1; min-width:180px;">
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+          <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
+          <button onclick="startOpeningGame('noirs')">Jouer les Noirs</button>
+        </div>
+        <div id="opening-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+      </div>
+
+      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
         <h2>Mode exercice</h2>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           <button onclick="startExercise()">Nouvel exercice</button>
@@ -219,6 +231,7 @@
   <script src="{{ url_for('static', filename='free_play.js') }}"></script>
   <script src="{{ url_for('static', filename='exercise.js') }}"></script>
   <script src="{{ url_for('static', filename='pedagogic.js') }}"></script>
+  <script src="{{ url_for('static', filename='opening.js') }}"></script>
   <script>
     // Position de départ affichée immédiatement, avant même le retour de la
     // bibliothèque PGN (cf. socket.on("pgn_lib_game_loaded", ...) qui prendra

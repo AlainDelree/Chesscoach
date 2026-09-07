@@ -40,6 +40,25 @@ _SYSTEM_PROMPT = (
     "durée. Réponds en français."
 )
 
+# Appel dédié, distinct du chat coach (issue #9, mode "travail d'ouverture") :
+# un livre Polyglot ne connaît que des positions/coups, pas de noms
+# d'ouverture. On demande donc à Claude, une seule fois au démarrage du mode,
+# les quelques coups caractéristiques permettant d'atteindre la position de
+# départ réelle de l'entraînement, à partir de sa connaissance générale des
+# ouvertures standard — ensuite, c'est le livre Polyglot qui prend le relais.
+_OPENING_SYSTEM_PROMPT = (
+    "Tu es un expert en théorie des ouvertures d'échecs. On te donne le nom "
+    "d'une ouverture, éventuellement en français, en anglais, ou avec de "
+    "petites fautes de frappe. Réponds UNIQUEMENT avec un objet JSON, sans "
+    "aucun texte ni balise autour, au format exact "
+    "{\"moves\": [\"e4\", \"e5\", \"Nf3\", ...]} où \"moves\" est la liste "
+    "ordonnée des 2 à 6 premiers coups caractéristiques de cette ouverture, "
+    "en notation SAN standard, dans l'ordre où ils sont joués (en alternant "
+    "Blancs puis Noirs). Si le nom donné ne correspond à aucune ouverture "
+    "d'échecs reconnaissable, réponds UNIQUEMENT avec "
+    "{\"error\": \"ouverture_non_reconnue\"}."
+)
+
 
 def load_coach_memory(path) -> dict:
     """Charge le fichier de contexte JSON externe (mémoire du coach).
@@ -93,6 +112,11 @@ def _build_context_text(context) -> str:
     coup_propose  = (context.get("coup_propose") or "").strip()
     coup_reel     = (context.get("coup_reel") or "").strip()
     meilleur_coup = (context.get("meilleur_coup") or "").strip()
+    # Mode "Travail d'ouverture" (issue #9) : statut par rapport au livre
+    # Polyglot de référence (gm2001.bin), en complément de meilleur_coup.
+    dans_le_livre          = context.get("dans_le_livre")
+    coup_livre_recommande  = (context.get("coup_livre_recommande") or "").strip()
+    popularite_pct         = context.get("popularite_pct")
     lines = []
     if fen:
         lines.append(f"Position actuelle (FEN) : {fen}")
@@ -104,6 +128,13 @@ def _build_context_text(context) -> str:
         lines.append(f"Coup réellement joué par le joueur dans la partie d'origine : {coup_reel}")
     if meilleur_coup:
         lines.append(f"Meilleur coup selon Stockfish : {meilleur_coup}")
+    if dans_le_livre is not None:
+        statut = "dans le livre d'ouvertures" if dans_le_livre else "hors du livre d'ouvertures"
+        lines.append(f"Statut par rapport au livre de référence : {statut}")
+    if popularite_pct is not None:
+        lines.append(f"Popularité de ce coup dans le livre : {popularite_pct}% des parties de référence")
+    if coup_livre_recommande:
+        lines.append(f"Coup le plus joué dans le livre pour cette position : {coup_livre_recommande}")
     if pgn:
         lines.append(f"PGN de la partie :\n{pgn}")
     return "\n".join(lines)
@@ -133,6 +164,60 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return data["content"][0]["text"]
+
+
+def get_opening_moves(opening_name: str, config):
+    """Identifie les 2 à 6 premiers coups caractéristiques d'une ouverture
+    nommée par Alain (issue #9), via un appel dédié à Claude — indépendant du
+    chat coach multi-tours, pas de mémoire ni de contexte de partie injectés.
+
+    Paramètres :
+      opening_name : nom de l'ouverture, tel que saisi par Alain
+      config       : dict avec au moins "llm_api_key" et, optionnellement,
+                     "llm_model" (même convention que get_coach_response)
+
+    Retourne (liste de coups SAN, erreur) — un seul des deux est non vide/None.
+    Erreurs possibles : "nom_vide", "no_api_key", "ouverture_non_reconnue",
+    "reponse_invalide", ou le message de l'exception réseau.
+    """
+    opening_name = (opening_name or "").strip()
+    if not opening_name:
+        return None, "nom_vide"
+
+    api_key = (config or {}).get("llm_api_key", "")
+    if not api_key:
+        return None, "no_api_key"
+
+    model = (config or {}).get("llm_model", "")
+
+    try:
+        raw = _call_claude(_OPENING_SYSTEM_PROMPT, opening_name, api_key, model)
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
+        logger.warning(f"[LLM_COACH] Appel Claude (ouverture) échoué : {e}")
+        return None, str(e)
+
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        logger.warning(f"[LLM_COACH] Réponse ouverture non-JSON : {raw!r}")
+        return None, "reponse_invalide"
+
+    if not isinstance(parsed, dict):
+        return None, "reponse_invalide"
+    if parsed.get("error"):
+        return None, "ouverture_non_reconnue"
+
+    moves = parsed.get("moves")
+    if not isinstance(moves, list) or not moves or not all(isinstance(m, str) and m.strip() for m in moves):
+        return None, "reponse_invalide"
+
+    return [m.strip() for m in moves[:6]], None
 
 
 def get_coach_response(messages, context, coach_memory, config):
