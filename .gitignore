@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 *.log
 .env
+
+# Données personnelles (PGN importés, mémoire du coach...) — dépôt public,
+# ne jamais committer.
+data/
