@@ -193,6 +193,122 @@ def on_exercise_answer(data):
         })
 
 
+
+# État de la partie pédagogique en cours (issue #8) — application locale
+# mono-utilisateur (cf. CONTEXTE.md), une seule partie active à la fois, comme
+# _current_exercise.
+_pedagogic_camp_alain: str | None = None
+
+
+@socketio.on("pedagogic_start")
+def on_pedagogic_start(data):
+    """Démarre une partie pédagogique (issue #8) : Alain choisit son camp,
+    position de départ standard. Stockfish (force réduite, cf.
+    EngineManager.get_move_pedagogique) joue automatiquement l'autre camp,
+    y compris le premier coup si Alain a choisi les Noirs."""
+    global _pedagogic_camp_alain
+    if not engine_manager:
+        emit("pedagogic_error", {"error": "stockfish_indisponible"})
+        return
+
+    camp_alain = (data or {}).get("camp", "blancs")
+    if camp_alain not in ("blancs", "noirs"):
+        camp_alain = "blancs"
+    _pedagogic_camp_alain = camp_alain
+
+    board = chess.Board()
+    coup_ouverture = None
+    if camp_alain == "noirs":
+        move = engine_manager.get_move_pedagogique(board)
+        if move:
+            board.push(move)
+            coup_ouverture = move.uci()
+
+    emit("pedagogic_started", {
+        "fen": board.fen(),
+        "camp_alain": camp_alain,
+        "coup_ouverture": coup_ouverture,
+    })
+
+
+@socketio.on("pedagogic_move")
+def on_pedagogic_move(data):
+    """Traite un coup joué par Alain en partie pédagogique (issue #8) :
+    demande au coach un commentaire (get_coach_response, comme le mode
+    exercice, sans coup_reel puisqu'il n'y a pas de partie historique de
+    référence ici), puis fait jouer Stockfish (force réduite) en réponse."""
+    if not engine_manager:
+        emit("pedagogic_error", {"error": "stockfish_indisponible"})
+        return
+
+    fen_avant = (data or {}).get("fen_avant", "")
+    uci = (data or {}).get("uci", "")
+    try:
+        board = chess.Board(fen_avant)
+        move = chess.Move.from_uci(uci)
+        if move not in board.legal_moves:
+            emit("pedagogic_error", {"error": "coup_illegal"})
+            return
+    except Exception:
+        emit("pedagogic_error", {"error": "fen_ou_coup_invalide"})
+        return
+
+    coup_alain_san = board.san(move)
+
+    # Meilleur coup Stockfish pour cette position, à pleine force (moteur
+    # d'évaluation partagé, inchangé — cf. EngineManager.evaluate).
+    eval_avant = engine_manager.evaluate(board, depth=8)
+    meilleur_coup_uci = eval_avant.get("best_move")
+    meilleur_coup_san = ""
+    if meilleur_coup_uci:
+        try:
+            meilleur_coup_san = board.san(chess.Move.from_uci(meilleur_coup_uci))
+        except Exception:
+            meilleur_coup_san = meilleur_coup_uci
+
+    board.push(move)
+
+    # Réponse automatique de Stockfish (force réduite) si la partie continue.
+    stockfish_move_uci = None
+    if not board.is_game_over():
+        reply = engine_manager.get_move_pedagogique(board)
+        if reply:
+            board.push(reply)
+            stockfish_move_uci = reply.uci()
+
+    emit("pedagogic_stockfish_move", {
+        "fen": board.fen(),
+        "uci": stockfish_move_uci,
+        "game_over": board.is_game_over(),
+    })
+
+    messages = [{
+        "role": "user",
+        "content": (
+            "Je joue une partie pédagogique complète contre Stockfish (force "
+            "réduite pour mon niveau). Commente le coup que je viens de "
+            "jouer : est-il bon ou mauvais, et pourquoi ? Si le meilleur coup "
+            "était différent, explique-le aussi. Sois concis."
+        ),
+    }]
+    context = {
+        "fen": fen_avant,
+        "coup_propose": coup_alain_san,
+        "meilleur_coup": meilleur_coup_san,
+    }
+    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+
+    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    if error:
+        emit("pedagogic_error", {"error": error})
+    else:
+        emit("pedagogic_comment", {
+            "text": response,
+            "coup_propose": coup_alain_san,
+            "meilleur_coup": meilleur_coup_san,
+        })
+
+
 if __name__ == "__main__":
     # allow_unsafe_werkzeug : serveur de développement uniquement (pas de
     # déploiement en production prévu pour ce squelette).

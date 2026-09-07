@@ -42,6 +42,16 @@ ELO_MIN = 1320
 ELO_MAX = 3190
 ELO_DEFAUT = 1500
 
+# Force de l'adversaire automatique en mode "partie pédagogique" (issue #8).
+# Alain progresse autour de 635-822 Elo chess.com, très en dessous du plancher
+# UCI_Elo de Stockfish (1320, déjà écrasant) — on utilise donc "Skill Level"
+# (0-20, spécifique à Stockfish), qui injecte de vraies imprécisions plutôt
+# que de viser un Elo cible, combiné à un temps de réflexion très court pour
+# accentuer l'affaiblissement. Valeur choisie à l'appréciation de CCL (pas
+# d'interface de réglage demandée) : le niveau le plus faible disponible.
+PEDAGOGIQUE_SKILL_LEVEL = 0
+PEDAGOGIQUE_THINK_TIME = 0.1
+
 
 def classifier_coup(delta_cp: int) -> str:
     """Classe un coup selon la perte en centipawns."""
@@ -91,6 +101,15 @@ class EngineManager:
 
         self._engine_play: chess.engine.SimpleEngine | None = None
         self._engine_eval: chess.engine.SimpleEngine | None = None
+        # Troisième instance, lancée à la demande (issue #8, mode "partie
+        # pédagogique") : adversaire automatique affaibli via l'option UCI
+        # "Skill Level", séparée de _engine_play pour ne jamais affecter le
+        # bouton "Coup Stockfish"/case "Stockfish joue auto" du mode partie
+        # libre (issue #6) ni l'évaluation du mode exercice (issue #7), qui
+        # restent à pleine force.
+        self._engine_pedagogique: chess.engine.SimpleEngine | None = None
+        self._lock_pedagogique = threading.Lock()
+        self._supports_skill_level = False
 
         self._supports_wdl     = False
         self._supports_elo_limit = False
@@ -113,6 +132,7 @@ class EngineManager:
                 "UCI_LimitStrength" in options and "UCI_Elo" in options
             )
             self._supports_wdl = "UCI_ShowWDL" in options
+            self._supports_skill_level = "Skill Level" in options
 
             # Configurer le moteur de jeu (Elo limité)
             self._apply_elo(self._engine_play)
@@ -187,6 +207,45 @@ class EngineManager:
                 return result.move
             except Exception as e:
                 logger.error(f"Erreur get_move : {e}")
+                return None
+
+    def _ensure_engine_pedagogique(self) -> None:
+        """Lance à la demande la 3e instance, dédiée à l'adversaire automatique
+        du mode "partie pédagogique" (issue #8) — pas de coût tant que ce mode
+        n'est pas utilisé."""
+        if self._engine_pedagogique:
+            return
+        try:
+            engine = chess.engine.SimpleEngine.popen_uci(self._engine_path)
+            if self._supports_skill_level:
+                engine.configure({
+                    "UCI_LimitStrength": False,
+                    "Skill Level": PEDAGOGIQUE_SKILL_LEVEL,
+                })
+            else:
+                logger.warning(f"{self._engine_name} ne supporte pas Skill Level.")
+            self._engine_pedagogique = engine
+        except Exception as e:
+            logger.error(f"Impossible de lancer le moteur pédagogique : {e}")
+            self._engine_pedagogique = None
+
+    def get_move_pedagogique(self, board: chess.Board,
+                              think_time: float = PEDAGOGIQUE_THINK_TIME) -> chess.Move | None:
+        """Demande un coup à l'adversaire automatique affaibli du mode "partie
+        pédagogique" (issue #8) — instance séparée de get_move(), qui reste à
+        la disposition du mode partie libre à pleine force inchangée."""
+        with self._lock_pedagogique:
+            self._ensure_engine_pedagogique()
+            if not self._engine_pedagogique:
+                return None
+            try:
+                result = self._engine_pedagogique.play(
+                    board,
+                    chess.engine.Limit(time=think_time),
+                )
+                return result.move
+            except Exception as e:
+                logger.error(f"Erreur get_move_pedagogique : {e}")
                 return None
 
     def evaluate(self, board: chess.Board, depth: int = 8) -> dict:
@@ -443,8 +502,8 @@ class EngineManager:
         }
 
     def quit(self) -> None:
-        """Arrête proprement les deux instances du moteur."""
-        for engine in [self._engine_play, self._engine_eval]:
+        """Arrête proprement les instances du moteur."""
+        for engine in [self._engine_play, self._engine_eval, self._engine_pedagogique]:
             if engine:
                 try:
                     engine.quit()
@@ -452,6 +511,7 @@ class EngineManager:
                     pass
         self._engine_play = None
         self._engine_eval = None
+        self._engine_pedagogique = None
 
 
 # ── Fonction utilitaire ───────────────────────────────────────────────────────
