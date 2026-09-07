@@ -18,6 +18,7 @@ from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 
 import config
+import finales
 import llm_coach
 import opening_book
 from engine_stockfish import EngineManager, find_stockfish
@@ -523,6 +524,160 @@ def on_opening_move(data):
             "dans_le_livre": dans_le_livre,
             "popularite_pct": popularite_pct,
             "coup_livre_recommande": coup_livre_top_san,
+            "meilleur_coup": meilleur_coup_san,
+        })
+
+
+# État du mode "travail de finales" en cours (issue #10) — comme
+# _pedagogic_camp_alain/_opening_camp_alain, une seule finale active à la
+# fois (application locale mono-utilisateur, cf. CONTEXTE.md). Contrairement
+# aux modes pédagogique/ouverture, l'adversaire automatique joue ici à
+# pleine force (engine_manager.get_move, réutilisé tel quel du mode partie
+# libre — pas le moteur affaibli get_move_pedagogique) : l'objectif est que
+# Stockfish défende/attaque correctement pour que l'exercice technique ait
+# un sens.
+_finale_camp_alain: str | None = None
+_finale_nom: str | None = None
+_finale_description: str | None = None
+
+
+@socketio.on("finale_list")
+def on_finale_list(_data):
+    """Retourne la bibliothèque de positions-types de finales (finales.py),
+    pour peupler le menu déroulant du panneau "Travail de finales"."""
+    entries = finales.get_finales()
+    emit("finale_list_response", {
+        "finales": [
+            {
+                "id": e["id"],
+                "nom": e["nom"],
+                "description": e["description"],
+                "camp_alain": e["camp_alain"],
+            }
+            for e in entries
+        ],
+    })
+
+
+@socketio.on("finale_start")
+def on_finale_start(data):
+    """Charge une position-type de la bibliothèque de finales (issue #10) et
+    fait jouer l'adversaire (Stockfish à pleine force) si la FEN de départ
+    laisse le trait à l'adversaire du camp d'Alain (camp_alain est fixé par
+    la position-type elle-même, pas choisi librement par Alain)."""
+    global _finale_camp_alain, _finale_nom, _finale_description
+
+    if not engine_manager:
+        emit("finale_error", {"error": "stockfish_indisponible"})
+        return
+
+    finale_id = (data or {}).get("id", "")
+    entry = finales.get_finale_by_id(finale_id)
+    if not entry:
+        emit("finale_error", {"error": "finale_inconnue"})
+        return
+
+    board = chess.Board(entry["fen"])
+    _finale_camp_alain = entry["camp_alain"]
+    _finale_nom = entry["nom"]
+    _finale_description = entry["description"]
+
+    camp_alain_color = chess.WHITE if _finale_camp_alain == "blancs" else chess.BLACK
+    coup_ouverture = None
+    if board.turn != camp_alain_color and not board.is_game_over():
+        move = engine_manager.get_move(board, think_time=0.5)
+        if move:
+            board.push(move)
+            coup_ouverture = move.uci()
+
+    emit("finale_started", {
+        "fen": board.fen(),
+        "camp_alain": _finale_camp_alain,
+        "nom": _finale_nom,
+        "description": _finale_description,
+        "coup_ouverture": coup_ouverture,
+    })
+
+
+@socketio.on("finale_move")
+def on_finale_move(data):
+    """Traite un coup joué par Alain en mode "travail de finales" (issue
+    #10) : comparaison au meilleur coup Stockfish comme les autres modes
+    (get_coach_response), en y ajoutant le thème de la position-type
+    sélectionnée (contexte "theme_finale"), puis réponse automatique de
+    l'adversaire à pleine force (engine_manager.get_move)."""
+    if not engine_manager:
+        emit("finale_error", {"error": "stockfish_indisponible"})
+        return
+
+    fen_avant = (data or {}).get("fen_avant", "")
+    uci = (data or {}).get("uci", "")
+    try:
+        board = chess.Board(fen_avant)
+        move = chess.Move.from_uci(uci)
+        if move not in board.legal_moves:
+            emit("finale_error", {"error": "coup_illegal"})
+            return
+    except Exception:
+        emit("finale_error", {"error": "fen_ou_coup_invalide"})
+        return
+
+    coup_alain_san = board.san(move)
+
+    # Meilleur coup Stockfish pour cette position, à pleine force (moteur
+    # d'évaluation partagé, inchangé — cf. EngineManager.evaluate).
+    eval_avant = engine_manager.evaluate(board, depth=8)
+    meilleur_coup_uci = eval_avant.get("best_move")
+    meilleur_coup_san = ""
+    if meilleur_coup_uci:
+        try:
+            meilleur_coup_san = board.san(chess.Move.from_uci(meilleur_coup_uci))
+        except Exception:
+            meilleur_coup_san = meilleur_coup_uci
+
+    board.push(move)
+
+    # Réponse automatique de l'adversaire à pleine force (pas le moteur
+    # affaibli des modes pédagogique/ouverture).
+    stockfish_move_uci = None
+    if not board.is_game_over():
+        reply = engine_manager.get_move(board, think_time=0.5)
+        if reply:
+            board.push(reply)
+            stockfish_move_uci = reply.uci()
+
+    emit("finale_stockfish_move", {
+        "fen": board.fen(),
+        "uci": stockfish_move_uci,
+        "game_over": board.is_game_over(),
+    })
+
+    messages = [{
+        "role": "user",
+        "content": (
+            "Je m'entraîne sur une finale technique tirée d'une bibliothèque "
+            "de positions-types, contre Stockfish à pleine force. Commente "
+            "le coup que je viens de jouer en tenant compte du thème "
+            "technique de cette finale (fourni en contexte) : est-il bon ou "
+            "mauvais, et pourquoi ? Si le meilleur coup selon Stockfish "
+            "était différent, explique-le aussi. Sois concis."
+        ),
+    }]
+    context = {
+        "fen": fen_avant,
+        "coup_propose": coup_alain_san,
+        "meilleur_coup": meilleur_coup_san,
+        "theme_finale": _finale_description or "",
+    }
+    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+
+    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    if error:
+        emit("finale_error", {"error": error})
+    else:
+        emit("finale_comment", {
+            "text": response,
+            "coup_propose": coup_alain_san,
             "meilleur_coup": meilleur_coup_san,
         })
 

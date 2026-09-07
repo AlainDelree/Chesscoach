@@ -117,6 +117,10 @@ def _build_context_text(context) -> str:
     dans_le_livre          = context.get("dans_le_livre")
     coup_livre_recommande  = (context.get("coup_livre_recommande") or "").strip()
     popularite_pct         = context.get("popularite_pct")
+    # Mode "Travail de finales" (issue #10) : thème/technique de la
+    # position-type sélectionnée (finales.py), pour que le commentaire
+    # puisse s'y référer explicitement (ex. mentionner l'opposition).
+    theme_finale = (context.get("theme_finale") or "").strip()
     lines = []
     if fen:
         lines.append(f"Position actuelle (FEN) : {fen}")
@@ -135,6 +139,8 @@ def _build_context_text(context) -> str:
         lines.append(f"Popularité de ce coup dans le livre : {popularite_pct}% des parties de référence")
     if coup_livre_recommande:
         lines.append(f"Coup le plus joué dans le livre pour cette position : {coup_livre_recommande}")
+    if theme_finale:
+        lines.append(f"Thème technique de cette finale : {theme_finale}")
     if pgn:
         lines.append(f"PGN de la partie :\n{pgn}")
     return "\n".join(lines)

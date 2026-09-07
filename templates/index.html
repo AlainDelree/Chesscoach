@@ -161,6 +161,17 @@
       </div>
 
       <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
+        <h2>Travail de finales</h2>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <select id="finale-select" style="flex:1;" onchange="onFinaleSelectChange()">
+            <option value="">— Choisir une finale —</option>
+          </select>
+        </div>
+        <div id="finale-description" style="font-size:0.78rem; color:#556; margin-top:4px;"></div>
+        <div id="finale-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+      </div>
+
+      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
         <h2>Mode exercice</h2>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           <button onclick="startExercise()">Nouvel exercice</button>
@@ -232,6 +243,7 @@
   <script src="{{ url_for('static', filename='exercise.js') }}"></script>
   <script src="{{ url_for('static', filename='pedagogic.js') }}"></script>
   <script src="{{ url_for('static', filename='opening.js') }}"></script>
+  <script src="{{ url_for('static', filename='finales.js') }}"></script>
   <script>
     // Position de départ affichée immédiatement, avant même le retour de la
     // bibliothèque PGN (cf. socket.on("pgn_lib_game_loaded", ...) qui prendra

@@ -1,0 +1,208 @@
+/*
+ * finales.js — ChessCoach (issue #10)
+ *
+ * Mode "travail de finales" : bibliothèque curatée de positions-types
+ * (finales.py, listée dans le menu déroulant du panneau), adversaire à
+ * pleine force côté serveur (engine_manager.get_move, réutilisé du mode
+ * partie libre — pas le moteur affaibli des modes pédagogique/ouverture),
+ * commentaire du coach tenant compte du thème technique de la position
+ * sélectionnée (voir app.py on_finale_move).
+ *
+ * Contrairement aux modes pédagogique/ouverture, le camp qu'Alain doit
+ * jouer est fixé par la position-type elle-même (finales.py), pas un choix
+ * libre : pas de boutons "Jouer les Blancs/Noirs" ici, juste la sélection
+ * dans le menu déroulant.
+ *
+ * Réutilise buildBoard()/renderBoard() de board.js et
+ * freeSquareIdToAlgebraic()/freeAlgebraicToSquareId() de free_play.js, comme
+ * pedagogic.js/opening.js.
+ */
+
+let finaleGame       = null;  // instance chess.js (mode travail de finales)
+let finaleActive     = false;
+let finaleCampAlain  = "blancs";
+let finaleSelected   = null;  // case algébrique sélectionnée ou null
+let finaleWaiting    = false; // coup en cours de traitement côté serveur
+let finaleList       = [];    // bibliothèque reçue du serveur (finale_list_response)
+
+function populateFinaleSelect() {
+  const selectEl = document.getElementById("finale-select");
+  if (!selectEl) return;
+  selectEl.innerHTML = '<option value="">— Choisir une finale —</option>';
+  finaleList.forEach((f) => {
+    const opt = document.createElement("option");
+    opt.value = f.id;
+    opt.textContent = f.nom;
+    selectEl.appendChild(opt);
+  });
+}
+
+function onFinaleSelectChange() {
+  const selectEl = document.getElementById("finale-select");
+  const descEl = document.getElementById("finale-description");
+  if (!selectEl) return;
+  const id = selectEl.value;
+  if (!id) {
+    if (descEl) descEl.textContent = "";
+    return;
+  }
+  const entry = finaleList.find((f) => f.id === id);
+  if (descEl) descEl.textContent = entry ? entry.description : "";
+
+  finaleWaiting = true;
+  const statusEl = document.getElementById("finale-status");
+  if (statusEl) statusEl.textContent = "Chargement de la position...";
+  socket.emit("finale_start", { id });
+}
+
+function renderFinaleBoard(lastFrom, lastTo) {
+  if (!finaleGame) return;
+  const fenBoard = finaleGame.fen().split(" ")[0];
+  const from = lastFrom ? freeAlgebraicToSquareId(lastFrom) : null;
+  const to   = lastTo   ? freeAlgebraicToSquareId(lastTo)   : null;
+  renderBoard(fenBoard, from, to, null, null, null, null);
+  if (finaleSelected) {
+    const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(finaleSelected)}`);
+    if (sq) sq.classList.add("free-play-selected");
+  }
+}
+
+function updateFinaleStatus() {
+  const statusEl = document.getElementById("finale-status");
+  if (!statusEl || !finaleGame) return;
+  let text = finaleGame.turn() === "w" ? "Trait aux Blancs" : "Trait aux Noirs";
+  if (finaleGame.in_checkmate())      text = "Échec et mat.";
+  else if (finaleGame.in_stalemate()) text = "Pat.";
+  else if (finaleGame.in_draw())      text = "Partie nulle.";
+  else if (finaleGame.in_check())     text += " (échec)";
+  if (finaleWaiting) text += " — Stockfish (pleine force) et le coach réfléchissent...";
+  statusEl.textContent = text;
+}
+
+function finaleIsAlainTurn() {
+  if (!finaleGame) return false;
+  const trait = finaleGame.turn() === "w" ? "blancs" : "noirs";
+  return trait === finaleCampAlain;
+}
+
+function onFinaleBoardClick(e) {
+  if (!finaleActive || !finaleGame || finaleWaiting) return;
+  if (!finaleIsAlainTurn()) return;
+  const sqEl = e.target.closest(".square");
+  if (!sqEl) return;
+  const square = freeSquareIdToAlgebraic(sqEl.id.replace("sq-", ""));
+
+  if (!finaleSelected) {
+    const piece = finaleGame.get(square);
+    if (piece && piece.color === finaleGame.turn()) {
+      finaleSelected = square;
+      renderFinaleBoard();
+    }
+    return;
+  }
+
+  if (finaleSelected === square) {
+    finaleSelected = null;
+    renderFinaleBoard();
+    return;
+  }
+
+  const fenAvant = finaleGame.fen();
+  const move = finaleGame.move({ from: finaleSelected, to: square, promotion: "q" });
+  finaleSelected = null;
+
+  if (!move) {
+    const piece = finaleGame.get(square);
+    if (piece && piece.color === finaleGame.turn()) {
+      finaleSelected = square;
+    }
+    renderFinaleBoard();
+    return;
+  }
+
+  renderFinaleBoard(move.from, move.to);
+  finaleWaiting = true;
+  updateFinaleStatus();
+  _coachRenderBubble("user", `Travail de finales — je joue ${move.san}`);
+  socket.emit("finale_move", {
+    fen_avant: fenAvant,
+    uci: move.from + move.to + (move.promotion || ""),
+  });
+}
+
+if (typeof socket !== "undefined") {
+  socket.on("finale_list_response", (data) => {
+    finaleList = (data && data.finales) || [];
+    populateFinaleSelect();
+  });
+
+  socket.on("finale_started", (data) => {
+    finaleWaiting = false;
+    if (!data || !data.fen) return;
+    finaleGame      = new Chess(data.fen);
+    finaleActive    = true;
+    finaleSelected  = null;
+    finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
+
+    const descEl = document.getElementById("finale-description");
+    if (descEl && data.description) descEl.textContent = data.description;
+
+    _boardFlipped = (finaleCampAlain === "noirs");
+    buildBoard();
+    const boardEl = document.getElementById("board");
+    if (boardEl) boardEl.onclick = onFinaleBoardClick;
+
+    let lastFrom = null, lastTo = null;
+    if (data.coup_ouverture) {
+      lastFrom = data.coup_ouverture.slice(0, 2);
+      lastTo   = data.coup_ouverture.slice(2, 4);
+    }
+    renderFinaleBoard(lastFrom, lastTo);
+    updateFinaleStatus();
+
+    _coachRenderBubble("assistant", `Finale "${data.nom}" chargée. ${data.description || ""}`);
+  });
+
+  socket.on("finale_stockfish_move", (data) => {
+    finaleWaiting = false;
+    if (!finaleActive || !finaleGame || !data) return;
+
+    if (data.uci) {
+      const move = finaleGame.move({
+        from: data.uci.slice(0, 2),
+        to: data.uci.slice(2, 4),
+        promotion: data.uci.slice(4, 5) || "q",
+      });
+      if (move) {
+        renderFinaleBoard(move.from, move.to);
+      }
+    }
+    updateFinaleStatus();
+  });
+
+  socket.on("finale_comment", (data) => {
+    const text = stripMarkdownForChat((data && data.text) || "");
+    if (text) _coachRenderBubble("assistant", text);
+  });
+
+  socket.on("finale_error", (data) => {
+    finaleWaiting = false;
+    const err = data && data.error;
+    const msg = (err === "stockfish_indisponible")
+      ? "Stockfish indisponible sur ce système."
+      : (err === "finale_inconnue")
+      ? "Position de finale inconnue."
+      : (err === "no_api_key")
+      ? "Clé API Claude manquante — configurez-la dans les paramètres."
+      : (err === "coup_illegal")
+      ? "Coup illégal détecté côté serveur."
+      : "Le coach n'a pas pu répondre, réessayez.";
+    const statusEl = document.getElementById("finale-status");
+    if (statusEl) statusEl.textContent = msg;
+    console.warn("[travail de finales]", msg, data);
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof socket !== "undefined") socket.emit("finale_list", {});
+});
