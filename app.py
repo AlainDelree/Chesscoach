@@ -36,18 +36,23 @@ def index():
     return render_template("index.html")
 
 
-@socketio.on("coach_message")
-def on_coach_message(data):
-    """Relaie un tour de conversation au coach LLM (llm_coach.py)."""
+@socketio.on("coach_ask")
+def on_coach_ask(data):
+    """Relaie un tour de conversation au coach LLM (llm_coach.py).
+
+    Nom d'événement et clés de payload alignés sur ce qu'émet/attend
+    static/board.js (coachSend() émet "coach_ask", et les listeners
+    "coach_response"/"coach_error" lisent data.text / data.error).
+    """
     messages = data.get("messages", [])
     context = data.get("context", {})
     llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     if error:
-        emit("coach_error", {"message": error})
+        emit("coach_error", {"error": error})
     else:
-        emit("coach_response", {"message": response})
+        emit("coach_response", {"text": response})
 
 
 if __name__ == "__main__":

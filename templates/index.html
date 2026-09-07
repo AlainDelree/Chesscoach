@@ -4,14 +4,177 @@
   <meta charset="utf-8">
   <title>ChessCoach</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='board.css') }}">
+  <style>
+    /* Mise en page générale de la page (colonnes) — board.css ne définit que
+       les styles des composants (plateau, historique, chat...), pas
+       l'agencement de la page qui les contient. */
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #eef2f6;
+      color: #1a2a3a;
+    }
+    header {
+      padding: 10px 16px;
+      background: #1a2a3a;
+      color: #fff;
+    }
+    header h1 { margin: 0; font-size: 1.1rem; }
+    #app {
+      display: flex;
+      gap: 16px;
+      padding: 16px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    #board-column {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    #board-row { display: flex; align-items: flex-start; gap: 4px; }
+    #coord-file { display: flex; justify-content: space-around; width: var(--bd-size); }
+    #coord-rank { display: flex; flex-direction: column-reverse; justify-content: space-around; }
+    .material-row { min-height: 22px; }
+    #review-controls { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+    #middle-column {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 260px;
+      flex-shrink: 0;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #a0b8d0;
+      border-radius: 4px;
+      padding: 8px;
+    }
+    .panel h2 { font-size: 0.9rem; margin: 0 0 6px; }
+    #historique { max-height: 260px; }
+    #pgn-lib-games { list-style: none; margin: 0; padding: 0; max-height: 160px; overflow-y: auto; }
+    #coach-column {
+      display: flex;
+      flex-direction: column;
+      width: 320px;
+      flex-shrink: 0;
+    }
+    .coach-drawer { display: flex; }
+  </style>
 </head>
 <body>
-  <h1>ChessCoach</h1>
-  <p>
-    Squelette en place : bibliothèque PGN, mémoire du coach et moteur
-    Stockfish sont câblés côté serveur. L'interface graphique (plateau,
-    revue de partie, chat coach) reste à construire — voir
-    <code>static/board.js</code> pour les fonctions déjà extraites.
-  </p>
+  <header><h1>ChessCoach — plateau &amp; revue de partie</h1></header>
+
+  <div id="app">
+
+    <!-- ── Colonne plateau ─────────────────────────────────────────────── -->
+    <div id="board-column">
+      <div class="material-row"><span id="material-top"></span></div>
+      <div id="board-row">
+        <div id="coord-rank"></div>
+        <div class="eval-bar-wrap">
+          <div class="eval-score" id="eval-score">0.0</div>
+          <div class="eval-bar-track">
+            <div class="eval-fill-white" id="eval-white" style="height:50%;"></div>
+            <div class="eval-fill-black" id="eval-black" style="height:50%;"></div>
+          </div>
+        </div>
+        <div id="board-wrapper">
+          <div id="board"></div>
+          <svg id="arrows-svg">
+            <defs>
+              <marker id="arrowhead" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
+                <path d="M0,0 L4,2 L0,4 Z" fill="rgba(232,69,96,0.75)"></path>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+      </div>
+      <div id="coord-file"></div>
+      <div class="material-row"><span id="material-bottom"></span></div>
+
+      <div id="review-controls">
+        <button onclick="reviewPrev()">◀ Précédent</button>
+        <button onclick="reviewNext()">Suivant ▶</button>
+        <button onclick="flipBoard()">Retourner</button>
+        <button onclick="showReviewBestMove()">Meilleur coup</button>
+      </div>
+      <div>
+        <span id="review-move-info"></span>
+        <strong id="review-move-san"></strong>
+        <span id="review-best-move-san" style="display:none; color:#1a9bc0;"></span>
+      </div>
+      <div>
+        <label style="font-size:0.82rem;">Importer un PGN :
+          <input type="file" accept=".pgn,.txt" onchange="loadPgnFile(event)">
+        </label>
+      </div>
+    </div>
+
+    <!-- ── Colonne historique + bibliothèque PGN ───────────────────────── -->
+    <div id="middle-column">
+      <div class="panel">
+        <h2>Historique des coups</h2>
+        <div id="historique"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Bibliothèque PGN</h2>
+        <div style="display:flex; gap:4px; margin-bottom:6px;">
+          <select id="pgn-lib-collection-select" style="flex:1;" onchange="pgnLibOnCollectionChange()"></select>
+        </div>
+        <div style="display:flex; gap:4px; margin-bottom:6px;">
+          <input id="pgn-lib-new-name" type="text" placeholder="Nouvelle collection" style="flex:1;">
+          <button onclick="pgnLibCreateCollection()">+</button>
+        </div>
+        <ul id="pgn-lib-games"></ul>
+        <div style="margin-top:6px;">
+          <label style="font-size:0.82rem;">Importer un PGN dans la collection :
+            <input type="file" accept=".pgn,.txt" onchange="pgnLibImportFile(event)">
+          </label>
+        </div>
+        <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
+      </div>
+    </div>
+
+    <!-- ── Colonne chat coach ───────────────────────────────────────────── -->
+    <div id="coach-column">
+      <div class="panel coach-drawer">
+        <h2>Coach</h2>
+        <div id="coach-history" class="coach-history">
+          <div id="coach-empty" style="color:#778; font-size:0.82rem; text-align:center; padding:20px 8px;">
+            Posez une question sur la position affichée.
+          </div>
+        </div>
+        <div class="coach-input-row">
+          <input id="coach-input" type="text" placeholder="Votre question..." style="flex:1;">
+          <button id="coach-send-btn" class="coach-send-btn" onclick="coachSend()">Envoyer</button>
+          <div id="coach-spinner" class="coach-spinner"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="{{ url_for('static', filename='vendor/socket.io/socket.io.min.js') }}"></script>
+  <script>
+    const socket = io();
+  </script>
+  <script src="{{ url_for('static', filename='vendor/chess.js/chess.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='board.js') }}"></script>
+  <script src="{{ url_for('static', filename='pgn_library.js') }}"></script>
+  <script>
+    // Position de départ affichée immédiatement, avant même le retour de la
+    // bibliothèque PGN (cf. socket.on("pgn_lib_game_loaded", ...) qui prendra
+    // le relais si l'utilisateur charge une partie).
+    document.addEventListener("DOMContentLoaded", () => {
+      reviewFens = ["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"];
+      reviewMoves = [];
+      reviewIdx = 0;
+      buildBoard();
+      renderReview();
+    });
+  </script>
 </body>
 </html>
