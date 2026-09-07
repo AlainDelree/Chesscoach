@@ -59,6 +59,10 @@
 .square.feedback-imprecision { background: #ff9800 !important; }
 .square.feedback-erreur      { background: #f44336 !important; }
 .square.feedback-blunder     { background: #9c27b0 !important; }
+.square.free-play-selected   { background: #6fa8dc !important; }
+
+/* ── Partie libre ── */
+#board.free-play-active .square { cursor: pointer; }
 
 /* ── Flèches d'annotation (superposées au plateau) ── */
 #arrows-svg {
