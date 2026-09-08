@@ -56,6 +56,7 @@ function renderExerciseBoard() {
     const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(exerciseSelected)}`);
     if (sq) sq.classList.add("free-play-selected");
   }
+  renderHistory();
 }
 
 function onExerciseBoardClick(e) {
@@ -116,6 +117,7 @@ if (typeof socket !== "undefined") {
     exerciseSelected  = null;
     exerciseFenAvant  = data.fen;
     exerciseCampAlain = data.camp_alain;
+    setActiveMode("exercise");
 
     _boardFlipped = (data.camp_alain === "noirs");
     buildBoard();

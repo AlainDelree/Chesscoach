@@ -25,8 +25,8 @@ let openingFenAvantCoup     = null;  // FEN juste avant le dernier coup d'Alain 
 let openingInBookAvantCoup  = false; // valeur de openingInBook avant ce même coup
 
 function openingCommenterChaqueCoup() {
-  const cb = document.getElementById("opening-auto-comment");
-  return !cb || cb.checked;
+  const cb = document.getElementById("shared-auto-comment");
+  return !!(cb && cb.checked);
 }
 
 function abandonOpeningGame() {
@@ -41,6 +41,7 @@ function abandonOpeningGame() {
   openingFenAvantCoup    = null;
   openingInBookAvantCoup = false;
   resetBoardToNeutral();
+  setActiveMode(null);
   const statusEl = document.getElementById("opening-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
 }
@@ -94,6 +95,7 @@ function renderOpeningBoard(lastFrom, lastTo) {
     const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(openingSelected)}`);
     if (sq) sq.classList.add("free-play-selected");
   }
+  renderHistory();
 }
 
 function updateOpeningStatus() {
@@ -173,6 +175,7 @@ if (typeof socket !== "undefined") {
     openingGameOver  = false;
     openingCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     openingInBook    = !!data.in_book;
+    setActiveMode("opening");
 
     _boardFlipped = (openingCampAlain === "noirs");
     buildBoard();

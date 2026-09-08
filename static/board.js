@@ -359,8 +359,20 @@ function reviewGoTo(index) {
 function renderHistory(activeIdx) {
   const histEl = document.getElementById("historique");
   if (!histEl) return;
-  const whites = reviewMoves.map((m, i) => ({...m, _idx: i + 1})).filter(m => m.color === "white");
-  const blacks = reviewMoves.map((m, i) => ({...m, _idx: i + 1})).filter(m => m.color === "black");
+
+  // En mode interactif (issue #15 point 4), afficher les coups de la partie
+  // en cours (activeMode, cf. controls.js) plutôt que ceux de la revue PGN —
+  // navigation par clic désactivée dans ce cas, reviewGoTo() n'ayant de sens
+  // que pour reviewFens/reviewMoves.
+  let moves = reviewMoves;
+  let liveMode = false;
+  if (typeof activeMode !== "undefined" && activeMode && typeof getActiveModeMoves === "function") {
+    const liveMoves = getActiveModeMoves();
+    if (liveMoves) { moves = liveMoves; activeIdx = moves.length; liveMode = true; }
+  }
+
+  const whites = moves.map((m, i) => ({...m, _idx: i + 1})).filter(m => m.color === "white");
+  const blacks = moves.map((m, i) => ({...m, _idx: i + 1})).filter(m => m.color === "black");
   const total  = Math.max(whites.length, blacks.length);
   let html = '<table style="width:100%;border-collapse:collapse;">';
   html += `<tr><th style="color:#1a2a3a;font-weight:600;padding:2px 4px;">Blancs</th><th style="color:#1a2a3a;font-weight:600;padding:2px 4px;">Noirs</th></tr>`;
@@ -373,9 +385,15 @@ function renderHistory(activeIdx) {
       const activeB = activeIdx === idxB ? "font-weight:bold;" : "";
       const colorW  = activeIdx === idxW ? "#e94560" : qualiteColor(mw ? mw.qualite : "bon");
       const colorB  = activeIdx === idxB ? "#e94560" : qualiteColor(mb ? mb.qualite : "bon");
+      const attrsW  = liveMode
+        ? `style="padding:2px 4px;color:${colorW};${activeW}"`
+        : `style="padding:2px 4px;cursor:pointer;color:${colorW};${activeW}" onclick="reviewGoTo(${idxW})"`;
+      const attrsB  = liveMode
+        ? `style="padding:2px 4px;color:${colorB};${activeB}"`
+        : `style="padding:2px 4px;cursor:pointer;color:${colorB};${activeB}" onclick="reviewGoTo(${idxB})"`;
       html += `<tr>`;
-      html += mw ? `<td style="padding:2px 4px;cursor:pointer;color:${colorW};${activeW}" onclick="reviewGoTo(${idxW})">${i+1}. ${mw.san}${qualiteSymbole(mw.qualite)}</td>` : `<td></td>`;
-      html += mb ? `<td style="padding:2px 4px;cursor:pointer;color:${colorB};${activeB}" onclick="reviewGoTo(${idxB})">${mb.san}${qualiteSymbole(mb.qualite)}</td>` : `<td></td>`;
+      html += mw ? `<td ${attrsW}>${i+1}. ${mw.san}${qualiteSymbole(mw.qualite)}</td>` : `<td></td>`;
+      html += mb ? `<td ${attrsB}>${mb.san}${qualiteSymbole(mb.qualite)}</td>` : `<td></td>`;
       html += `</tr>`;
   }
   html += '</table>';
@@ -525,6 +543,16 @@ let _coachHistory = [];
 let _coachBusy    = false;
 
 function coachBuildContext() {
+  // Chat libre pendant un mode interactif en cours (issue #15 point 3) : le
+  // coach doit connaître la position réelle du mode actif (activeMode, cf.
+  // controls.js), pas la position de la revue PGN qui n'a pas bougé.
+  if (typeof activeMode !== "undefined" && activeMode && typeof activeModeGameState === "function") {
+    const state = activeModeGameState();
+    if (state && state.fen) {
+      return { fen: state.fen, move: "", pgn: "", camp_alain: state.campAlain || "" };
+    }
+  }
+
   const fen  = reviewFens[reviewIdx] || "";
   const move = (reviewIdx > 0 && reviewMoves[reviewIdx - 1]) ? (reviewMoves[reviewIdx - 1].san || "") : "";
   let pgn = "";
@@ -686,10 +714,8 @@ function askCoachOnDemand(fen, themeFinale, campAlain) {
 }
 
 function setCoachOnDemandButtonsDisabled(disabled) {
-  ["pedagogic-ask-coach-btn", "opening-ask-coach-btn", "finale-ask-coach-btn"].forEach((id) => {
-    const btn = document.getElementById(id);
-    if (btn) btn.disabled = disabled;
-  });
+  const btn = document.getElementById("shared-ask-coach-btn");
+  if (btn) btn.disabled = disabled;
 }
 
 if (typeof socket !== "undefined") {

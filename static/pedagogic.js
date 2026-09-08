@@ -25,8 +25,8 @@ let pedagogicGameOver   = false; // fin de partie détectée côté serveur (iss
 let pedagogicFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 
 function pedagogicCommenterChaqueCoup() {
-  const cb = document.getElementById("pedagogic-auto-comment");
-  return !cb || cb.checked;
+  const cb = document.getElementById("shared-auto-comment");
+  return !!(cb && cb.checked);
 }
 
 function startPedagogicGame(camp) {
@@ -49,6 +49,7 @@ function abandonPedagogicGame() {
   pedagogicGameOver  = false;
   pedagogicFenAvantCoup = null;
   resetBoardToNeutral();
+  setActiveMode(null);
   const statusEl = document.getElementById("pedagogic-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
 }
@@ -82,6 +83,7 @@ function renderPedagogicBoard(lastFrom, lastTo) {
     const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(pedagogicSelected)}`);
     if (sq) sq.classList.add("free-play-selected");
   }
+  renderHistory();
 }
 
 function updatePedagogicStatus() {
@@ -158,6 +160,7 @@ if (typeof socket !== "undefined") {
     pedagogicSelected  = null;
     pedagogicGameOver  = false;
     pedagogicCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
+    setActiveMode("pedagogic");
 
     _boardFlipped = (pedagogicCampAlain === "noirs");
     buildBoard();

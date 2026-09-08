@@ -39,6 +39,7 @@ function abandonFreeGame() {
   freeLastMove       = null;
   freeWaitingEngine  = false;
   resetBoardToNeutral();
+  setActiveMode(null);
   const statusEl = document.getElementById("free-play-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
 }
@@ -52,6 +53,7 @@ function startFreeGame() {
 
   const autoCb = document.getElementById("free-auto-stockfish");
   freeAutoStockfish = !!(autoCb && autoCb.checked);
+  setActiveMode("free");
 
   buildBoard();
   const boardEl = document.getElementById("board");
@@ -73,6 +75,7 @@ function renderFreePlayBoard() {
     const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(freeSelectedSquare)}`);
     if (sq) sq.classList.add("free-play-selected");
   }
+  renderHistory();
 }
 
 function updateFreePlayStatus() {

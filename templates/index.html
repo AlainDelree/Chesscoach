@@ -128,12 +128,30 @@
         </label>
       </div>
 
+      <!-- ── Barre de contrôle mutualisée (issue #15) ──────────────────────
+           Agit sur le mode interactif actuellement actif (au plus un à la
+           fois, cf. controls.js/activeMode) : les panneaux ci-dessous ne
+           gardent que ce qui leur est spécifique (choix du camp, nom
+           d'ouverture, sélection de finale, filtre de phase). -->
+      <div class="panel" id="shared-mode-controls" style="margin-top:10px; width:100%; box-sizing:border-box;">
+        <h2>Contrôles du mode actif</h2>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <button id="shared-reprendre-btn" onclick="sharedReprendreCoup()">Reprendre mon coup</button>
+          <button id="shared-abandon-btn" onclick="sharedAbandonMode()">Abandonner</button>
+          <label id="shared-comment-row" style="font-size:0.82rem;">
+            <input type="checkbox" id="shared-auto-comment">
+            Commenter chaque coup
+          </label>
+          <button id="shared-ask-coach-btn" onclick="sharedAskCoach()">Demander l'avis du coach</button>
+        </div>
+        <div id="shared-mode-status" style="font-size:0.78rem; color:#778; margin-top:4px;">Aucun mode interactif actif.</div>
+      </div>
+
       <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
         <h2>Partie libre</h2>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           <button onclick="startFreeGame()">Nouvelle partie libre</button>
           <button onclick="requestStockfishMove()">Coup Stockfish</button>
-          <button onclick="abandonFreeGame()">Abandonner</button>
           <label style="font-size:0.82rem;">
             <input type="checkbox" id="free-auto-stockfish">
             Stockfish joue auto
@@ -154,15 +172,6 @@
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           <button onclick="startPedagogicGame('blancs')">Jouer les Blancs</button>
           <button onclick="startPedagogicGame('noirs')">Jouer les Noirs</button>
-          <button onclick="reprendrePedagogicCoup()">Reprendre mon coup</button>
-          <button onclick="abandonPedagogicGame()">Abandonner</button>
-        </div>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-          <label style="font-size:0.82rem;">
-            <input type="checkbox" id="pedagogic-auto-comment" checked>
-            Commenter chaque coup
-          </label>
-          <button id="pedagogic-ask-coach-btn" onclick="askPedagogicCoach()">Demander l'avis du coach</button>
         </div>
         <div id="pedagogic-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
       </div>
@@ -175,15 +184,6 @@
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
           <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
           <button onclick="startOpeningGame('noirs')">Jouer les Noirs</button>
-          <button onclick="reprendreOpeningCoup()">Reprendre mon coup</button>
-          <button onclick="abandonOpeningGame()">Abandonner</button>
-        </div>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-          <label style="font-size:0.82rem;">
-            <input type="checkbox" id="opening-auto-comment" checked>
-            Commenter chaque coup
-          </label>
-          <button id="opening-ask-coach-btn" onclick="askOpeningCoach()">Demander l'avis du coach</button>
         </div>
         <div id="opening-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
       </div>
@@ -194,15 +194,6 @@
           <select id="finale-select" style="flex:1; min-width:0;" onchange="onFinaleSelectChange()">
             <option value="">— Choisir une finale —</option>
           </select>
-          <button onclick="reprendreFinaleCoup()">Reprendre mon coup</button>
-          <button onclick="abandonFinaleGame()">Abandonner</button>
-        </div>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-          <label style="font-size:0.82rem;">
-            <input type="checkbox" id="finale-auto-comment" checked>
-            Commenter chaque coup
-          </label>
-          <button id="finale-ask-coach-btn" onclick="askFinaleCoach()">Demander l'avis du coach</button>
         </div>
         <div id="finale-description" style="font-size:0.78rem; color:#556; margin-top:4px;"></div>
         <div id="finale-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
@@ -221,7 +212,6 @@
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
           <button onclick="startExercise()">Nouvel exercice</button>
           <button onclick="startExercise()">Position suivante</button>
-          <button onclick="reprendreExerciceCoup()">Reprendre mon coup</button>
         </div>
         <div id="exercise-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
       </div>
@@ -302,6 +292,7 @@
   <script src="{{ url_for('static', filename='pedagogic.js') }}"></script>
   <script src="{{ url_for('static', filename='opening.js') }}"></script>
   <script src="{{ url_for('static', filename='finales.js') }}"></script>
+  <script src="{{ url_for('static', filename='controls.js') }}"></script>
   <script>
     // Position de départ affichée immédiatement, avant même le retour de la
     // bibliothèque PGN (cf. socket.on("pgn_lib_game_loaded", ...) qui prendra

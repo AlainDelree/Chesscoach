@@ -28,8 +28,8 @@ let finaleList       = [];    // bibliothèque reçue du serveur (finale_list_re
 let finaleFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 
 function finaleCommenterChaqueCoup() {
-  const cb = document.getElementById("finale-auto-comment");
-  return !cb || cb.checked;
+  const cb = document.getElementById("shared-auto-comment");
+  return !!(cb && cb.checked);
 }
 
 function abandonFinaleGame() {
@@ -42,6 +42,7 @@ function abandonFinaleGame() {
   finaleGameOver  = false;
   finaleFenAvantCoup = null;
   resetBoardToNeutral();
+  setActiveMode(null);
   const statusEl = document.getElementById("finale-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
   const descEl = document.getElementById("finale-description");
@@ -112,6 +113,7 @@ function renderFinaleBoard(lastFrom, lastTo) {
     const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(finaleSelected)}`);
     if (sq) sq.classList.add("free-play-selected");
   }
+  renderHistory();
 }
 
 function updateFinaleStatus() {
@@ -193,6 +195,7 @@ if (typeof socket !== "undefined") {
     finaleSelected  = null;
     finaleGameOver  = false;
     finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
+    setActiveMode("finale");
 
     const descEl = document.getElementById("finale-description");
     if (descEl && data.description) descEl.textContent = data.description;
