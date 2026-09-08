@@ -21,13 +21,38 @@ let pedagogicActive     = false;
 let pedagogicCampAlain  = "blancs";
 let pedagogicSelected   = null;  // case algébrique sélectionnée ou null
 let pedagogicWaiting    = false; // coup en cours de traitement côté serveur
+let pedagogicGameOver   = false; // fin de partie détectée côté serveur (issue #11)
+
+function pedagogicCommenterChaqueCoup() {
+  const cb = document.getElementById("pedagogic-auto-comment");
+  return !cb || cb.checked;
+}
 
 function startPedagogicGame(camp) {
   pedagogicCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   pedagogicWaiting   = true;
+  pedagogicGameOver  = false;
   const statusEl = document.getElementById("pedagogic-status");
   if (statusEl) statusEl.textContent = "Démarrage de la partie...";
   socket.emit("pedagogic_start", { camp: pedagogicCampAlain });
+}
+
+function abandonPedagogicGame() {
+  if (!pedagogicActive) return;
+  socket.emit("pedagogic_abandon", {});
+  pedagogicActive    = false;
+  pedagogicGame      = null;
+  pedagogicWaiting   = false;
+  pedagogicSelected  = null;
+  pedagogicGameOver  = false;
+  resetBoardToNeutral();
+  const statusEl = document.getElementById("pedagogic-status");
+  if (statusEl) statusEl.textContent = "Partie abandonnée.";
+}
+
+function askPedagogicCoach() {
+  if (!pedagogicActive || !pedagogicGame || pedagogicGameOver || pedagogicWaiting) return;
+  askCoachOnDemand(pedagogicGame.fen());
 }
 
 function renderPedagogicBoard(lastFrom, lastTo) {
@@ -61,7 +86,7 @@ function pedagogicIsAlainTurn() {
 }
 
 function onPedagogicBoardClick(e) {
-  if (!pedagogicActive || !pedagogicGame || pedagogicWaiting) return;
+  if (!pedagogicActive || !pedagogicGame || pedagogicWaiting || pedagogicGameOver) return;
   if (!pedagogicIsAlainTurn()) return;
   const sqEl = e.target.closest(".square");
   if (!sqEl) return;
@@ -102,6 +127,7 @@ function onPedagogicBoardClick(e) {
   socket.emit("pedagogic_move", {
     fen_avant: fenAvant,
     uci: move.from + move.to + (move.promotion || ""),
+    commenter: pedagogicCommenterChaqueCoup(),
   });
 }
 
@@ -112,6 +138,7 @@ if (typeof socket !== "undefined") {
     pedagogicActive    = true;
     pedagogicWaiting   = false;
     pedagogicSelected  = null;
+    pedagogicGameOver  = false;
     pedagogicCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
 
     _boardFlipped = (pedagogicCampAlain === "noirs");
@@ -141,6 +168,12 @@ if (typeof socket !== "undefined") {
       if (move) {
         renderPedagogicBoard(move.from, move.to);
       }
+    }
+    if (data.game_over) {
+      pedagogicGameOver = true;
+      const statusEl = document.getElementById("pedagogic-status");
+      if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      return;
     }
     updatePedagogicStatus();
   });

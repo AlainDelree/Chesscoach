@@ -23,7 +23,36 @@ let finaleActive     = false;
 let finaleCampAlain  = "blancs";
 let finaleSelected   = null;  // case algébrique sélectionnée ou null
 let finaleWaiting    = false; // coup en cours de traitement côté serveur
+let finaleGameOver   = false; // fin de partie détectée côté serveur (issue #11)
 let finaleList       = [];    // bibliothèque reçue du serveur (finale_list_response)
+
+function finaleCommenterChaqueCoup() {
+  const cb = document.getElementById("finale-auto-comment");
+  return !cb || cb.checked;
+}
+
+function abandonFinaleGame() {
+  if (!finaleActive) return;
+  socket.emit("finale_abandon", {});
+  finaleActive    = false;
+  finaleGame      = null;
+  finaleWaiting   = false;
+  finaleSelected  = null;
+  finaleGameOver  = false;
+  resetBoardToNeutral();
+  const statusEl = document.getElementById("finale-status");
+  if (statusEl) statusEl.textContent = "Partie abandonnée.";
+  const descEl = document.getElementById("finale-description");
+  if (descEl) descEl.textContent = "";
+  const selectEl = document.getElementById("finale-select");
+  if (selectEl) selectEl.value = "";
+}
+
+function askFinaleCoach() {
+  if (!finaleActive || !finaleGame || finaleGameOver || finaleWaiting) return;
+  const descEl = document.getElementById("finale-description");
+  askCoachOnDemand(finaleGame.fen(), descEl ? descEl.textContent : "");
+}
 
 function populateFinaleSelect() {
   const selectEl = document.getElementById("finale-select");
@@ -49,7 +78,8 @@ function onFinaleSelectChange() {
   const entry = finaleList.find((f) => f.id === id);
   if (descEl) descEl.textContent = entry ? entry.description : "";
 
-  finaleWaiting = true;
+  finaleWaiting  = true;
+  finaleGameOver = false;
   const statusEl = document.getElementById("finale-status");
   if (statusEl) statusEl.textContent = "Chargement de la position...";
   socket.emit("finale_start", { id });
@@ -86,7 +116,7 @@ function finaleIsAlainTurn() {
 }
 
 function onFinaleBoardClick(e) {
-  if (!finaleActive || !finaleGame || finaleWaiting) return;
+  if (!finaleActive || !finaleGame || finaleWaiting || finaleGameOver) return;
   if (!finaleIsAlainTurn()) return;
   const sqEl = e.target.closest(".square");
   if (!sqEl) return;
@@ -127,6 +157,7 @@ function onFinaleBoardClick(e) {
   socket.emit("finale_move", {
     fen_avant: fenAvant,
     uci: move.from + move.to + (move.promotion || ""),
+    commenter: finaleCommenterChaqueCoup(),
   });
 }
 
@@ -142,6 +173,7 @@ if (typeof socket !== "undefined") {
     finaleGame      = new Chess(data.fen);
     finaleActive    = true;
     finaleSelected  = null;
+    finaleGameOver  = false;
     finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
 
     const descEl = document.getElementById("finale-description");
@@ -176,6 +208,12 @@ if (typeof socket !== "undefined") {
       if (move) {
         renderFinaleBoard(move.from, move.to);
       }
+    }
+    if (data.game_over) {
+      finaleGameOver = true;
+      const statusEl = document.getElementById("finale-status");
+      if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      return;
     }
     updateFinaleStatus();
   });

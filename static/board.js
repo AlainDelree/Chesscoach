@@ -616,6 +616,59 @@ if (typeof socket !== "undefined") {
   });
 }
 
+// ── Coach à la demande (issue #11) ──────────────────────────────────────────
+// Bouton "Demander l'avis du coach" des modes pédagogique/ouverture/finales
+// (visible quand la case "Commenter chaque coup" est décochée) : un seul
+// aller-retour SocketIO mode-agnostique (coach_comment_on_demand côté
+// serveur), réutilisé par les trois modes plutôt que dupliqué.
+
+function askCoachOnDemand(fen, themeFinale) {
+  if (!fen) return;
+  setCoachOnDemandButtonsDisabled(true);
+  socket.emit("coach_comment_on_demand", { fen, theme_finale: themeFinale || "" });
+}
+
+function setCoachOnDemandButtonsDisabled(disabled) {
+  ["pedagogic-ask-coach-btn", "opening-ask-coach-btn", "finale-ask-coach-btn"].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = disabled;
+  });
+}
+
+if (typeof socket !== "undefined") {
+  socket.on("coach_on_demand_response", (data) => {
+    setCoachOnDemandButtonsDisabled(false);
+    const text = stripMarkdownForChat((data && data.text) || "");
+    if (text) _coachRenderBubble("assistant", text);
+  });
+
+  socket.on("coach_on_demand_error", (data) => {
+    setCoachOnDemandButtonsDisabled(false);
+    const err = data && data.error;
+    const msg = (err === "partie_terminee")
+      ? "La partie est terminée."
+      : (err === "stockfish_indisponible")
+      ? "Stockfish indisponible sur ce système."
+      : (err === "no_api_key")
+      ? "Clé API Claude manquante — configurez-la dans les paramètres."
+      : "Le coach n'a pas pu répondre, réessayez.";
+    console.warn("[coach à la demande]", msg, data);
+  });
+}
+
+// ── Retour à un état neutre (bouton "Abandonner", issue #11) ───────────────
+
+function resetBoardToNeutral() {
+  _boardFlipped = false;
+  buildBoard();
+  renderBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR", null, null, null, null, null, null);
+  const boardEl = document.getElementById("board");
+  if (boardEl) {
+    boardEl.onclick = null;
+    boardEl.classList.remove("free-play-active");
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const inp = document.getElementById("coach-input");
   if (inp) inp.addEventListener("keydown", e => { if (e.key === "Enter") coachSend(); });

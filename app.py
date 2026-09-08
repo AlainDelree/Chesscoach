@@ -79,6 +79,86 @@ def index():
     return render_template("index.html")
 
 
+def _game_over_info(board: chess.Board) -> dict | None:
+    """Détection fiable de fin de partie (issue #11), à partir de l'état réel
+    du plateau reconstruit pour cet appel — jamais d'état mis en cache côté
+    serveur qui pourrait devenir obsolète. `claim_draw=True` couvre aussi les
+    nulles revendicables (répétition, règle des 50 coups), pas seulement le
+    pat/mat/matériel insuffisant.
+
+    Retourne None si la partie continue, sinon
+    {"gagnant": "blancs"|"noirs"|None, "message": <texte prêt à afficher>}.
+    """
+    outcome = board.outcome(claim_draw=True)
+    if outcome is None:
+        return None
+    if outcome.winner is True:
+        return {"gagnant": "blancs", "message": "Échec et mat — les Blancs gagnent la partie."}
+    if outcome.winner is False:
+        return {"gagnant": "noirs", "message": "Échec et mat — les Noirs gagnent la partie."}
+    if outcome.termination == chess.Termination.STALEMATE:
+        return {"gagnant": None, "message": "Pat — partie nulle."}
+    return {"gagnant": None, "message": "Partie nulle."}
+
+
+@socketio.on("coach_comment_on_demand")
+def on_coach_comment_on_demand(data):
+    """Bouton "Demander l'avis du coach" (issue #11) : commentaire à la
+    demande sur la position courante, utilisé dans les modes pédagogique,
+    ouverture et finales quand la case "Commenter chaque coup" est décochée.
+
+    Mode-agnostique et réutilisé par les trois modes plutôt que dupliqué :
+    le FEN vient du client (l'instance chess.js du mode concerné), garanti à
+    jour puisque c'est exactement la position affichée à l'écran au moment
+    du clic — pas un état mis en cache côté serveur (cf. issue #11 point 2)."""
+    if not engine_manager:
+        emit("coach_on_demand_error", {"error": "stockfish_indisponible"})
+        return
+
+    fen = (data or {}).get("fen", "")
+    try:
+        board = chess.Board(fen)
+    except Exception:
+        emit("coach_on_demand_error", {"error": "fen_invalide"})
+        return
+
+    if _game_over_info(board) is not None:
+        emit("coach_on_demand_error", {"error": "partie_terminee"})
+        return
+
+    eval_now = engine_manager.evaluate(board, depth=8)
+    meilleur_coup_uci = eval_now.get("best_move")
+    meilleur_coup_san = ""
+    if meilleur_coup_uci:
+        try:
+            meilleur_coup_san = board.san(chess.Move.from_uci(meilleur_coup_uci))
+        except Exception:
+            meilleur_coup_san = meilleur_coup_uci
+
+    theme_finale = ((data or {}).get("theme_finale") or "").strip()
+
+    messages = [{
+        "role": "user",
+        "content": (
+            "Commente la position actuelle sur l'échiquier (matériel, "
+            "activité des pièces, sécurité du roi) et indique le meilleur "
+            "coup à jouer maintenant. Sois concis."
+        ),
+    }]
+    context = {
+        "fen": fen,
+        "meilleur_coup": meilleur_coup_san,
+        "theme_finale": theme_finale,
+    }
+    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+
+    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    if error:
+        emit("coach_on_demand_error", {"error": error})
+    else:
+        emit("coach_on_demand_response", {"text": response, "meilleur_coup": meilleur_coup_san})
+
+
 @socketio.on("coach_ask")
 def on_coach_ask(data):
     """Relaie un tour de conversation au coach LLM (llm_coach.py).
@@ -112,6 +192,14 @@ def on_free_play_stockfish_move(data):
         board = chess.Board(fen)
     except Exception:
         emit("free_play_stockfish_move_response", {"error": "fen_invalide"})
+        return
+
+    game_over_info = _game_over_info(board)
+    if game_over_info is not None:
+        emit("free_play_stockfish_move_response", {
+            "game_over": True,
+            "game_over_info": game_over_info,
+        })
         return
 
     move = engine_manager.get_move(board, think_time=0.5)
@@ -233,18 +321,35 @@ def on_pedagogic_start(data):
     })
 
 
+@socketio.on("pedagogic_abandon")
+def on_pedagogic_abandon(_data):
+    """Bouton "Abandonner" (issue #11) : retour à un état neutre côté
+    serveur, pas de sauvegarde. Le client réinitialise son propre affichage
+    de son côté, indépendamment de cet appel."""
+    global _pedagogic_camp_alain
+    _pedagogic_camp_alain = None
+
+
 @socketio.on("pedagogic_move")
 def on_pedagogic_move(data):
     """Traite un coup joué par Alain en partie pédagogique (issue #8) :
     demande au coach un commentaire (get_coach_response, comme le mode
     exercice, sans coup_reel puisqu'il n'y a pas de partie historique de
-    référence ici), puis fait jouer Stockfish (force réduite) en réponse."""
+    référence ici), puis fait jouer Stockfish (force réduite) en réponse.
+
+    Issue #11 : détection de fin de partie fiable (état réel du plateau,
+    voir _game_over_info) — dès que la partie est terminée (par le coup
+    d'Alain ou par la réponse de Stockfish), on n'interroge plus ni
+    l'adversaire ni le coach, un message de fin clair est émis à la place.
+    Le commentaire automatique du coach devient optionnel (case "Commenter
+    chaque coup", data["commenter"])."""
     if not engine_manager:
         emit("pedagogic_error", {"error": "stockfish_indisponible"})
         return
 
     fen_avant = (data or {}).get("fen_avant", "")
     uci = (data or {}).get("uci", "")
+    commenter = (data or {}).get("commenter", True)
     try:
         board = chess.Board(fen_avant)
         move = chess.Move.from_uci(uci)
@@ -271,18 +376,24 @@ def on_pedagogic_move(data):
     board.push(move)
 
     # Réponse automatique de Stockfish (force réduite) si la partie continue.
+    game_over_info = _game_over_info(board)
     stockfish_move_uci = None
-    if not board.is_game_over():
+    if game_over_info is None:
         reply = engine_manager.get_move_pedagogique(board)
         if reply:
             board.push(reply)
             stockfish_move_uci = reply.uci()
+            game_over_info = _game_over_info(board)
 
     emit("pedagogic_stockfish_move", {
         "fen": board.fen(),
         "uci": stockfish_move_uci,
-        "game_over": board.is_game_over(),
+        "game_over": game_over_info is not None,
+        "game_over_info": game_over_info,
     })
+
+    if game_over_info is not None or not commenter:
+        return
 
     messages = [{
         "role": "user",
@@ -392,6 +503,15 @@ def on_opening_start(data):
     })
 
 
+@socketio.on("opening_abandon")
+def on_opening_abandon(_data):
+    """Bouton "Abandonner" (issue #11) : retour à un état neutre côté
+    serveur, pas de sauvegarde."""
+    global _opening_camp_alain, _opening_in_book
+    _opening_camp_alain = None
+    _opening_in_book = False
+
+
 @socketio.on("opening_move")
 def on_opening_move(data):
     """Traite un coup joué par Alain en mode "travail d'ouverture" (issue #9).
@@ -402,7 +522,13 @@ def on_opening_move(data):
     opening_book.choose_weighted_move). Dès que la position sort du livre
     (plus d'entrée pour la position courante, ou coup d'Alain absent des
     entrées) : bascule définitivement sur le comportement du mode pédagogique
-    (issue #8, Stockfish affaibli + comparaison au meilleur coup Stockfish)."""
+    (issue #8, Stockfish affaibli + comparaison au meilleur coup Stockfish).
+
+    Issue #11 : détection de fin de partie fiable (état réel du plateau,
+    voir _game_over_info) — dès que la partie est terminée, on n'interroge
+    plus ni l'adversaire ni le coach, un message de fin clair est émis à la
+    place. Le commentaire automatique du coach devient optionnel (case
+    "Commenter chaque coup", data["commenter"])."""
     global _opening_in_book
 
     if not engine_manager:
@@ -411,6 +537,7 @@ def on_opening_move(data):
 
     fen_avant = (data or {}).get("fen_avant", "")
     uci = (data or {}).get("uci", "")
+    commenter = (data or {}).get("commenter", True)
     try:
         board = chess.Board(fen_avant)
         move = chess.Move.from_uci(uci)
@@ -456,8 +583,9 @@ def on_opening_move(data):
 
     # Réponse automatique de l'adversaire : livre tant que la partie y reste,
     # sinon Stockfish affaibli (mode pédagogique).
+    game_over_info = _game_over_info(board)
     stockfish_move_uci = None
-    if not board.is_game_over():
+    if game_over_info is None:
         reply = None
         if _opening_in_book:
             reply = opening_book.choose_weighted_move(config.BOOK_PATH, board)
@@ -468,13 +596,18 @@ def on_opening_move(data):
         if reply:
             board.push(reply)
             stockfish_move_uci = reply.uci()
+            game_over_info = _game_over_info(board)
 
     emit("opening_stockfish_move", {
         "fen": board.fen(),
         "uci": stockfish_move_uci,
-        "game_over": board.is_game_over(),
+        "game_over": game_over_info is not None,
+        "game_over_info": game_over_info,
         "in_book": _opening_in_book,
     })
+
+    if game_over_info is not None or not commenter:
+        return
 
     if etait_dans_le_livre and dans_le_livre:
         instruction = (
@@ -599,19 +732,36 @@ def on_finale_start(data):
     })
 
 
+@socketio.on("finale_abandon")
+def on_finale_abandon(_data):
+    """Bouton "Abandonner" (issue #11) : retour à un état neutre côté
+    serveur, pas de sauvegarde."""
+    global _finale_camp_alain, _finale_nom, _finale_description
+    _finale_camp_alain = None
+    _finale_nom = None
+    _finale_description = None
+
+
 @socketio.on("finale_move")
 def on_finale_move(data):
     """Traite un coup joué par Alain en mode "travail de finales" (issue
     #10) : comparaison au meilleur coup Stockfish comme les autres modes
     (get_coach_response), en y ajoutant le thème de la position-type
     sélectionnée (contexte "theme_finale"), puis réponse automatique de
-    l'adversaire à pleine force (engine_manager.get_move)."""
+    l'adversaire à pleine force (engine_manager.get_move).
+
+    Issue #11 : détection de fin de partie fiable (état réel du plateau,
+    voir _game_over_info) — dès que la partie est terminée, on n'interroge
+    plus ni l'adversaire ni le coach, un message de fin clair est émis à la
+    place. Le commentaire automatique du coach devient optionnel (case
+    "Commenter chaque coup", data["commenter"])."""
     if not engine_manager:
         emit("finale_error", {"error": "stockfish_indisponible"})
         return
 
     fen_avant = (data or {}).get("fen_avant", "")
     uci = (data or {}).get("uci", "")
+    commenter = (data or {}).get("commenter", True)
     try:
         board = chess.Board(fen_avant)
         move = chess.Move.from_uci(uci)
@@ -639,18 +789,24 @@ def on_finale_move(data):
 
     # Réponse automatique de l'adversaire à pleine force (pas le moteur
     # affaibli des modes pédagogique/ouverture).
+    game_over_info = _game_over_info(board)
     stockfish_move_uci = None
-    if not board.is_game_over():
+    if game_over_info is None:
         reply = engine_manager.get_move(board, think_time=0.5)
         if reply:
             board.push(reply)
             stockfish_move_uci = reply.uci()
+            game_over_info = _game_over_info(board)
 
     emit("finale_stockfish_move", {
         "fen": board.fen(),
         "uci": stockfish_move_uci,
-        "game_over": board.is_game_over(),
+        "game_over": game_over_info is not None,
+        "game_over_info": game_over_info,
     })
+
+    if game_over_info is not None or not commenter:
+        return
 
     messages = [{
         "role": "user",

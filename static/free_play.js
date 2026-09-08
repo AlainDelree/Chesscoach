@@ -31,6 +31,18 @@ function freeAlgebraicToSquareId(square) {
   return `${file}-${rank}`;
 }
 
+function abandonFreeGame() {
+  if (!freePlayActive) return;
+  freePlayActive     = false;
+  freeGame           = null;
+  freeSelectedSquare = null;
+  freeLastMove       = null;
+  freeWaitingEngine  = false;
+  resetBoardToNeutral();
+  const statusEl = document.getElementById("free-play-status");
+  if (statusEl) statusEl.textContent = "Partie abandonnée.";
+}
+
 function startFreeGame() {
   freeGame           = new Chess();
   freePlayActive     = true;
@@ -131,6 +143,12 @@ if (typeof socket !== "undefined") {
   socket.on("free_play_stockfish_move_response", (data) => {
     freeWaitingEngine = false;
     if (!freePlayActive || !freeGame) return;
+
+    if (data && data.game_over) {
+      const statusEl = document.getElementById("free-play-status");
+      if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      return;
+    }
 
     if (!data || data.error || !data.uci) {
       console.warn("[partie libre] Stockfish n'a pas retourné de coup :", data && data.error);
