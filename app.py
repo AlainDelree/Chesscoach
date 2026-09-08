@@ -249,16 +249,27 @@ def on_free_play_stockfish_move(data):
 
 
 @socketio.on("exercise_new")
-def on_exercise_new():
+def on_exercise_new(data=None):
     """Tire au sort une entrée de erreurs_detectees.json (mode "Exercice",
-    issue #7) et l'envoie au client — tirage uniforme, pas de pondération
-    (hors périmètre de cette issue)."""
+    issue #7) et l'envoie au client — tirage uniforme parmi les entrées
+    retenues, pas de pondération (hors périmètre de cette issue).
+
+    Issue #13 : filtre optionnel par phase (data.phase parmi "ouverture" /
+    "milieu_de_partie" / "finale" ; absent ou "toutes" = pas de filtre), pour
+    cibler spécifiquement un axe faible identifié par le coach plutôt que de
+    tirer uniformément sur toutes les phases confondues."""
     global _current_exercise
-    if not erreurs_detectees:
+
+    phase = ((data or {}).get("phase") or "toutes").strip()
+    pool = erreurs_detectees
+    if phase and phase != "toutes":
+        pool = [e for e in erreurs_detectees if e.get("phase") == phase]
+
+    if not pool:
         emit("exercise_error", {"error": "aucune_erreur_disponible"})
         return
 
-    _current_exercise = random.choice(erreurs_detectees)
+    _current_exercise = random.choice(pool)
     emit("exercise_position", {
         "fen": _current_exercise["fen_avant"],
         "camp_alain": _current_exercise["camp_alain"],
@@ -564,6 +575,20 @@ def on_opening_abandon(_data):
     _opening_in_book = False
 
 
+@socketio.on("opening_undo")
+def on_opening_undo(data):
+    """Bouton "Reprendre mon coup" (issue #13) : le client revient seul à la
+    position précédente (chess.js, pas d'état de partie conservé côté
+    serveur pour ce mode) — mais _opening_in_book, lui, est un drapeau
+    mutable côté serveur (bascule définitivement à False dès la sortie du
+    livre, cf. on_opening_move) qui doit être resynchronisé sur sa valeur
+    d'avant le coup annulé, transmise par le client (qui la connaît via le
+    dernier "in_book" reçu) ; sans cela, un coup qui redevient dans le livre
+    après annulation resterait à tort traité comme hors-livre."""
+    global _opening_in_book
+    _opening_in_book = bool((data or {}).get("in_book", False))
+
+
 @socketio.on("opening_move")
 def on_opening_move(data):
     """Traite un coup joué par Alain en mode "travail d'ouverture" (issue #9).
@@ -739,6 +764,44 @@ def on_finale_list(_data):
     pour peupler le menu déroulant du panneau "Travail de finales"."""
     entries = finales.get_finales()
     emit("finale_list_response", {
+        "finales": [
+            {
+                "id": e["id"],
+                "nom": e["nom"],
+                "description": e["description"],
+                "camp_alain": e["camp_alain"],
+            }
+            for e in entries
+        ],
+    })
+
+
+@socketio.on("finale_add")
+def on_finale_add(data):
+    """Bouton "Enregistrer comme finale" du mode "Partie libre" (issue #13) :
+    ajoute la position courante (FEN, camp au trait comme camp_alain,
+    transmis par le client) à data/finales.json avec le nom/la description
+    saisis par Alain, et renvoie la bibliothèque à jour (même forme que
+    finale_list_response) pour que le sélecteur du mode "Travail de finales"
+    la propose immédiatement, sans redémarrage."""
+    fen         = ((data or {}).get("fen") or "").strip()
+    camp_alain  = ((data or {}).get("camp_alain") or "").strip()
+    nom         = ((data or {}).get("nom") or "").strip()
+    description = ((data or {}).get("description") or "").strip()
+
+    if not nom or camp_alain not in ("blancs", "noirs"):
+        emit("finale_add_response", {"error": "champs_invalides"})
+        return
+
+    entry = finales.add_finale(fen, camp_alain, nom, description)
+    if not entry:
+        emit("finale_add_response", {"error": "fen_invalide"})
+        return
+
+    entries = finales.get_finales()
+    emit("finale_add_response", {
+        "id": entry["id"],
+        "nom": entry["nom"],
         "finales": [
             {
                 "id": e["id"],

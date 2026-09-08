@@ -25,6 +25,7 @@ let finaleSelected   = null;  // case algébrique sélectionnée ou null
 let finaleWaiting    = false; // coup en cours de traitement côté serveur
 let finaleGameOver   = false; // fin de partie détectée côté serveur (issue #11)
 let finaleList       = [];    // bibliothèque reçue du serveur (finale_list_response)
+let finaleFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 
 function finaleCommenterChaqueCoup() {
   const cb = document.getElementById("finale-auto-comment");
@@ -39,6 +40,7 @@ function abandonFinaleGame() {
   finaleWaiting   = false;
   finaleSelected  = null;
   finaleGameOver  = false;
+  finaleFenAvantCoup = null;
   resetBoardToNeutral();
   const statusEl = document.getElementById("finale-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
@@ -46,6 +48,20 @@ function abandonFinaleGame() {
   if (descEl) descEl.textContent = "";
   const selectEl = document.getElementById("finale-select");
   if (selectEl) selectEl.value = "";
+}
+
+function reprendreFinaleCoup() {
+  const statusEl = document.getElementById("finale-status");
+  if (!finaleActive || finaleWaiting || !finaleFenAvantCoup) {
+    if (statusEl && finaleActive && !finaleWaiting) statusEl.textContent = "Aucun coup à reprendre.";
+    return;
+  }
+  finaleGame     = new Chess(finaleFenAvantCoup);
+  finaleGameOver = false;
+  finaleSelected = null;
+  finaleFenAvantCoup = null;
+  renderFinaleBoard();
+  updateFinaleStatus();
 }
 
 function askFinaleCoach() {
@@ -80,6 +96,7 @@ function onFinaleSelectChange() {
 
   finaleWaiting  = true;
   finaleGameOver = false;
+  finaleFenAvantCoup = null;
   const statusEl = document.getElementById("finale-status");
   if (statusEl) statusEl.textContent = "Chargement de la position...";
   socket.emit("finale_start", { id });
@@ -152,6 +169,7 @@ function onFinaleBoardClick(e) {
 
   renderFinaleBoard(move.from, move.to);
   finaleWaiting = true;
+  finaleFenAvantCoup = fenAvant;
   updateFinaleStatus();
   _coachRenderBubble("user", `Travail de finales — je joue ${move.san}`);
   socket.emit("finale_move", {

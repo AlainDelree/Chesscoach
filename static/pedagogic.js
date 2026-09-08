@@ -22,6 +22,7 @@ let pedagogicCampAlain  = "blancs";
 let pedagogicSelected   = null;  // case algébrique sélectionnée ou null
 let pedagogicWaiting    = false; // coup en cours de traitement côté serveur
 let pedagogicGameOver   = false; // fin de partie détectée côté serveur (issue #11)
+let pedagogicFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 
 function pedagogicCommenterChaqueCoup() {
   const cb = document.getElementById("pedagogic-auto-comment");
@@ -32,6 +33,7 @@ function startPedagogicGame(camp) {
   pedagogicCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   pedagogicWaiting   = true;
   pedagogicGameOver  = false;
+  pedagogicFenAvantCoup = null;
   const statusEl = document.getElementById("pedagogic-status");
   if (statusEl) statusEl.textContent = "Démarrage de la partie...";
   socket.emit("pedagogic_start", { camp: pedagogicCampAlain });
@@ -45,9 +47,24 @@ function abandonPedagogicGame() {
   pedagogicWaiting   = false;
   pedagogicSelected  = null;
   pedagogicGameOver  = false;
+  pedagogicFenAvantCoup = null;
   resetBoardToNeutral();
   const statusEl = document.getElementById("pedagogic-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
+}
+
+function reprendrePedagogicCoup() {
+  const statusEl = document.getElementById("pedagogic-status");
+  if (!pedagogicActive || pedagogicWaiting || !pedagogicFenAvantCoup) {
+    if (statusEl && pedagogicActive && !pedagogicWaiting) statusEl.textContent = "Aucun coup à reprendre.";
+    return;
+  }
+  pedagogicGame     = new Chess(pedagogicFenAvantCoup);
+  pedagogicGameOver = false;
+  pedagogicSelected = null;
+  pedagogicFenAvantCoup = null;
+  renderPedagogicBoard();
+  updatePedagogicStatus();
 }
 
 function askPedagogicCoach() {
@@ -122,6 +139,7 @@ function onPedagogicBoardClick(e) {
 
   renderPedagogicBoard(move.from, move.to);
   pedagogicWaiting = true;
+  pedagogicFenAvantCoup = fenAvant;
   updatePedagogicStatus();
   _coachRenderBubble("user", `Partie pédagogique — je joue ${move.san}`);
   socket.emit("pedagogic_move", {

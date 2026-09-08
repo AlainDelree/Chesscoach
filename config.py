@@ -14,6 +14,11 @@ ENGINES_DIR = Path.home() / "ChessCoach" / "engines"
 COACH_MEMORY_PATH = DATA_DIR / "coach_memory.json"
 ERREURS_DETECTEES_PATH = DATA_DIR / "erreurs_detectees.json"
 
+# Bibliothèque de positions-types de finales (issue #13) — fichier de
+# données modifiable depuis l'interface (bouton "Enregistrer comme finale"
+# du mode "Partie libre"), plus une liste figée dans le code (finales.py).
+FINALES_PATH = DATA_DIR / "finales.json"
+
 # Livre d'ouvertures Polyglot réel (issue #9, mode "travail d'ouverture") —
 # déposé manuellement par Alain, gitignoré comme le reste de data/. Sa
 # présence est vérifiée explicitement au démarrage de ce mode plutôt que de

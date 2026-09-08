@@ -21,6 +21,8 @@ let openingSelected   = null;  // case algébrique sélectionnée ou null
 let openingWaiting    = false; // coup en cours de traitement côté serveur
 let openingInBook     = false; // la partie est encore dans le livre Polyglot
 let openingGameOver   = false; // fin de partie détectée côté serveur (issue #11)
+let openingFenAvantCoup     = null;  // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
+let openingInBookAvantCoup  = false; // valeur de openingInBook avant ce même coup
 
 function openingCommenterChaqueCoup() {
   const cb = document.getElementById("opening-auto-comment");
@@ -36,9 +38,27 @@ function abandonOpeningGame() {
   openingSelected  = null;
   openingInBook    = false;
   openingGameOver  = false;
+  openingFenAvantCoup    = null;
+  openingInBookAvantCoup = false;
   resetBoardToNeutral();
   const statusEl = document.getElementById("opening-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
+}
+
+function reprendreOpeningCoup() {
+  const statusEl = document.getElementById("opening-status");
+  if (!openingActive || openingWaiting || !openingFenAvantCoup) {
+    if (statusEl && openingActive && !openingWaiting) statusEl.textContent = "Aucun coup à reprendre.";
+    return;
+  }
+  openingGame      = new Chess(openingFenAvantCoup);
+  openingGameOver  = false;
+  openingSelected  = null;
+  openingInBook    = openingInBookAvantCoup;
+  openingFenAvantCoup = null;
+  socket.emit("opening_undo", { in_book: openingInBookAvantCoup });
+  renderOpeningBoard();
+  updateOpeningStatus();
 }
 
 function askOpeningCoach() {
@@ -57,6 +77,8 @@ function startOpeningGame(camp) {
   openingCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   openingWaiting   = true;
   openingGameOver  = false;
+  openingFenAvantCoup    = null;
+  openingInBookAvantCoup = false;
   const statusEl = document.getElementById("opening-status");
   if (statusEl) statusEl.textContent = `Recherche de la théorie pour "${openingName}"...`;
   socket.emit("opening_start", { camp: openingCampAlain, opening_name: openingName });
@@ -130,6 +152,8 @@ function onOpeningBoardClick(e) {
 
   renderOpeningBoard(move.from, move.to);
   openingWaiting = true;
+  openingFenAvantCoup    = fenAvant;
+  openingInBookAvantCoup = openingInBook;
   updateOpeningStatus();
   _coachRenderBubble("user", `Travail d'ouverture — je joue ${move.san}`);
   socket.emit("opening_move", {

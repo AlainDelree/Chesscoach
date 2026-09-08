@@ -139,6 +139,13 @@
             Stockfish joue auto
           </label>
         </div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+          <input id="free-finale-nom" type="text" placeholder="Nom de la finale" style="flex:1; min-width:140px;">
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+          <input id="free-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
+          <button onclick="saveFreeGameAsFinale()">Enregistrer comme finale</button>
+        </div>
         <div id="free-play-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
       </div>
 
@@ -147,6 +154,7 @@
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           <button onclick="startPedagogicGame('blancs')">Jouer les Blancs</button>
           <button onclick="startPedagogicGame('noirs')">Jouer les Noirs</button>
+          <button onclick="reprendrePedagogicCoup()">Reprendre mon coup</button>
           <button onclick="abandonPedagogicGame()">Abandonner</button>
         </div>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
@@ -167,6 +175,7 @@
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
           <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
           <button onclick="startOpeningGame('noirs')">Jouer les Noirs</button>
+          <button onclick="reprendreOpeningCoup()">Reprendre mon coup</button>
           <button onclick="abandonOpeningGame()">Abandonner</button>
         </div>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
@@ -185,6 +194,7 @@
           <select id="finale-select" style="flex:1; min-width:0;" onchange="onFinaleSelectChange()">
             <option value="">— Choisir une finale —</option>
           </select>
+          <button onclick="reprendreFinaleCoup()">Reprendre mon coup</button>
           <button onclick="abandonFinaleGame()">Abandonner</button>
         </div>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
@@ -201,8 +211,17 @@
       <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
         <h2>Mode exercice</h2>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <select id="exercise-phase-select" style="flex:1; min-width:140px;">
+            <option value="toutes">Toutes les phases</option>
+            <option value="ouverture">Ouverture</option>
+            <option value="milieu_de_partie">Milieu de partie</option>
+            <option value="finale">Finale</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
           <button onclick="startExercise()">Nouvel exercice</button>
           <button onclick="startExercise()">Position suivante</button>
+          <button onclick="reprendreExerciceCoup()">Reprendre mon coup</button>
         </div>
         <div id="exercise-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
       </div>
@@ -211,7 +230,7 @@
     <!-- ── Colonne chat coach ───────────────────────────────────────────── -->
     <div id="coach-column">
       <div class="panel coach-drawer">
-        <h2>Coach</h2>
+        <h2>Coach <button onclick="coachClear()" style="font-size:0.75rem; font-weight:normal; float:right;">Effacer</button></h2>
         <div id="coach-history" class="coach-history">
           <div id="coach-empty" style="color:#778; font-size:0.82rem; text-align:center; padding:20px 8px;">
             Posez une question sur la position affichée.

@@ -139,6 +139,49 @@ function requestStockfishMove() {
   socket.emit("free_play_stockfish_move", { fen: freeGame.fen() });
 }
 
+// ── Enregistrer la position courante comme finale (issue #13) ──────────────
+// Sauvegarde la FEN courante de la partie libre (camp au trait comme
+// camp_alain) dans data/finales.json, avec un nom/une description saisis
+// par Alain — elle apparaît ensuite immédiatement dans le sélecteur du mode
+// "Travail de finales" (finaleList/populateFinaleSelect de finales.js).
+
+function saveFreeGameAsFinale() {
+  const statusEl = document.getElementById("free-play-status");
+  if (!freePlayActive || !freeGame) {
+    if (statusEl) statusEl.textContent = "Démarrez d'abord une partie libre.";
+    return;
+  }
+  const nomEl  = document.getElementById("free-finale-nom");
+  const descEl = document.getElementById("free-finale-description");
+  const nom = nomEl ? nomEl.value.trim() : "";
+  const description = descEl ? descEl.value.trim() : "";
+  if (!nom) {
+    if (statusEl) statusEl.textContent = "Indiquez un nom pour cette finale avant d'enregistrer.";
+    return;
+  }
+  const campAlain = freeGame.turn() === "w" ? "blancs" : "noirs";
+  socket.emit("finale_add", { fen: freeGame.fen(), camp_alain: campAlain, nom, description });
+}
+
+if (typeof socket !== "undefined") {
+  socket.on("finale_add_response", (data) => {
+    const statusEl = document.getElementById("free-play-status");
+    if (!data || data.error) {
+      if (statusEl) statusEl.textContent = "Impossible d'enregistrer cette finale (nom ou position invalide).";
+      return;
+    }
+    if (statusEl) statusEl.textContent = `Finale "${data.nom}" enregistrée — disponible dans le mode "Travail de finales".`;
+    const nomEl  = document.getElementById("free-finale-nom");
+    const descEl = document.getElementById("free-finale-description");
+    if (nomEl)  nomEl.value  = "";
+    if (descEl) descEl.value = "";
+    if (data.finales) {
+      finaleList = data.finales;
+      if (typeof populateFinaleSelect === "function") populateFinaleSelect();
+    }
+  });
+}
+
 if (typeof socket !== "undefined") {
   socket.on("free_play_stockfish_move_response", (data) => {
     freeWaitingEngine = false;

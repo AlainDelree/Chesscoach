@@ -11,17 +11,41 @@
  * d'un enchaînement Stockfish) diffèrent.
  */
 
-let exerciseGame     = null;  // instance chess.js (position de l'exercice)
-let exerciseActive   = false;
-let exerciseSelected = null;  // case algébrique sélectionnée ou null
-let exerciseAnswered = false; // un coup a déjà été proposé pour cet exercice
+let exerciseGame       = null;  // instance chess.js (position de l'exercice)
+let exerciseActive     = false;
+let exerciseSelected   = null;  // case algébrique sélectionnée ou null
+let exerciseAnswered   = false; // un coup a déjà été proposé pour cet exercice
+let exerciseFenAvant   = null;  // FEN de départ de l'exercice (issue #13, "Reprendre mon coup")
+let exerciseCampAlain  = null;
+
+function exercisePhaseFiltre() {
+  const sel = document.getElementById("exercise-phase-select");
+  return sel ? sel.value : "toutes";
+}
 
 function startExercise() {
   exerciseAnswered = false;
   exerciseSelected = null;
+  exerciseFenAvant = null;
   const statusEl = document.getElementById("exercise-status");
   if (statusEl) statusEl.textContent = "Chargement d'une position...";
-  socket.emit("exercise_new");
+  socket.emit("exercise_new", { phase: exercisePhaseFiltre() });
+}
+
+function reprendreExerciceCoup() {
+  const statusEl = document.getElementById("exercise-status");
+  if (!exerciseActive || !exerciseFenAvant) {
+    if (statusEl) statusEl.textContent = "Aucun coup à reprendre.";
+    return;
+  }
+  exerciseGame     = new Chess(exerciseFenAvant);
+  exerciseAnswered = false;
+  exerciseSelected = null;
+  renderExerciseBoard();
+  if (statusEl) {
+    const camp = exerciseCampAlain === "noirs" ? "Noirs" : "Blancs";
+    statusEl.textContent = `Coup repris — à toi de rejouer (${camp}).`;
+  }
 }
 
 function renderExerciseBoard() {
@@ -86,10 +110,12 @@ function submitExerciseAnswer(move) {
 if (typeof socket !== "undefined") {
   socket.on("exercise_position", (data) => {
     if (!data || !data.fen) return;
-    exerciseGame     = new Chess(data.fen);
-    exerciseActive   = true;
-    exerciseAnswered = false;
-    exerciseSelected = null;
+    exerciseGame      = new Chess(data.fen);
+    exerciseActive    = true;
+    exerciseAnswered  = false;
+    exerciseSelected  = null;
+    exerciseFenAvant  = data.fen;
+    exerciseCampAlain = data.camp_alain;
 
     _boardFlipped = (data.camp_alain === "noirs");
     buildBoard();
