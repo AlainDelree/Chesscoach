@@ -163,11 +163,14 @@ function saveFreeGameAsFinale() {
     return;
   }
   const campAlain = freeGame.turn() === "w" ? "blancs" : "noirs";
+  pendingFinaleAddSource = "free";
   socket.emit("finale_add", { fen: freeGame.fen(), camp_alain: campAlain, nom, description });
 }
 
 if (typeof socket !== "undefined") {
   socket.on("finale_add_response", (data) => {
+    if (pendingFinaleAddSource !== "free") return;
+    pendingFinaleAddSource = null;
     const statusEl = document.getElementById("free-play-status");
     if (!data || data.error) {
       if (statusEl) statusEl.textContent = "Impossible d'enregistrer cette finale (nom ou position invalide).";

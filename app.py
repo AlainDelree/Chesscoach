@@ -836,6 +836,54 @@ def on_finale_add(data):
     })
 
 
+# Traduction des drapeaux chess.Board.status() en messages compréhensibles
+# pour l'éditeur de position (issue #16) — l'éditeur autorise n'importe quel
+# placement de pièces, donc plusieurs positions illégales possibles à la fois
+# (ex. deux rois blancs ET un pion sur la 1ère rangée) : on les liste toutes
+# plutôt que de ne signaler que la première.
+_EDITOR_STATUS_MESSAGES = {
+    chess.STATUS_EMPTY: "L'échiquier est vide.",
+    chess.STATUS_NO_WHITE_KING: "Il manque le roi blanc.",
+    chess.STATUS_NO_BLACK_KING: "Il manque le roi noir.",
+    chess.STATUS_TOO_MANY_KINGS: "Il y a plus d'un roi pour un même camp.",
+    chess.STATUS_TOO_MANY_WHITE_PAWNS: "Trop de pions blancs (maximum 8).",
+    chess.STATUS_TOO_MANY_BLACK_PAWNS: "Trop de pions noirs (maximum 8).",
+    chess.STATUS_PAWNS_ON_BACKRANK: "Un pion est placé sur la 1ère ou la 8e rangée.",
+    chess.STATUS_TOO_MANY_WHITE_PIECES: "Trop de pièces blanches au total.",
+    chess.STATUS_TOO_MANY_BLACK_PIECES: "Trop de pièces noires au total.",
+    chess.STATUS_BAD_CASTLING_RIGHTS: "Droits de roque incohérents.",
+    chess.STATUS_INVALID_EP_SQUARE: "Case de prise en passant invalide.",
+    chess.STATUS_OPPOSITE_CHECK: "Le camp qui n'est pas au trait est en échec — position impossible.",
+    chess.STATUS_TOO_MANY_CHECKERS: "Trop de pièces donnent échec simultanément — position impossible.",
+    chess.STATUS_IMPOSSIBLE_CHECK: "La situation d'échec actuelle est impossible à atteindre.",
+}
+
+
+@socketio.on("editor_validate")
+def on_editor_validate(data):
+    """Éditeur de position (issue #16) : valide en direct, via python-chess
+    (Board.status()), la position en cours de construction — appelé à
+    chaque placement/retrait/déplacement de pièce et à chaque changement de
+    trait, pour indiquer clairement à Alain pourquoi une position est
+    illégale plutôt que d'attendre l'échec silencieux de finale_add."""
+    fen = ((data or {}).get("fen") or "").strip()
+    try:
+        board = chess.Board(fen)
+    except Exception:
+        emit("editor_validate_response", {"valid": False, "problems": ["FEN invalide."]})
+        return
+
+    status = board.status()
+    if status == chess.STATUS_VALID:
+        emit("editor_validate_response", {"valid": True, "problems": []})
+        return
+
+    problems = [msg for flag, msg in _EDITOR_STATUS_MESSAGES.items() if status & flag]
+    if not problems:
+        problems = ["Position invalide."]
+    emit("editor_validate_response", {"valid": False, "problems": problems})
+
+
 @socketio.on("finale_start")
 def on_finale_start(data):
     """Charge une position-type de la bibliothèque de finales (issue #10) et

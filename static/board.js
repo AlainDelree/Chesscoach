@@ -51,6 +51,12 @@ const PIECES = {
 
 let _boardFlipped = false;
 
+// Discriminant de la réponse finale_add_response (issue #13, mutualisée par
+// free_play.js et editor.js issue #16) : plusieurs panneaux peuvent émettre
+// finale_add, mais un seul doit réagir à la réponse (mettre à jour son
+// propre statut/formulaire) — celui qui a fait la dernière demande.
+let pendingFinaleAddSource = null; // "free" | "editor" | null
+
 // ── Échiquier — construction et rendu ───────────────────────────────────────
 
 function buildBoard() {

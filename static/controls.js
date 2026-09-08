@@ -23,7 +23,7 @@
  * liste garde la lecture du fichier simple.
  */
 
-let activeMode = null; // null | "free" | "pedagogic" | "opening" | "finale" | "exercise"
+let activeMode = null; // null | "free" | "pedagogic" | "opening" | "finale" | "exercise" | "editor"
 
 const MODE_CAPS = {
   free:      { abandon: () => abandonFreeGame(),         reprendre: null,                            askCoach: null,                       hasComment: false },
@@ -31,6 +31,10 @@ const MODE_CAPS = {
   opening:   { abandon: () => abandonOpeningGame(),       reprendre: () => reprendreOpeningCoup(),    askCoach: () => askOpeningCoach(),    hasComment: true  },
   finale:    { abandon: () => abandonFinaleGame(),        reprendre: () => reprendreFinaleCoup(),     askCoach: () => askFinaleCoach(),     hasComment: true  },
   exercise:  { abandon: null,                             reprendre: () => reprendreExerciceCoup(),   askCoach: null,                       hasComment: false },
+  // Éditeur de position (issue #16) : pas de partie jouée, donc pas de
+  // "reprendre mon coup" ni de coach à la demande — juste un moyen de
+  // quitter le panneau via le bouton "Abandonner" mutualisé.
+  editor:    { abandon: () => abandonPositionEditor(),    reprendre: null,                            askCoach: null,                       hasComment: false },
 };
 
 const MODE_LABELS = {
@@ -39,6 +43,7 @@ const MODE_LABELS = {
   opening:   "Travail d'ouverture en cours.",
   finale:    "Travail de finales en cours.",
   exercise:  "Exercice en cours.",
+  editor:    "Éditeur de position actif.",
 };
 
 function setActiveMode(mode) {

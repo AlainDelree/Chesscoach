@@ -200,6 +200,36 @@
       </div>
 
       <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
+        <h2>Éditeur de position</h2>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <button onclick="startPositionEditor()">Ouvrir l'éditeur de position</button>
+          <button onclick="clearEditorBoard()">Vider l'échiquier</button>
+        </div>
+        <div id="editor-palette" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:8px;"></div>
+        <div id="editor-trash" style="margin-top:6px; padding:6px; border:1px dashed #a0b8d0; border-radius:4px; font-size:0.78rem; color:#778; text-align:center;">
+          Glisser une pièce ici pour la retirer de l'échiquier
+        </div>
+        <div style="display:flex; gap:12px; align-items:center; margin-top:8px; font-size:0.82rem;">
+          <label><input type="radio" name="editor-trait" id="editor-trait-blancs" value="blancs" checked onchange="onEditorTraitChange()"> Trait aux Blancs</label>
+          <label><input type="radio" name="editor-trait" value="noirs" onchange="onEditorTraitChange()"> Trait aux Noirs</label>
+        </div>
+        <div style="display:flex; gap:12px; align-items:center; margin-top:4px; font-size:0.82rem;">
+          <span style="color:#556;">Alain joue :</span>
+          <label><input type="radio" name="editor-camp-alain" id="editor-camp-alain-blancs" value="blancs" checked onchange="onEditorCampAlainChange()"> les Blancs</label>
+          <label><input type="radio" name="editor-camp-alain" id="editor-camp-alain-noirs" value="noirs" onchange="onEditorCampAlainChange()"> les Noirs</label>
+        </div>
+        <div id="editor-validation-status" style="font-size:0.82rem; margin-top:6px;"></div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+          <input id="editor-finale-nom" type="text" placeholder="Nom de la finale" style="flex:1; min-width:140px;">
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+          <input id="editor-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
+          <button id="editor-save-btn" onclick="saveEditorPositionAsFinale()" disabled>Enregistrer comme finale</button>
+        </div>
+        <div id="editor-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+      </div>
+
+      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
         <h2>Mode exercice</h2>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           <select id="exercise-phase-select" style="flex:1; min-width:140px;">
@@ -292,6 +322,7 @@
   <script src="{{ url_for('static', filename='pedagogic.js') }}"></script>
   <script src="{{ url_for('static', filename='opening.js') }}"></script>
   <script src="{{ url_for('static', filename='finales.js') }}"></script>
+  <script src="{{ url_for('static', filename='editor.js') }}"></script>
   <script src="{{ url_for('static', filename='controls.js') }}"></script>
   <script>
     // Position de départ affichée immédiatement, avant même le retour de la
