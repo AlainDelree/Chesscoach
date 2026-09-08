@@ -229,6 +229,18 @@
 
     <!-- ── Colonne chat coach ───────────────────────────────────────────── -->
     <div id="coach-column">
+      <div class="panel" style="margin-bottom:12px;">
+        <h2>Programme d'entraînement</h2>
+        <ul id="training-program-list" style="margin:0 0 6px; padding-left:18px; font-size:0.85rem;">
+          {% for objectif in objectifs_courants %}
+          <li>{{ objectif }}</li>
+          {% else %}
+          <li id="training-program-empty" style="list-style:none; padding-left:0; color:#778;">Aucun programme établi pour l'instant.</li>
+          {% endfor %}
+        </ul>
+        <button id="training-program-btn" onclick="buildTrainingProgram()">Établir mon programme d'entraînement</button>
+        <div id="training-program-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+      </div>
       <div class="panel coach-drawer">
         <h2>Coach <button onclick="coachClear()" style="font-size:0.75rem; font-weight:normal; float:right;">Effacer</button></h2>
         <div id="coach-history" class="coach-history">

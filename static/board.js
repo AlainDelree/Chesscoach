@@ -616,6 +616,63 @@ if (typeof socket !== "undefined") {
   });
 }
 
+// ── Programme d'entraînement (issue #14) ────────────────────────────────────
+// Bouton "Établir mon programme d'entraînement" : appel dédié au coach
+// (training_program_build côté serveur), réponse structurée stockée dans
+// objectifs_courants (coach_memory.json) et affichée dans le panneau dédié.
+// Un nouvel appel remplace intégralement la liste affichée (pas d'historique).
+
+function renderTrainingProgram(objectifs) {
+  const list = document.getElementById("training-program-list");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!objectifs || !objectifs.length) {
+    const li = document.createElement("li");
+    li.id = "training-program-empty";
+    li.style.cssText = "list-style:none; padding-left:0; color:#778;";
+    li.textContent = "Aucun programme établi pour l'instant.";
+    list.appendChild(li);
+    return;
+  }
+  objectifs.forEach((objectif) => {
+    const li = document.createElement("li");
+    li.textContent = objectif;
+    list.appendChild(li);
+  });
+}
+
+function buildTrainingProgram() {
+  const btn = document.getElementById("training-program-btn");
+  if (btn) btn.disabled = true;
+  const status = document.getElementById("training-program-status");
+  if (status) status.textContent = "Génération du programme en cours...";
+  socket.emit("training_program_build", {});
+}
+
+if (typeof socket !== "undefined") {
+  socket.on("training_program_response", (data) => {
+    const btn = document.getElementById("training-program-btn");
+    if (btn) btn.disabled = false;
+    const status = document.getElementById("training-program-status");
+    if (status) status.textContent = "";
+    renderTrainingProgram((data && data.objectifs) || []);
+  });
+
+  socket.on("training_program_error", (data) => {
+    const btn = document.getElementById("training-program-btn");
+    if (btn) btn.disabled = false;
+    const err = data && data.error;
+    const msg = (err === "no_api_key")
+      ? "Clé API Claude manquante — configurez-la dans les paramètres."
+      : (err === "donnees_insuffisantes")
+      ? "Pas encore assez de données (erreurs/ouvertures) pour établir un programme."
+      : "Le programme n'a pas pu être établi, réessayez.";
+    const status = document.getElementById("training-program-status");
+    if (status) status.textContent = msg;
+    console.warn("[programme entrainement]", msg, data);
+  });
+}
+
 // ── Coach à la demande (issue #11) ──────────────────────────────────────────
 // Bouton "Demander l'avis du coach" des modes pédagogique/ouverture/finales
 // (visible quand la case "Commenter chaque coup" est décochée) : un seul

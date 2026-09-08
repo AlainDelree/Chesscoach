@@ -42,7 +42,27 @@ _SYSTEM_PROMPT = (
     "d'abord sur cette évaluation réelle, pas seulement sur la comparaison "
     "au meilleur coup : un coup qui mène à un mat forcé contre le joueur "
     "n'est jamais un bon coup, même s'il semble raisonnable à première vue. "
+    "Si un programme d'entraînement en cours (objectifs_courants) figure "
+    "dans sa mémoire de progression, garde ces priorités à l'esprit et "
+    "relie tes réponses à ces objectifs quand c'est pertinent. "
     "Réponds en français."
+)
+
+# Appel dédié, distinct du chat coach (issue #14, "Établir mon programme
+# d'entraînement") : comme get_opening_moves, une réponse structurée en JSON
+# plutôt que de la prose libre, pour pouvoir stocker le résultat de façon
+# fiable dans objectifs_courants (coach_memory.json).
+_TRAINING_PROGRAM_SYSTEM_PROMPT = (
+    "Tu es un coach d'échecs personnel. On te fournit les patterns "
+    "d'erreurs récurrentes du joueur (par phase de partie) et son "
+    "répertoire d'ouvertures (Blancs et Noirs), au format JSON. À partir de "
+    "ces données, établis un programme de travail concret : 2 à 3 "
+    "priorités d'entraînement, chacune en une phrase courte et actionnable "
+    "(pas de prose ni de longue justification), ciblant les points les "
+    "plus impactants pour progresser. Réponds UNIQUEMENT avec un objet "
+    "JSON, sans aucun texte ni balise autour, au format exact "
+    "{\"objectifs\": [\"...\", \"...\"]} où \"objectifs\" contient 2 à 3 "
+    "chaînes de caractères, en français."
 )
 
 # Appel dédié, distinct du chat coach (issue #9, mode "travail d'ouverture") :
@@ -261,6 +281,67 @@ def get_opening_moves(opening_name: str, config):
         return None, "reponse_invalide"
 
     return [m.strip() for m in moves[:6]], None
+
+
+def get_training_program(patterns_erreurs, repertoire_ouvertures, config):
+    """Établit un programme d'entraînement de 2 à 3 priorités concrètes
+    (issue #14, bouton "Établir mon programme d'entraînement"), via un appel
+    dédié à Claude — indépendant du chat coach multi-tours, à partir des
+    patterns_erreurs et repertoire_ouvertures de coach_memory.json.
+
+    Paramètres :
+      patterns_erreurs      : dict (clé coach_memory.json) — peut être {}
+      repertoire_ouvertures : dict (clé coach_memory.json) — peut être {}
+      config                : dict avec au moins "llm_api_key" et,
+                               optionnellement, "llm_model"
+
+    Retourne (liste de 2 à 3 priorités textuelles, erreur) — un seul des
+    deux est non vide/None. Erreurs possibles : "no_api_key",
+    "donnees_insuffisantes", "reponse_invalide", ou le message de
+    l'exception réseau.
+    """
+    api_key = (config or {}).get("llm_api_key", "")
+    if not api_key:
+        return None, "no_api_key"
+
+    if not patterns_erreurs and not repertoire_ouvertures:
+        return None, "donnees_insuffisantes"
+
+    model = (config or {}).get("llm_model", "")
+    data_text = json.dumps({
+        "patterns_erreurs": patterns_erreurs or {},
+        "repertoire_ouvertures": repertoire_ouvertures or {},
+    }, ensure_ascii=False, indent=2)
+    prompt_user = f"Données du joueur (JSON) :\n{data_text}"
+
+    try:
+        raw = _call_claude(_TRAINING_PROGRAM_SYSTEM_PROMPT, prompt_user, api_key, model)
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
+        logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) échoué : {e}")
+        return None, str(e)
+
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        logger.warning(f"[LLM_COACH] Réponse programme d'entraînement non-JSON : {raw!r}")
+        return None, "reponse_invalide"
+
+    if not isinstance(parsed, dict):
+        return None, "reponse_invalide"
+
+    objectifs = parsed.get("objectifs")
+    if not isinstance(objectifs, list) or not objectifs or not all(
+        isinstance(o, str) and o.strip() for o in objectifs
+    ):
+        return None, "reponse_invalide"
+
+    return [o.strip() for o in objectifs[:3]], None
 
 
 def get_coach_response(messages, context, coach_memory, config):

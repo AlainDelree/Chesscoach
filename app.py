@@ -76,7 +76,7 @@ if engine_manager:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", objectifs_courants=coach_memory.get("objectifs_courants", []))
 
 
 def _game_over_info(board: chess.Board) -> dict | None:
@@ -214,6 +214,28 @@ def on_coach_ask(data):
         emit("coach_error", {"error": error})
     else:
         emit("coach_response", {"text": response})
+
+
+@socketio.on("training_program_build")
+def on_training_program_build(_data=None):
+    """Bouton "Établir mon programme d'entraînement" (issue #14) : appel
+    dédié au coach (llm_coach.get_training_program, comme get_opening_moves)
+    à partir des patterns_erreurs/repertoire_ouvertures de coach_memory.
+    Remplace intégralement objectifs_courants — pas d'historique des
+    anciens programmes (hors périmètre de l'issue)."""
+    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    objectifs, error = llm_coach.get_training_program(
+        coach_memory.get("patterns_erreurs", {}),
+        coach_memory.get("repertoire_ouvertures", {}),
+        llm_config,
+    )
+    if error:
+        emit("training_program_error", {"error": error})
+        return
+
+    coach_memory["objectifs_courants"] = objectifs
+    llm_coach.save_coach_memory(config.COACH_MEMORY_PATH, coach_memory)
+    emit("training_program_response", {"objectifs": objectifs})
 
 
 @socketio.on("free_play_stockfish_move")
