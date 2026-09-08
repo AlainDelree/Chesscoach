@@ -52,7 +52,7 @@ function abandonPedagogicGame() {
 
 function askPedagogicCoach() {
   if (!pedagogicActive || !pedagogicGame || pedagogicGameOver || pedagogicWaiting) return;
-  askCoachOnDemand(pedagogicGame.fen());
+  askCoachOnDemand(pedagogicGame.fen(), null, pedagogicCampAlain);
 }
 
 function renderPedagogicBoard(lastFrom, lastTo) {

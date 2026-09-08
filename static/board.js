@@ -622,10 +622,10 @@ if (typeof socket !== "undefined") {
 // aller-retour SocketIO mode-agnostique (coach_comment_on_demand côté
 // serveur), réutilisé par les trois modes plutôt que dupliqué.
 
-function askCoachOnDemand(fen, themeFinale) {
+function askCoachOnDemand(fen, themeFinale, campAlain) {
   if (!fen) return;
   setCoachOnDemandButtonsDisabled(true);
-  socket.emit("coach_comment_on_demand", { fen, theme_finale: themeFinale || "" });
+  socket.emit("coach_comment_on_demand", { fen, theme_finale: themeFinale || "", camp_alain: campAlain || "" });
 }
 
 function setCoachOnDemandButtonsDisabled(disabled) {

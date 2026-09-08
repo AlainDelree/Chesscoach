@@ -43,7 +43,7 @@ function abandonOpeningGame() {
 
 function askOpeningCoach() {
   if (!openingActive || !openingGame || openingGameOver || openingWaiting) return;
-  askCoachOnDemand(openingGame.fen());
+  askCoachOnDemand(openingGame.fen(), null, openingCampAlain);
 }
 
 function startOpeningGame(camp) {

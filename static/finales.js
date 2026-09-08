@@ -51,7 +51,7 @@ function abandonFinaleGame() {
 function askFinaleCoach() {
   if (!finaleActive || !finaleGame || finaleGameOver || finaleWaiting) return;
   const descEl = document.getElementById("finale-description");
-  askCoachOnDemand(finaleGame.fen(), descEl ? descEl.textContent : "");
+  askCoachOnDemand(finaleGame.fen(), descEl ? descEl.textContent : "", finaleCampAlain);
 }
 
 function populateFinaleSelect() {

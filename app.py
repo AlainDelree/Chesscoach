@@ -101,6 +101,30 @@ def _game_over_info(board: chess.Board) -> dict | None:
     return {"gagnant": None, "message": "Partie nulle."}
 
 
+def _eval_blancs_apres(board: chess.Board, depth: int = 8) -> tuple[int | None, int | None]:
+    """Évalue une position (déjà jouée, coup d'Alain compris) avec Stockfish et
+    convertit le résultat vers le point de vue des Blancs (issue #12 point 3).
+
+    EngineManager.evaluate() retourne cp/mate du point de vue du joueur au
+    trait dans `board` (donc l'adversaire d'Alain juste après son coup) : on
+    inverse le signe si ce joueur est Noir, pour obtenir une convention non
+    ambiguë quel que soit le camp d'Alain ou le mode d'entraînement — la même
+    que celle attendue par llm_coach._build_context_text (eval_blancs_cp /
+    eval_mat).
+
+    Retourne (eval_blancs_cp, eval_mat) — un seul des deux est non None
+    (sauf position déjà terminée, où les deux sont None)."""
+    if not engine_manager:
+        return None, None
+    eval_info = engine_manager.evaluate(board, depth=depth)
+    sign = 1 if board.turn == chess.WHITE else -1
+    if eval_info["mate"] is not None:
+        return None, sign * eval_info["mate"]
+    if eval_info["cp"] is not None:
+        return sign * eval_info["cp"], None
+    return None, None
+
+
 @socketio.on("coach_comment_on_demand")
 def on_coach_comment_on_demand(data):
     """Bouton "Demander l'avis du coach" (issue #11) : commentaire à la
@@ -135,6 +159,17 @@ def on_coach_comment_on_demand(data):
         except Exception:
             meilleur_coup_san = meilleur_coup_uci
 
+    # Point de vue des Blancs (issue #12 point 3), même conversion que
+    # _eval_blancs_apres — évite un second appel au moteur puisque eval_now
+    # est déjà calculé ci-dessus pour meilleur_coup_san.
+    sign = 1 if board.turn == chess.WHITE else -1
+    eval_mat       = sign * eval_now["mate"] if eval_now["mate"] is not None else None
+    eval_blancs_cp = sign * eval_now["cp"]   if eval_now["cp"]   is not None else None
+
+    # camp_alain (issue #12 point 1) : ce handler est mode-agnostique, le
+    # client transmet donc le camp suivi côté JS pour le mode en cours
+    # (pedagogicCampAlain / openingCampAlain / finaleCampAlain).
+    camp_alain = ((data or {}).get("camp_alain") or "").strip()
     theme_finale = ((data or {}).get("theme_finale") or "").strip()
 
     messages = [{
@@ -147,7 +182,10 @@ def on_coach_comment_on_demand(data):
     }]
     context = {
         "fen": fen,
+        "camp_alain": camp_alain,
         "meilleur_coup": meilleur_coup_san,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_mat": eval_mat,
         "theme_finale": theme_finale,
     }
     llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
@@ -242,11 +280,15 @@ def on_exercise_answer(data):
     uci = (data or {}).get("uci", "")
     fen_avant = _current_exercise["fen_avant"]
     coup_propose_san = uci
+    eval_blancs_cp = None
+    eval_mat = None
     try:
         board = chess.Board(fen_avant)
         move = chess.Move.from_uci(uci)
         if move in board.legal_moves:
             coup_propose_san = board.san(move)
+            board.push(move)
+            eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
     except Exception:
         pass
 
@@ -265,9 +307,12 @@ def on_exercise_answer(data):
     }]
     context = {
         "fen": fen_avant,
+        "camp_alain": _current_exercise.get("camp_alain", ""),
         "coup_propose": coup_propose_san,
         "coup_reel": coup_reel,
         "meilleur_coup": meilleur_coup,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_mat": eval_mat,
     }
     llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
 
@@ -375,6 +420,10 @@ def on_pedagogic_move(data):
 
     board.push(move)
 
+    # Évaluation Stockfish réelle de la position résultant du coup d'Alain
+    # (issue #12 point 3), avant que l'adversaire ne rejoue.
+    eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
+
     # Réponse automatique de Stockfish (force réduite) si la partie continue.
     game_over_info = _game_over_info(board)
     stockfish_move_uci = None
@@ -406,8 +455,11 @@ def on_pedagogic_move(data):
     }]
     context = {
         "fen": fen_avant,
+        "camp_alain": _pedagogic_camp_alain or "",
         "coup_propose": coup_alain_san,
         "meilleur_coup": meilleur_coup_san,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_mat": eval_mat,
     }
     llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
 
@@ -581,6 +633,10 @@ def on_opening_move(data):
 
     board.push(move)
 
+    # Évaluation Stockfish réelle de la position résultant du coup d'Alain
+    # (issue #12 point 3), avant que l'adversaire ne rejoue.
+    eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
+
     # Réponse automatique de l'adversaire : livre tant que la partie y reste,
     # sinon Stockfish affaibli (mode pédagogique).
     game_over_info = _game_over_info(board)
@@ -639,8 +695,11 @@ def on_opening_move(data):
     messages = [{"role": "user", "content": instruction}]
     context = {
         "fen": fen_avant,
+        "camp_alain": _opening_camp_alain or "",
         "coup_propose": coup_alain_san,
         "meilleur_coup": meilleur_coup_san,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_mat": eval_mat,
         "dans_le_livre": dans_le_livre,
         "popularite_pct": popularite_pct,
         "coup_livre_recommande": coup_livre_top_san or "",
@@ -787,6 +846,10 @@ def on_finale_move(data):
 
     board.push(move)
 
+    # Évaluation Stockfish réelle de la position résultant du coup d'Alain
+    # (issue #12 point 3), avant que l'adversaire ne rejoue.
+    eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
+
     # Réponse automatique de l'adversaire à pleine force (pas le moteur
     # affaibli des modes pédagogique/ouverture).
     game_over_info = _game_over_info(board)
@@ -821,8 +884,11 @@ def on_finale_move(data):
     }]
     context = {
         "fen": fen_avant,
+        "camp_alain": _finale_camp_alain or "",
         "coup_propose": coup_alain_san,
         "meilleur_coup": meilleur_coup_san,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_mat": eval_mat,
         "theme_finale": _finale_description or "",
     }
     llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}

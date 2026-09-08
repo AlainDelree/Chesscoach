@@ -185,9 +185,12 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
         "model": model or "claude-haiku-4-5",
         # 300 tokens coupait certaines réponses en plein mot dès que le coach
         # développait un conseil détaillé plutôt qu'un commentaire de coup
-        # isolé (issue #12 point 2) — 1024 laisse la marge nécessaire tout en
-        # restant loin de dériver vers des réponses interminables.
-        "max_tokens": 1024,
+        # isolé (issue #12 point 2). 1024 s'est révélé encore insuffisant à
+        # l'usage (stop_reason "max_tokens" constaté sur une question
+        # détaillée type "explique-moi la stratégie de la Défense française") :
+        # 2048 laisse la marge nécessaire pour ce genre de conseil structuré,
+        # tout en restant loin de dériver vers des réponses interminables.
+        "max_tokens": 2048,
         "system": prompt_sys,
         "messages": messages,
     }).encode("utf-8")
