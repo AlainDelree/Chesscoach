@@ -37,7 +37,12 @@ _SYSTEM_PROMPT = (
     "progression si disponible. Sois direct et factuel, sans flatterie, "
     "sans émoji. Appuie-toi sur les erreurs récurrentes déjà identifiées "
     "dans son historique pour rendre tes remarques plus utiles dans la "
-    "durée. Réponds en français."
+    "durée. Quand une évaluation Stockfish réelle de la position (score ou "
+    "mat forcé annoncé) est fournie en contexte, base ton jugement du coup "
+    "d'abord sur cette évaluation réelle, pas seulement sur la comparaison "
+    "au meilleur coup : un coup qui mène à un mat forcé contre le joueur "
+    "n'est jamais un bon coup, même s'il semble raisonnable à première vue. "
+    "Réponds en français."
 )
 
 # Appel dédié, distinct du chat coach (issue #9, mode "travail d'ouverture") :
@@ -107,11 +112,22 @@ def _build_context_text(context) -> str:
     fen  = (context.get("fen") or "").strip()
     move = (context.get("move") or "").strip()
     pgn  = (context.get("pgn") or "").strip()
+    # Camp joué par Alain dans cette partie/position (issue #12 point 1) :
+    # sans cette information, le coach ne peut que deviner le camp d'après le
+    # trait de la FEN, ce qui l'a déjà induit en erreur (ex. exercice où
+    # Alain a les Noirs, commentaire parlant à tort de "votre roi blanc").
+    camp_alain = (context.get("camp_alain") or "").strip()
     # Mode "Exercice" (issue #7) : comparaison coup proposé / coup réellement
     # joué / meilleur coup Stockfish, plutôt qu'un chat libre sur une partie.
     coup_propose  = (context.get("coup_propose") or "").strip()
     coup_reel     = (context.get("coup_reel") or "").strip()
     meilleur_coup = (context.get("meilleur_coup") or "").strip()
+    # Évaluation Stockfish réelle de la position résultant du coup proposé
+    # (issue #12 point 3), en complément de la seule comparaison à
+    # meilleur_coup : toujours du point de vue des Blancs, pour rester non
+    # ambigu quel que soit le camp d'Alain ou le mode d'entraînement.
+    eval_blancs_cp = context.get("eval_blancs_cp")
+    eval_mat       = context.get("eval_mat")
     # Mode "Travail d'ouverture" (issue #9) : statut par rapport au livre
     # Polyglot de référence (gm2001.bin), en complément de meilleur_coup.
     dans_le_livre          = context.get("dans_le_livre")
@@ -122,6 +138,9 @@ def _build_context_text(context) -> str:
     # puisse s'y référer explicitement (ex. mentionner l'opposition).
     theme_finale = (context.get("theme_finale") or "").strip()
     lines = []
+    if camp_alain in ("blancs", "noirs"):
+        camp_txt = "Blancs" if camp_alain == "blancs" else "Noirs"
+        lines.append(f"Alain (le joueur que tu coaches) joue les {camp_txt} dans cette partie.")
     if fen:
         lines.append(f"Position actuelle (FEN) : {fen}")
     if move:
@@ -132,6 +151,17 @@ def _build_context_text(context) -> str:
         lines.append(f"Coup réellement joué par le joueur dans la partie d'origine : {coup_reel}")
     if meilleur_coup:
         lines.append(f"Meilleur coup selon Stockfish : {meilleur_coup}")
+    if eval_mat is not None:
+        side = "Blancs" if eval_mat > 0 else "Noirs"
+        lines.append(
+            f"Évaluation Stockfish réelle de la position résultant du coup proposé : "
+            f"mat forcé en {abs(eval_mat)} coup(s) en faveur des {side}."
+        )
+    elif eval_blancs_cp is not None:
+        lines.append(
+            "Évaluation Stockfish réelle de la position résultant du coup proposé "
+            f"(point de vue des Blancs, positif = avantage Blancs) : {eval_blancs_cp:+d} centipawns."
+        )
     if dans_le_livre is not None:
         statut = "dans le livre d'ouvertures" if dans_le_livre else "hors du livre d'ouvertures"
         lines.append(f"Statut par rapport au livre de référence : {statut}")
@@ -153,7 +183,11 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
         messages = [{"role": "user", "content": messages}]
     body = json.dumps({
         "model": model or "claude-haiku-4-5",
-        "max_tokens": 300,
+        # 300 tokens coupait certaines réponses en plein mot dès que le coach
+        # développait un conseil détaillé plutôt qu'un commentaire de coup
+        # isolé (issue #12 point 2) — 1024 laisse la marge nécessaire tout en
+        # restant loin de dériver vers des réponses interminables.
+        "max_tokens": 1024,
         "system": prompt_sys,
         "messages": messages,
     }).encode("utf-8")

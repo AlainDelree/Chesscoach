@@ -7,3 +7,4 @@ __pycache__/
 # Données personnelles (PGN importés, mémoire du coach...) — dépôt public,
 # ne jamais committer.
 data/
+.env

@@ -32,6 +32,8 @@
       flex-direction: column;
       align-items: center;
       gap: 4px;
+      width: 620px;
+      flex-shrink: 0;
     }
     #board-row { display: flex; align-items: flex-start; gap: 4px; }
     #coord-file { display: flex; justify-content: space-around; width: var(--bd-size); }
@@ -180,7 +182,7 @@
       <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
         <h2>Travail de finales</h2>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <select id="finale-select" style="flex:1;" onchange="onFinaleSelectChange()">
+          <select id="finale-select" style="flex:1; min-width:0;" onchange="onFinaleSelectChange()">
             <option value="">— Choisir une finale —</option>
           </select>
           <button onclick="abandonFinaleGame()">Abandonner</button>
