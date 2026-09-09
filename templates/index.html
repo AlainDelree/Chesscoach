@@ -116,12 +116,14 @@
         <button onclick="reviewNext()">Suivant ▶</button>
         <button onclick="flipBoard()">Retourner</button>
         <button onclick="showReviewBestMove()">Meilleur coup</button>
+        <button onclick="extraireFen()">Extraire le FEN</button>
       </div>
       <div>
         <span id="review-move-info"></span>
         <strong id="review-move-san"></strong>
         <span id="review-best-move-san" style="display:none; color:#1a9bc0;"></span>
       </div>
+      <div id="fen-extract-status" style="font-size:0.78rem; color:#445; word-break:break-all;"></div>
       <div>
         <label style="font-size:0.82rem;">Importer un PGN :
           <input type="file" accept=".pgn,.txt" onchange="loadPgnFile(event)">
@@ -244,6 +246,9 @@
           <button onclick="startExercise()">Position suivante</button>
         </div>
         <div id="exercise-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+        <div id="exercise-coup-reel" style="display:none; font-size:0.82rem; color:#1a2a3a; margin-top:4px; padding:4px 6px; background:#fff6da; border-radius:4px;">
+          Coup réellement joué à l'époque : <strong id="exercise-coup-reel-value"></strong>
+        </div>
       </div>
     </div>
 
@@ -269,7 +274,7 @@
           </div>
         </div>
         <div class="coach-input-row">
-          <input id="coach-input" type="text" placeholder="Votre question..." style="flex:1;">
+          <textarea id="coach-input" placeholder="Votre question..." rows="3" style="flex:1; resize:vertical; font:inherit;"></textarea>
           <button id="coach-send-btn" class="coach-send-btn" onclick="coachSend()">Envoyer</button>
           <div id="coach-spinner" class="coach-spinner"></div>
         </div>

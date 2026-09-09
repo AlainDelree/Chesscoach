@@ -17,6 +17,13 @@ let exerciseSelected   = null;  // case algébrique sélectionnée ou null
 let exerciseAnswered   = false; // un coup a déjà été proposé pour cet exercice
 let exerciseFenAvant   = null;  // FEN de départ de l'exercice (issue #13, "Reprendre mon coup")
 let exerciseCampAlain  = null;
+// Vrai une fois le verdict du coach reçu pour la tentative en cours (issue
+// #21) : à partir de là, les clics sur le plateau déplacent librement les
+// pièces (n'importe quel camp, comme en partie libre) sans redéclencher de
+// commentaire automatique — juste pour visualiser la suite (coup suggéré,
+// variante) tout en gardant la conversation déjà affichée.
+let exerciseExploring  = false;
+let exerciseLastMove   = null; // { from, to } (cases algébriques) du dernier coup joué/exploré
 
 // État de la tentative en cours, transmis au chat libre pendant l'exercice
 // (issue #17) — sans ça, une question de suivi posée dans le chat libre ne
@@ -58,11 +65,14 @@ function _exerciseResetTentative() {
 }
 
 function startExercise() {
-  exerciseAnswered = false;
-  exerciseSelected = null;
-  exerciseFenAvant = null;
+  exerciseAnswered  = false;
+  exerciseSelected  = null;
+  exerciseFenAvant  = null;
+  exerciseExploring = false;
+  exerciseLastMove  = null;
   exerciseJustReprised = false;
   _exerciseResetTentative();
+  _exerciseUpdateCoupReelDisplay();
   // Nouvel exercice : le chat libre repart sans l'historique de l'exercice
   // précédent, qui n'a plus rien à voir avec la position/le coup en cours.
   if (typeof coachClear === "function") coachClear();
@@ -77,21 +87,49 @@ function reprendreExerciceCoup() {
     if (statusEl) statusEl.textContent = "Aucun coup à reprendre.";
     return;
   }
-  exerciseGame     = new Chess(exerciseFenAvant);
-  exerciseAnswered = false;
-  exerciseSelected = null;
+  exerciseGame      = new Chess(exerciseFenAvant);
+  exerciseAnswered  = false;
+  exerciseSelected  = null;
+  exerciseExploring = false;
+  exerciseLastMove  = null;
   _exerciseResetTentative();
   exerciseJustReprised = true;
   // La tentative annulée (coup proposé, verdict du coach) ne doit plus
-  // induire le coach en erreur dans le chat libre (issue #17) : on repart
-  // d'un historique vide plutôt que de laisser une conversation qui discute
-  // d'un coup qui n'a en réalité jamais été joué.
-  if (typeof coachClear === "function") coachClear();
+  // induire le coach en erreur dans une question de suivi (issue #17,
+  // reprise_recente dans exerciseChatContextExtra) — mais le chat déjà
+  // affiché, lui, reste intact (issue #21) : reprendre son coup ne doit pas
+  // faire perdre la conversation en cours pour retenter un premier coup.
+  _exerciseUpdateCoupReelDisplay();
   renderExerciseBoard();
   if (statusEl) {
     const camp = exerciseCampAlain === "noirs" ? "Noirs" : "Blancs";
     statusEl.textContent = `Coup repris — à toi de rejouer (${camp}).`;
   }
+}
+
+function _exerciseUpdateCoupReelDisplay() {
+  // Repère visuel permanent (issue #21) du coup qu'Alain avait réellement
+  // joué à l'époque dans sa partie d'origine (exerciseCoupReel, connu côté
+  // client depuis l'issue #17) — jusque-là seulement mentionné dans la prose
+  // du coach, pas affiché en tant que tel dans l'interface.
+  const el    = document.getElementById("exercise-coup-reel");
+  const valEl = document.getElementById("exercise-coup-reel-value");
+  if (!el || !valEl) return;
+  if (exerciseCoupReel) {
+    valEl.textContent = exerciseCoupReel;
+    el.style.display = "block";
+  } else {
+    el.style.display = "none";
+  }
+}
+
+function askExerciseCoach() {
+  // "Demander l'avis du coach" mutualisé (controls.js/MODE_CAPS), disponible
+  // à tout moment pendant l'exercice — y compris pendant l'exploration libre
+  // après verdict (issue #21) — pour un commentaire ponctuel sur la position
+  // affichée, sans passer par le circuit exercise_answer/exercise_comment.
+  if (!exerciseGame) return;
+  askCoachOnDemand(exerciseGame.fen(), null, exerciseCampAlain);
 }
 
 function exerciseChatContextExtra() {
@@ -117,7 +155,9 @@ function exerciseChatContextExtra() {
 function renderExerciseBoard() {
   if (!exerciseGame) return;
   const fenBoard = exerciseGame.fen().split(" ")[0];
-  renderBoard(fenBoard, null, null, null, null, null, null);
+  const from = exerciseLastMove ? freeAlgebraicToSquareId(exerciseLastMove.from) : null;
+  const to   = exerciseLastMove ? freeAlgebraicToSquareId(exerciseLastMove.to)   : null;
+  renderBoard(fenBoard, from, to, null, null, null, null);
   if (exerciseSelected) {
     const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(exerciseSelected)}`);
     if (sq) sq.classList.add("free-play-selected");
@@ -126,7 +166,12 @@ function renderExerciseBoard() {
 }
 
 function onExerciseBoardClick(e) {
-  if (!exerciseActive || !exerciseGame || exerciseAnswered) return;
+  if (!exerciseActive || !exerciseGame) return;
+  // Tant que le verdict n'est pas encore revenu pour la tentative en cours,
+  // le plateau reste bloqué (le coach réfléchit) ; une fois le verdict rendu,
+  // exerciseExploring passe à vrai (cf. socket.on("exercise_comment")) et le
+  // plateau redevient jouable librement, sans repasser par ce garde-fou.
+  if (exerciseAnswered && !exerciseExploring) return;
   const sqEl = e.target.closest(".square");
   if (!sqEl) return;
   const square = freeSquareIdToAlgebraic(sqEl.id.replace("sq-", ""));
@@ -160,9 +205,16 @@ function onExerciseBoardClick(e) {
     return;
   }
 
-  const fenBoard = exerciseGame.fen().split(" ")[0];
-  renderBoard(fenBoard, freeAlgebraicToSquareId(move.from), freeAlgebraicToSquareId(move.to),
-    null, null, null, null);
+  exerciseLastMove = { from: move.from, to: move.to };
+
+  if (exerciseExploring) {
+    // Exploration libre après verdict (issue #21) : la position bouge, le
+    // chat déjà affiché reste tel quel, aucun nouvel appel au coach.
+    renderExerciseBoard();
+    return;
+  }
+
+  renderExerciseBoard();
   submitExerciseAnswer(move);
 }
 
@@ -191,6 +243,8 @@ if (typeof socket !== "undefined") {
     exerciseActive    = true;
     exerciseAnswered  = false;
     exerciseSelected  = null;
+    exerciseExploring = false;
+    exerciseLastMove  = null;
     exerciseFenAvant  = data.fen;
     exerciseCampAlain = data.camp_alain;
     setActiveMode("exercise");
@@ -209,9 +263,12 @@ if (typeof socket !== "undefined") {
   });
 
   socket.on("exercise_comment", (data) => {
+    // Verdict rendu : le plateau devient librement explorable (issue #21),
+    // sans plus jamais redéclencher exercise_answer pour cette tentative.
+    exerciseExploring = true;
     const statusEl = document.getElementById("exercise-status");
     if (statusEl) {
-      statusEl.textContent = 'Réponse du coach dans le panneau de droite — clique sur "Position suivante" pour continuer.';
+      statusEl.textContent = 'Verdict rendu — déplace librement les pièces pour explorer la suite, ou clique sur "Position suivante" pour continuer.';
     }
     // Mémorise le verdict pour l'exposer au chat libre (exerciseChatContextExtra,
     // issue #17) — jamais affiché tel quel côté UI, seulement reformulé par le
@@ -222,6 +279,7 @@ if (typeof socket !== "undefined") {
     exerciseCoupReel       = (data && data.coup_reel) || null;
     exercisePvCoupPropose  = (data && data.pv_coup_propose) || null;
     exercisePvMeilleurCoup = (data && data.pv_meilleur_coup) || null;
+    _exerciseUpdateCoupReelDisplay();
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
       _coachRenderBubble("assistant", text);

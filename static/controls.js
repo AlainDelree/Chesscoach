@@ -30,7 +30,7 @@ const MODE_CAPS = {
   pedagogic: { abandon: () => abandonPedagogicGame(),     reprendre: () => reprendrePedagogicCoup(),  askCoach: () => askPedagogicCoach(),  hasComment: true  },
   opening:   { abandon: () => abandonOpeningGame(),       reprendre: () => reprendreOpeningCoup(),    askCoach: () => askOpeningCoach(),    hasComment: true  },
   finale:    { abandon: () => abandonFinaleGame(),        reprendre: () => reprendreFinaleCoup(),     askCoach: () => askFinaleCoach(),     hasComment: true  },
-  exercise:  { abandon: null,                             reprendre: () => reprendreExerciceCoup(),   askCoach: null,                       hasComment: false },
+  exercise:  { abandon: null,                             reprendre: () => reprendreExerciceCoup(),   askCoach: () => askExerciseCoach(),   hasComment: false },
   // Éditeur de position (issue #16) : pas de partie jouée, donc pas de
   // "reprendre mon coup" ni de coach à la demande — juste un moyen de
   // quitter le panneau via le bouton "Abandonner" mutualisé.
@@ -120,6 +120,34 @@ function getActiveModeMoves() {
     color: m.color === "w" ? "white" : "black",
     qualite: "bon",
   }));
+}
+
+// ── Extraire le FEN de la position affichée (issue #21) ────────────────────
+// Mutualisé ici plutôt que dupliqué par mode : réutilise activeModeGameState()
+// ci-dessus pour un mode interactif en cours, ou reviewFens/reviewIdx (revue
+// PGN, board.js) sinon — même logique de repli que coachBuildContext(). Le
+// mode éditeur (pas de partie chess.js) construit son FEN autrement
+// (editorBuildFen(), editor.js), d'où le cas particulier.
+
+function extraireFen() {
+  const statusEl = document.getElementById("fen-extract-status");
+  let fen = null;
+  if (activeMode === "editor" && typeof editorBuildFen === "function") {
+    fen = editorBuildFen();
+  } else if (activeMode) {
+    const state = activeModeGameState();
+    if (state && state.fen) fen = state.fen;
+  }
+  if (!fen) fen = reviewFens[reviewIdx] || null;
+
+  if (!fen) {
+    if (statusEl) statusEl.textContent = "Aucune position affichée.";
+    return;
+  }
+  if (statusEl) statusEl.textContent = fen;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(fen).catch(() => {});
+  }
 }
 
 document.addEventListener("DOMContentLoaded", updateSharedControlBar);

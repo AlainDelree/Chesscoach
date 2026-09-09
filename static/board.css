@@ -151,7 +151,7 @@
   flex: 1;
   padding: 4px;
 }
-.coach-input-row { display: flex; gap: 8px; align-items: center; }
+.coach-input-row { display: flex; gap: 8px; align-items: flex-end; }
 .coach-send-btn  { margin: 0; padding: 6px 12px; font-size: 0.82rem; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
