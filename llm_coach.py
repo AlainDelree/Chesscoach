@@ -48,6 +48,33 @@ _SYSTEM_PROMPT = (
     "Réponds en français."
 )
 
+# Complément de system prompt spécifique au mode "Exercice" (issue #17),
+# ajouté à _SYSTEM_PROMPT quand context["mode_exercice"] est vrai — que ce
+# soit pour le commentaire du coup proposé (exercise_answer) ou pour une
+# question de suivi posée dans le chat libre pendant l'exercice. Les LLM
+# (tous modèles confondus) se sont révélés peu fiables pour juger eux-mêmes
+# la qualité d'un coup à partir du seul nom des coups (ex. verdicts
+# contradictoires sur un même roque selon le tour de conversation) : ce
+# complément leur retire ce rôle de jugement dès qu'un verdict Stockfish est
+# fourni dans le contexte (cf. _build_context_text), tout en gardant un ton
+# chaleureux et pédagogique — l'ancrage sur Stockfish doit rendre le coach
+# plus fiable, pas plus froid.
+_EXERCISE_SYSTEM_ADDENDUM = (
+    "Mode \"exercice\" en cours : Alain s'entraîne sur une position tirée "
+    "d'une de ses erreurs passées. Quand un verdict Stockfish est fourni "
+    "dans le contexte pour un coup qu'il a proposé, ce verdict est déjà "
+    "tranché — ton rôle est d'expliquer POURQUOI il est justifié (menaces, "
+    "pièces en jeu, plans), jamais de rejuger toi-même la qualité du coup à "
+    "partir du seul nom des coups, et jamais de le contredire dans un "
+    "message ultérieur de la même conversation. Ne cite jamais de chiffre "
+    "brut de centipawns ni d'étiquette technique (\"delta\", \"blunder\"...) "
+    "à Alain, sauf s'il le demande explicitement : reformule toujours ce "
+    "verdict en langage naturel, chaleureux et pédagogique. Si Alain pose "
+    "une question de suivi sur cet exercice dans le chat libre, réponds "
+    "directement à partir du contexte fourni (position, coup proposé, "
+    "verdict) sans lui redemander des informations déjà données."
+)
+
 # Appel dédié, distinct du chat coach (issue #14, "Établir mon programme
 # d'entraînement") : comme get_opening_moves, une réponse structurée en JSON
 # plutôt que de la prose libre, pour pouvoir stocker le résultat de façon
@@ -142,6 +169,19 @@ def _build_context_text(context) -> str:
     coup_propose  = (context.get("coup_propose") or "").strip()
     coup_reel     = (context.get("coup_reel") or "").strip()
     meilleur_coup = (context.get("meilleur_coup") or "").strip()
+    # Verdict Stockfish chiffré du coup exact proposé (issue #17), calculé via
+    # EngineManager.evaluate_move (mêmes seuils que classifier_coup) : donné
+    # en contexte pour que le coach explique un jugement déjà tranché plutôt
+    # que de rejuger lui-même la qualité du coup à partir des seuls noms de
+    # coups — ce chiffre ne doit jamais être répété tel quel à Alain (cf.
+    # _EXERCISE_SYSTEM_ADDENDUM).
+    verdict_qualite  = (context.get("verdict_qualite") or "").strip()
+    verdict_delta_cp = context.get("verdict_delta_cp")
+    # Vrai juste après un "Reprendre mon coup" tant qu'Alain n'a pas encore
+    # reproposé de coup (issue #17) : évite qu'un verdict/coup discuté plus
+    # tôt dans la même conversation du chat libre soit pris pour l'état réel
+    # de la tentative en cours, désormais annulée.
+    reprise_recente = bool(context.get("reprise_recente"))
     # Évaluation Stockfish réelle de la position résultant du coup proposé
     # (issue #12 point 3), en complément de la seule comparaison à
     # meilleur_coup : toujours du point de vue des Blancs, pour rester non
@@ -171,6 +211,26 @@ def _build_context_text(context) -> str:
         lines.append(f"Coup réellement joué par le joueur dans la partie d'origine : {coup_reel}")
     if meilleur_coup:
         lines.append(f"Meilleur coup selon Stockfish : {meilleur_coup}")
+    if verdict_qualite:
+        detail_cp = (
+            f", perte de {verdict_delta_cp} centipawns par rapport au meilleur coup"
+            if isinstance(verdict_delta_cp, (int, float)) else ""
+        )
+        lines.append(
+            "Verdict Stockfish déjà calculé pour ce coup exact (INTERNE — ne "
+            f"jamais citer ce chiffre ni cette étiquette brute à Alain) : classé "
+            f"\"{verdict_qualite}\"{detail_cp}. Ce verdict est définitif : "
+            "explique pourquoi il est justifié, ne le confirme ni ne le "
+            "contredis par ton propre jugement."
+        )
+    if reprise_recente:
+        lines.append(
+            "Alain vient d'annuler sa dernière tentative sur cet exercice avec "
+            "\"Reprendre mon coup\" et n'a pas encore reproposé de coup : la "
+            "position ci-dessus est donc à nouveau la position de départ, "
+            "inchangée. Le coup et le verdict éventuellement discutés plus tôt "
+            "dans cette conversation ne s'appliquent plus à l'état actuel."
+        )
     if eval_mat is not None:
         side = "Blancs" if eval_mat > 0 else "Noirs"
         lines.append(
@@ -374,6 +434,8 @@ def get_coach_response(messages, context, coach_memory, config):
 
     model = (config or {}).get("llm_model", "")
     prompt_sys = _SYSTEM_PROMPT
+    if (context or {}).get("mode_exercice"):
+        prompt_sys = f"{prompt_sys}\n\n{_EXERCISE_SYSTEM_ADDENDUM}"
 
     memory_text = _build_memory_text(coach_memory)
     if memory_text:

@@ -555,7 +555,14 @@ function coachBuildContext() {
   if (typeof activeMode !== "undefined" && activeMode && typeof activeModeGameState === "function") {
     const state = activeModeGameState();
     if (state && state.fen) {
-      return { fen: state.fen, move: "", pgn: "", camp_alain: state.campAlain || "" };
+      const ctx = { fen: state.fen, move: "", pgn: "", camp_alain: state.campAlain || "" };
+      // Mode exercice (issue #17) : sans ce complément, le chat libre ne
+      // connaît que la position/le camp, pas le coup proposé ni le verdict
+      // Stockfish déjà rendu par le coach pour cette tentative.
+      if (activeMode === "exercise" && typeof exerciseChatContextExtra === "function") {
+        return Object.assign(ctx, exerciseChatContextExtra());
+      }
+      return ctx;
     }
   }
 

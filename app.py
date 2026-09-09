@@ -315,11 +315,20 @@ def on_exercise_answer(data):
     coup_propose_san = uci
     eval_blancs_cp = None
     eval_mat = None
+    verdict_qualite = None
+    verdict_delta_cp = None
     try:
         board = chess.Board(fen_avant)
         move = chess.Move.from_uci(uci)
         if move in board.legal_moves:
             coup_propose_san = board.san(move)
+            # Verdict Stockfish ancré sur le coup exact proposé (issue #17),
+            # pas seulement sur le nom du "meilleur coup" précalculé : réutilise
+            # evaluate_move (mêmes seuils que build_patterns_erreurs.py) pour
+            # que le coach explique un jugement déjà tranché plutôt que de le
+            # décider lui-même à partir des noms de coups seuls.
+            if engine_manager:
+                verdict_qualite, verdict_delta_cp, _ = engine_manager.evaluate_move(board, move, depth=8)
             board.push(move)
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
     except Exception:
@@ -346,6 +355,9 @@ def on_exercise_answer(data):
         "meilleur_coup": meilleur_coup,
         "eval_blancs_cp": eval_blancs_cp,
         "eval_mat": eval_mat,
+        "verdict_qualite": verdict_qualite,
+        "verdict_delta_cp": verdict_delta_cp,
+        "mode_exercice": True,
     }
     llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
 
@@ -358,6 +370,11 @@ def on_exercise_answer(data):
             "coup_propose": coup_propose_san,
             "coup_reel": coup_reel,
             "meilleur_coup": meilleur_coup,
+            # Transmis au client pour qu'il puisse enrichir le contexte d'une
+            # question de suivi posée dans le chat libre (issue #17) — jamais
+            # affiché tel quel côté UI (cf. exercise.js).
+            "verdict_qualite": verdict_qualite,
+            "verdict_delta_cp": verdict_delta_cp,
         })
 
 
