@@ -299,15 +299,36 @@ class EngineManager:
 
                 best_move = pv[0].uci() if pv else None
 
-                return {"cp": cp, "mate": mate, "wdl": wdl, "best_move": best_move}
+                # Ligne complète calculée par le moteur (pas seulement son
+                # premier coup), gardée en objets chess.Move bruts — issue #20 :
+                # evaluate_move s'en sert pour reconstituer en SAN la suite
+                # réellement calculée par Stockfish, à transmettre au coach.
+                return {"cp": cp, "mate": mate, "wdl": wdl, "best_move": best_move, "pv": pv}
 
             except Exception as e:
                 logger.error(f"Erreur evaluate : {e}")
-                return {"cp": None, "mate": None, "wdl": None, "best_move": None}
+                return {"cp": None, "mate": None, "wdl": None, "best_move": None, "pv": []}
+
+    def _pv_to_san(self, board: chess.Board, moves: list[chess.Move]) -> str:
+        """Convertit une suite de coups (objets chess.Move, calculés par le
+        moteur depuis `board`) en SAN lisible, coups séparés par des espaces
+        (issue #20). S'arrête proprement au premier coup qui ne serait plus
+        légal (fin de PV, ou décalage lié à la copie du plateau) plutôt que de
+        lever une exception."""
+        b = board.copy()
+        sans = []
+        for m in moves:
+            if m not in b.legal_moves:
+                break
+            sans.append(b.san(m))
+            b.push(m)
+        return " ".join(sans)
 
     def evaluate_move(self, board: chess.Board, move: chess.Move,
                       depth: int = 8,
-                      always_return_best: bool = False) -> tuple[str, int, str | None]:
+                      always_return_best: bool = False,
+                      return_pv: bool = False,
+                      pv_max_plies: int = 6) -> tuple[str, int, str | None]:
         """
         Évalue la qualité d'un coup joué.
 
@@ -322,8 +343,21 @@ class EngineManager:
             (issue #19, mode "Exercice" : meilleur coup et verdict du coup
             proposé doivent provenir du même appel moteur, à la même
             profondeur).
+          return_pv : si True, ajoute un 4e élément au tuple retourné (cf.
+            ci-dessous) — la ligne (PV) réellement calculée par Stockfish
+            pour le coup proposé et pour le meilleur coup, en SAN (issue #20 :
+            le coach doit justifier une continuation réellement calculée,
+            pas improviser une explication tactique en prose à partir du
+            seul verdict chiffré). Désactivé par défaut pour ne pas changer
+            le contrat des appelants existants (ex. analyser_partie).
+          pv_max_plies : nombre de demi-coups conservés dans chaque ligne
+            retournée quand return_pv=True (au-delà, la PV Stockfish à
+            depth=18 devient inutilement longue pour un commentaire).
 
-        Retourne (qualite, delta_cp, best_move_uci) :
+        Retourne (qualite, delta_cp, best_move_uci) ou, si return_pv=True,
+        (qualite, delta_cp, best_move_uci, pv_info) où pv_info est
+        {"pv_coup_propose": str, "pv_meilleur_coup": str} (SAN, "" si
+        indisponible) :
           - qualite    : "bon" / "imprecision" / "erreur" / "blunder"
           - delta_cp   : perte en centipawns (0 = parfait)
           - best_move  : par défaut, meilleur coup UCI si différent du coup
@@ -331,6 +365,8 @@ class EngineManager:
             always_return_best=True (cf. ci-dessus)
         """
         if not self._analyse_active:
+            if return_pv:
+                return "bon", 0, None, {"pv_coup_propose": "", "pv_meilleur_coup": ""}
             return "bon", 0, None
 
         try:
@@ -340,21 +376,51 @@ class EngineManager:
             eval_avant = self.evaluate(board, depth=depth)
             cp_avant   = eval_avant["cp"]
             best_move  = eval_avant["best_move"]
+            pv_avant   = eval_avant.get("pv") or []
+            position_deja_matee = cp_avant is None
 
+            # Évaluation APRÈS le coup — sautée quand la position était déjà
+            # "mat forcé" ET qu'aucune PV n'est demandée (comportement
+            # historique, un appel moteur économisé). Mais dès que
+            # return_pv=True, on l'exécute quand même même dans ce cas
+            # (issue #20) : sans elle, pv_coup_propose resterait vide dès que
+            # le coup proposé n'est pas EXACTEMENT le premier coup de
+            # pv_avant, alors que c'est justement le cas central de l'issue
+            # (le meilleur coup proposé par Alain force lui-même ce mat).
+            eval_apres = None
+            cp_apres   = None
+            pv_apres   = []
+            if return_pv or not position_deja_matee:
+                board_apres = board.copy()
+                board_apres.push(move)
+                eval_apres = self.evaluate(board_apres, depth=depth)
+                cp_apres   = eval_apres["cp"]
+                pv_apres   = eval_apres.get("pv") or []
 
-            if cp_avant is None:
-                # Position de mat → bon coup par défaut
-                return "bon", 0, (best_move if always_return_best else None)
-
-            # Évaluation APRÈS le coup
-            board_apres = board.copy()
-            board_apres.push(move)
-            eval_apres = self.evaluate(board_apres, depth=depth)
-            cp_apres   = eval_apres["cp"]
+            if position_deja_matee:
+                # Position de mat forcé (avant le coup) → bon coup par défaut,
+                # avec la vraie suite du coup proposé si elle a été calculée
+                # ci-dessus (return_pv=True).
+                best = best_move if always_return_best else None
+                if return_pv:
+                    pv_meilleur = self._pv_to_san(board, pv_avant[:pv_max_plies])
+                    pv_propose  = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
+                    return "bon", 0, best, {"pv_coup_propose": pv_propose, "pv_meilleur_coup": pv_meilleur}
+                return "bon", 0, best
 
             if cp_apres is None:
-                # Mat après le coup → excellent
-                return "bon", 0, (best_move if always_return_best else None)
+                # Mat après le coup (immédiat, ou mat forcé détecté par le
+                # moteur dans les coups suivants — c'est justement le
+                # scénario "meilleur coup qui prépare un mat forcé au coup
+                # suivant" de l'issue #20) → excellent, et pv_apres contient
+                # la suite forcée réellement calculée, pas seulement le coup
+                # joué seul.
+                best = best_move if always_return_best else None
+                if return_pv:
+                    pv_meilleur = self._pv_to_san(board, pv_avant[:pv_max_plies])
+                    pv_propose  = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
+                    return "bon", 0, best, {"pv_coup_propose": pv_propose, "pv_meilleur_coup": pv_meilleur}
+                return "bon", 0, best
 
             # La perte est vue du point de vue du joueur AVANT son coup
             # cp_avant = score pour joueur avant coup
@@ -383,12 +449,18 @@ class EngineManager:
                 except Exception as e:
                     logger.warning(f"MultiPV fallback échoué : {e}")
 
-            if always_return_best:
-                return qualite, delta, (best if best is not None else best_move)
-            return qualite, delta, best
+            best_final = (best if best is not None else best_move) if always_return_best else best
+
+            if return_pv:
+                pv_meilleur = self._pv_to_san(board, pv_avant[:pv_max_plies])
+                pv_propose  = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
+                return qualite, delta, best_final, {"pv_coup_propose": pv_propose, "pv_meilleur_coup": pv_meilleur}
+            return qualite, delta, best_final
 
         except Exception as e:
             logger.error(f"Erreur evaluate_move : {e}")
+            if return_pv:
+                return "bon", 0, None, {"pv_coup_propose": "", "pv_meilleur_coup": ""}
             return "bon", 0, None
 
     def get_punishment_line(self, board: chess.Board, move: chess.Move,

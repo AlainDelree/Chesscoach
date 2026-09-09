@@ -73,7 +73,25 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     "verdict en langage naturel, chaleureux et pédagogique. Si Alain pose "
     "une question de suivi sur cet exercice dans le chat libre, réponds "
     "directement à partir du contexte fourni (position, coup proposé, "
-    "verdict) sans lui redemander des informations déjà données."
+    "verdict) sans lui redemander des informations déjà données. "
+    "\n\n"
+    "Vérification des affirmations tactiques (issue #20) : quand le "
+    "contexte fournit une suite réellement calculée par Stockfish (\"Suite "
+    "réellement calculée par Stockfish...\"), c'est ta SEULE base pour "
+    "expliquer une menace, une combinaison ou un mat — construis ton "
+    "commentaire sur cette ligne précise, pas sur une justification "
+    "positionnelle générique improvisée. Si Alain affirme lui-même une "
+    "menace, une combinaison ou un mat (annoncé ou évité) sur le coup ou la "
+    "position en cours d'exercice, ne confirme JAMAIS cette affirmation par "
+    "simple plausibilité : vérifie-la contre la ou les lignes calculées "
+    "fournies dans le contexte. Si elle y est explicitement présente, "
+    "confirme-la en t'appuyant sur cette ligne précise. Si elle n'y "
+    "apparaît pas, ou si aucune ligne calculée n'a été fournie pour ce "
+    "coup, dis-le clairement (par exemple \"je ne suis pas sûr, je ne vois "
+    "pas cette suite dans mon analyse\") plutôt que d'acquiescer sans base "
+    "réelle — une réponse honnête et prudente est toujours préférable à une "
+    "confirmation non fondée, même si l'affirmation d'Alain paraît "
+    "plausible."
 )
 
 # Appel dédié, distinct du chat coach (issue #14, "Établir mon programme
@@ -189,6 +207,16 @@ def _build_context_text(context) -> str:
     # _EXERCISE_SYSTEM_ADDENDUM).
     verdict_qualite  = (context.get("verdict_qualite") or "").strip()
     verdict_delta_cp = context.get("verdict_delta_cp")
+    # Ligne (PV) réellement calculée par Stockfish pour le coup proposé et
+    # pour le meilleur coup (issue #20), en SAN, depuis la même analyse à
+    # depth=18 que verdict_qualite/meilleur_coup ci-dessus (cf. app.py,
+    # on_exercise_answer) : le seul ancrage disponible au coach pour
+    # justifier une continuation tactique réellement calculée, ou pour juger
+    # si une affirmation de menace/mat d'Alain est cohérente avec ce que
+    # Stockfish a effectivement vu — jamais une preuve de mat forcé au-delà
+    # de ce qu'elle montre explicitement.
+    pv_coup_propose  = (context.get("pv_coup_propose") or "").strip()
+    pv_meilleur_coup = (context.get("pv_meilleur_coup") or "").strip()
     # Vrai juste après un "Reprendre mon coup" tant qu'Alain n'a pas encore
     # reproposé de coup (issue #17) : évite qu'un verdict/coup discuté plus
     # tôt dans la même conversation du chat libre soit pris pour l'état réel
@@ -234,6 +262,12 @@ def _build_context_text(context) -> str:
                     "(c'est cette pièce, et aucune autre, qui se trouvait sur cette case)."
                 )
             lines.append(detail)
+        if pv_coup_propose:
+            lines.append(
+                "Suite réellement calculée par Stockfish après ce coup proposé "
+                f"(à utiliser comme seule base pour expliquer les menaces ou la "
+                f"suite tactique, pas une généralité inventée) : {pv_coup_propose}"
+            )
     if coup_reel:
         lines.append(
             "Coup que le joueur avait réellement joué À L'ÉPOQUE, dans la "
@@ -258,6 +292,12 @@ def _build_context_text(context) -> str:
                     "(c'est cette pièce, et aucune autre, qui se trouvait sur cette case)."
                 )
         lines.append(detail)
+        if pv_meilleur_coup:
+            lines.append(
+                "Suite réellement calculée par Stockfish pour ce meilleur coup "
+                f"(à utiliser comme seule base pour expliquer les menaces ou le "
+                f"plan qu'il prépare, pas une généralité inventée) : {pv_meilleur_coup}"
+            )
     if verdict_qualite:
         detail_cp = (
             f", perte de {verdict_delta_cp} centipawns par rapport au meilleur coup"

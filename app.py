@@ -388,6 +388,8 @@ def on_exercise_answer(data):
     verdict_qualite = None
     verdict_delta_cp = None
     meilleur_coup_recalcule_san = None
+    pv_coup_propose = ""
+    pv_meilleur_coup = ""
     try:
         board = chess.Board(fen_avant)
         move = chess.Move.from_uci(uci)
@@ -402,11 +404,16 @@ def on_exercise_answer(data):
             # always_return_best=True : sans quoi evaluate_move renvoie None
             # dès que le coup proposé EST le meilleur coup (cf.
             # engine_stockfish.py), ce qui masquerait le meilleur coup côté
-            # affichage/log dans ce cas précis.
+            # affichage/log dans ce cas précis. return_pv=True (issue #20) :
+            # récupère aussi la ligne (PV) réellement calculée par Stockfish
+            # pour le coup proposé et pour le meilleur coup, à transmettre au
+            # coach — pas seulement le verdict chiffré final.
             if engine_manager:
-                verdict_qualite, verdict_delta_cp, meilleur_coup_uci_recalcule = engine_manager.evaluate_move(
-                    board, move, depth=DEPTH_EXERCICE_TEMPS_REEL, always_return_best=True
+                verdict_qualite, verdict_delta_cp, meilleur_coup_uci_recalcule, pv_info = engine_manager.evaluate_move(
+                    board, move, depth=DEPTH_EXERCICE_TEMPS_REEL, always_return_best=True, return_pv=True
                 )
+                pv_coup_propose = pv_info.get("pv_coup_propose", "")
+                pv_meilleur_coup = pv_info.get("pv_meilleur_coup", "")
                 if meilleur_coup_uci_recalcule:
                     try:
                         meilleur_coup_recalcule_san = board.san(chess.Move.from_uci(meilleur_coup_uci_recalcule))
@@ -455,6 +462,13 @@ def on_exercise_answer(data):
         "meilleur_coup": meilleur_coup,
         "meilleur_coup_piece": meilleur_coup_piece,
         "meilleur_coup_capture": meilleur_coup_capture,
+        # Ligne (PV) réellement calculée par Stockfish (issue #20), en SAN,
+        # pour le coup proposé et pour le meilleur coup — cf.
+        # llm_coach._build_context_text : sert au coach à justifier une
+        # continuation réellement calculée plutôt qu'improviser une
+        # explication tactique générique à partir du seul verdict chiffré.
+        "pv_coup_propose": pv_coup_propose,
+        "pv_meilleur_coup": pv_meilleur_coup,
         "eval_blancs_cp": eval_blancs_cp,
         "eval_mat": eval_mat,
         "verdict_qualite": verdict_qualite,
@@ -488,6 +502,11 @@ def on_exercise_answer(data):
             # affiché tel quel côté UI (cf. exercise.js).
             "verdict_qualite": verdict_qualite,
             "verdict_delta_cp": verdict_delta_cp,
+            # Idem pour la ligne (PV) calculée (issue #20) : sans ça, une
+            # question de suivi dans le chat libre reperdrait l'ancrage sur
+            # la ligne réellement calculée dès le tour suivant.
+            "pv_coup_propose": pv_coup_propose,
+            "pv_meilleur_coup": pv_meilleur_coup,
         })
 
 

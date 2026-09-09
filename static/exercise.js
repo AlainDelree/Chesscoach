@@ -27,6 +27,12 @@ let exerciseVerdictQualite = null; // classification Stockfish du dernier verdic
 let exerciseVerdictDeltaCp = null;
 let exerciseMeilleurCoup   = null;
 let exerciseCoupReel       = null;
+// Ligne (PV) réellement calculée par Stockfish pour le coup proposé et pour
+// le meilleur coup (issue #20), reçue du serveur avec le verdict — transmise
+// au chat libre comme les autres, pour que le coach reste ancré sur cette
+// ligne (pas seulement le verdict chiffré) dans une question de suivi.
+let exercisePvCoupPropose  = null;
+let exercisePvMeilleurCoup = null;
 // Vrai juste après "Reprendre mon coup", tant qu'aucun nouveau coup n'a été
 // reproposé : signale au coach que le coup/verdict discutés plus tôt dans le
 // chat libre concernent une tentative annulée, pas l'état réel actuel.
@@ -47,6 +53,8 @@ function _exerciseResetTentative() {
   exerciseVerdictDeltaCp = null;
   exerciseMeilleurCoup   = null;
   exerciseCoupReel       = null;
+  exercisePvCoupPropose  = null;
+  exercisePvMeilleurCoup = null;
 }
 
 function startExercise() {
@@ -100,6 +108,8 @@ function exerciseChatContextExtra() {
     meilleur_coup: exerciseMeilleurCoup || "",
     verdict_qualite: exerciseVerdictQualite || "",
     verdict_delta_cp: exerciseVerdictDeltaCp,
+    pv_coup_propose: exercisePvCoupPropose || "",
+    pv_meilleur_coup: exercisePvMeilleurCoup || "",
     reprise_recente: exerciseJustReprised,
   };
 }
@@ -210,6 +220,8 @@ if (typeof socket !== "undefined") {
     exerciseVerdictDeltaCp = (data && typeof data.verdict_delta_cp === "number") ? data.verdict_delta_cp : null;
     exerciseMeilleurCoup   = (data && data.meilleur_coup) || null;
     exerciseCoupReel       = (data && data.coup_reel) || null;
+    exercisePvCoupPropose  = (data && data.pv_coup_propose) || null;
+    exercisePvMeilleurCoup = (data && data.pv_meilleur_coup) || null;
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
       _coachRenderBubble("assistant", text);
