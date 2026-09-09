@@ -77,6 +77,7 @@ function startExercise() {
   exerciseSelected  = null;
   exerciseFenAvant  = null;
   exerciseExploring = false;
+  exerciseVerdictObtenu = false;
   exerciseLastMove  = null;
   exerciseJustReprised = false;
   _exerciseResetTentative();
@@ -98,7 +99,13 @@ function reprendreExerciceCoup() {
   exerciseGame      = new Chess(exerciseFenAvant);
   exerciseAnswered  = false;
   exerciseSelected  = null;
-  exerciseExploring = false;
+  // Une fois un verdict officiel déjà rendu pour cet exercice, "Reprendre mon
+  // coup" ne redemande plus jamais de réponse officielle : le plateau repart
+  // directement en exploration libre, quel que soit le nombre de reprises
+  // utilisées ensuite (issue #22). Avant tout verdict, le comportement
+  // d'origine (issue #13) est inchangé : on repropose bien un premier coup
+  // officiel.
+  exerciseExploring = exerciseVerdictObtenu;
   exerciseLastMove  = null;
   _exerciseResetTentative();
   exerciseJustReprised = true;
@@ -111,7 +118,9 @@ function reprendreExerciceCoup() {
   renderExerciseBoard();
   if (statusEl) {
     const camp = exerciseCampAlain === "noirs" ? "Noirs" : "Blancs";
-    statusEl.textContent = `Coup repris — à toi de rejouer (${camp}).`;
+    statusEl.textContent = exerciseVerdictObtenu
+      ? `Position de départ reprise — déplace librement les pièces pour explorer (${camp}), aucun nouveau verdict ne sera redemandé.`
+      : `Coup repris — à toi de rejouer (${camp}).`;
   }
 }
 
@@ -252,6 +261,7 @@ if (typeof socket !== "undefined") {
     exerciseAnswered  = false;
     exerciseSelected  = null;
     exerciseExploring = false;
+    exerciseVerdictObtenu = false;
     exerciseLastMove  = null;
     exerciseFenAvant  = data.fen;
     exerciseCampAlain = data.camp_alain;
@@ -274,6 +284,10 @@ if (typeof socket !== "undefined") {
     // Verdict rendu : le plateau devient librement explorable (issue #21),
     // sans plus jamais redéclencher exercise_answer pour cette tentative.
     exerciseExploring = true;
+    // Une fois ce premier verdict obtenu pour l'exercice en cours, plus aucun
+    // "Reprendre mon coup" ne doit rouvrir une attente de réponse officielle
+    // (issue #22) — seul un nouvel exercice remet ce drapeau à false.
+    exerciseVerdictObtenu = true;
     const statusEl = document.getElementById("exercise-status");
     if (statusEl) {
       statusEl.textContent = 'Verdict rendu — déplace librement les pièces pour explorer la suite, ou clique sur "Position suivante" pour continuer.';
