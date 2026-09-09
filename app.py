@@ -21,7 +21,7 @@ import config
 import finales
 import llm_coach
 import opening_book
-from engine_stockfish import EngineManager, find_stockfish
+from engine_stockfish import DEPTH_EXERCICE_TEMPS_REEL, EngineManager, find_stockfish
 from socketio_pgn_handlers import register_pgn_library_handlers
 
 logging.basicConfig(level=logging.INFO)
@@ -387,25 +387,45 @@ def on_exercise_answer(data):
     eval_mat = None
     verdict_qualite = None
     verdict_delta_cp = None
+    meilleur_coup_recalcule_san = None
     try:
         board = chess.Board(fen_avant)
         move = chess.Move.from_uci(uci)
         if move in board.legal_moves:
             coup_propose_san = board.san(move)
-            # Verdict Stockfish ancré sur le coup exact proposé (issue #17),
-            # pas seulement sur le nom du "meilleur coup" précalculé : réutilise
-            # evaluate_move (mêmes seuils que build_patterns_erreurs.py) pour
-            # que le coach explique un jugement déjà tranché plutôt que de le
-            # décider lui-même à partir des noms de coups seuls.
+            # Verdict Stockfish ancré sur le coup exact proposé (issue #17) et
+            # meilleur coup recalculé à la volée (issue #19), tous deux issus
+            # du même appel evaluate_move, à une profondeur plus élevée que
+            # celle du calcul par lot d'origine (depth=10 dans
+            # build_patterns_erreurs.py, choix de vitesse pour traiter 280
+            # parties d'un coup — non pertinent ici pour une position unique).
+            # always_return_best=True : sans quoi evaluate_move renvoie None
+            # dès que le coup proposé EST le meilleur coup (cf.
+            # engine_stockfish.py), ce qui masquerait le meilleur coup côté
+            # affichage/log dans ce cas précis.
             if engine_manager:
-                verdict_qualite, verdict_delta_cp, _ = engine_manager.evaluate_move(board, move, depth=8)
+                verdict_qualite, verdict_delta_cp, meilleur_coup_uci_recalcule = engine_manager.evaluate_move(
+                    board, move, depth=DEPTH_EXERCICE_TEMPS_REEL, always_return_best=True
+                )
+                if meilleur_coup_uci_recalcule:
+                    try:
+                        meilleur_coup_recalcule_san = board.san(chess.Move.from_uci(meilleur_coup_uci_recalcule))
+                    except Exception:
+                        meilleur_coup_recalcule_san = meilleur_coup_uci_recalcule
             board.push(move)
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
     except Exception:
         pass
 
     coup_reel = _current_exercise.get("coup_joue_san") or _current_exercise.get("coup_joue_uci", "")
-    meilleur_coup = _current_exercise.get("meilleur_coup_san") or _current_exercise.get("meilleur_coup_uci", "")
+    # Meilleur coup recalculé ci-dessus à la même profondeur que le verdict
+    # (issue #19) ; repli sur la valeur figée de erreurs_detectees.json
+    # (calculée à depth=10 par build_patterns_erreurs.py, potentiellement
+    # ancienne) uniquement si Stockfish est indisponible ou le coup proposé
+    # illégal.
+    meilleur_coup = meilleur_coup_recalcule_san or (
+        _current_exercise.get("meilleur_coup_san") or _current_exercise.get("meilleur_coup_uci", "")
+    )
 
     # Pièce jouée/capturée par chacun des trois coups comparés, tous les
     # trois depuis fen_avant (issue #18) — cf. _move_details_fr.
@@ -439,6 +459,13 @@ def on_exercise_answer(data):
         "eval_mat": eval_mat,
         "verdict_qualite": verdict_qualite,
         "verdict_delta_cp": verdict_delta_cp,
+        # Profondeur commune du recalcul à la volée (issue #19) du verdict et
+        # du meilleur coup ci-dessus — n'entre pas dans le texte de contexte
+        # envoyé au coach (cf. llm_coach._build_context_text, qui ignore les
+        # clés qu'elle ne connaît pas), gardée uniquement pour être visible
+        # dans data/logs/coach_calls.log (issue #18) et vérifier que les deux
+        # évaluations partagent bien la même profondeur.
+        "profondeur_reeval": DEPTH_EXERCICE_TEMPS_REEL if meilleur_coup_recalcule_san else None,
         "mode_exercice": True,
     }
     llm_config = {

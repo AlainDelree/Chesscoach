@@ -52,6 +52,16 @@ ELO_DEFAUT = 1500
 PEDAGOGIQUE_SKILL_LEVEL = 0
 PEDAGOGIQUE_THINK_TIME = 0.1
 
+# Profondeur de réévaluation en temps réel du coup proposé et du meilleur
+# coup dans le mode "Exercice" (issue #19) : la profondeur 10 utilisée par
+# build_patterns_erreurs.py (issue #2) était un choix de vitesse pour traiter
+# 280 parties d'un coup, pas pertinent pour une évaluation ponctuelle en
+# cours d'exercice. Mesuré sur cette machine (Stockfish 16) : depth=18 reste
+# sous la seconde par appel analyse(), y compris en milieu de partie complexe,
+# pour un total de l'ordre de 1-2s en cumulant les deux appels internes
+# (avant/après coup) d'evaluate_move.
+DEPTH_EXERCICE_TEMPS_REEL = 18
+
 
 def classifier_coup(delta_cp: int) -> str:
     """Classe un coup selon la perte en centipawns."""
@@ -296,14 +306,29 @@ class EngineManager:
                 return {"cp": None, "mate": None, "wdl": None, "best_move": None}
 
     def evaluate_move(self, board: chess.Board, move: chess.Move,
-                      depth: int = 8) -> tuple[str, int, str | None]:
+                      depth: int = 8,
+                      always_return_best: bool = False) -> tuple[str, int, str | None]:
         """
         Évalue la qualité d'un coup joué.
+
+        Paramètres :
+          always_return_best : si True, le 3e élément retourné est toujours
+            le meilleur coup UCI pour la position AVANT le coup, même quand
+            il coïncide avec le coup joué (au lieu de None dans ce cas — cf.
+            comportement historique ci-dessous, conservé par défaut pour ne
+            pas changer le contrat des appelants existants). Utile quand
+            l'appelant a besoin du "meilleur coup" affichable pour la
+            position, pas seulement d'une alternative à mettre en avant
+            (issue #19, mode "Exercice" : meilleur coup et verdict du coup
+            proposé doivent provenir du même appel moteur, à la même
+            profondeur).
 
         Retourne (qualite, delta_cp, best_move_uci) :
           - qualite    : "bon" / "imprecision" / "erreur" / "blunder"
           - delta_cp   : perte en centipawns (0 = parfait)
-          - best_move  : meilleur coup UCI si différent du coup joué, sinon None
+          - best_move  : par défaut, meilleur coup UCI si différent du coup
+            joué, sinon None ; toujours le meilleur coup si
+            always_return_best=True (cf. ci-dessus)
         """
         if not self._analyse_active:
             return "bon", 0, None
@@ -319,7 +344,7 @@ class EngineManager:
 
             if cp_avant is None:
                 # Position de mat → bon coup par défaut
-                return "bon", 0, None
+                return "bon", 0, (best_move if always_return_best else None)
 
             # Évaluation APRÈS le coup
             board_apres = board.copy()
@@ -329,7 +354,7 @@ class EngineManager:
 
             if cp_apres is None:
                 # Mat après le coup → excellent
-                return "bon", 0, None
+                return "bon", 0, (best_move if always_return_best else None)
 
             # La perte est vue du point de vue du joueur AVANT son coup
             # cp_avant = score pour joueur avant coup
@@ -358,6 +383,8 @@ class EngineManager:
                 except Exception as e:
                     logger.warning(f"MultiPV fallback échoué : {e}")
 
+            if always_return_best:
+                return qualite, delta, (best if best is not None else best_move)
             return qualite, delta, best
 
         except Exception as e:
