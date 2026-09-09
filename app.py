@@ -101,6 +101,64 @@ def _game_over_info(board: chess.Board) -> dict | None:
     return {"gagnant": None, "message": "Partie nulle."}
 
 
+# Noms FR bruts (sans article) des types de pièce python-chess, utilisés par
+# _move_details_fr (issue #18) — le mode Exercice les injecte explicitement
+# dans le contexte du coach plutôt que de le laisser déduire seul, à partir
+# du seul nom SAN/UCI d'un coup, quelle pièce se trouvait sur la case
+# capturée (ex. confusion constatée : "tu prends le cavalier" pour la prise
+# d'un pion).
+_PIECE_FR = {
+    chess.PAWN: "pion",
+    chess.KNIGHT: "cavalier",
+    chess.BISHOP: "fou",
+    chess.ROOK: "tour",
+    chess.QUEEN: "dame",
+    chess.KING: "roi",
+}
+
+
+def _parse_move_flexible(board: chess.Board, move_str: str) -> chess.Move | None:
+    """Interprète move_str en SAN ou, à défaut, en UCI (issue #18) : les
+    champs coup_joue_san/meilleur_coup_san d'erreurs_detectees.json peuvent
+    retomber sur leur équivalent _uci quand le SAN n'a pas été précalculé
+    (cf. on_exercise_answer). Retourne None si move_str n'est interprétable
+    dans aucun des deux formats, ou n'est pas légal sur `board`."""
+    try:
+        return board.parse_san(move_str)
+    except ValueError:
+        pass
+    try:
+        move = chess.Move.from_uci(move_str)
+        return move if move in board.legal_moves else None
+    except Exception:
+        return None
+
+
+def _move_details_fr(fen: str, move_str: str) -> tuple[str, str]:
+    """(pièce jouée, pièce capturée) en français pour move_str (SAN ou UCI),
+    joué depuis la position fen (issue #18) — best-effort : ("", "") si
+    move_str est vide ou non interprétable sur cette position. Les trois
+    coups comparés dans le mode Exercice (coup proposé, coup réel, meilleur
+    coup) partent tous de la même position fen_avant."""
+    if not move_str:
+        return "", ""
+    try:
+        board = chess.Board(fen)
+        move = _parse_move_flexible(board, move_str)
+        if move is None:
+            return "", ""
+        piece = board.piece_at(move.from_square)
+        piece_fr = _PIECE_FR.get(piece.piece_type, "") if piece else ""
+        if board.is_en_passant(move):
+            capture_fr = _PIECE_FR[chess.PAWN]
+        else:
+            captured = board.piece_at(move.to_square)
+            capture_fr = _PIECE_FR.get(captured.piece_type, "") if captured else ""
+        return piece_fr, capture_fr
+    except Exception:
+        return "", ""
+
+
 def _eval_blancs_apres(board: chess.Board, depth: int = 8) -> tuple[int | None, int | None]:
     """Évalue une position (déjà jouée, coup d'Alain compris) avec Stockfish et
     convertit le résultat vers le point de vue des Blancs (issue #12 point 3).
@@ -188,7 +246,11 @@ def on_coach_comment_on_demand(data):
         "eval_mat": eval_mat,
         "theme_finale": theme_finale,
     }
-    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     if error:
@@ -207,7 +269,11 @@ def on_coach_ask(data):
     """
     messages = data.get("messages", [])
     context = data.get("context", {})
-    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     if error:
@@ -223,7 +289,11 @@ def on_training_program_build(_data=None):
     à partir des patterns_erreurs/repertoire_ouvertures de coach_memory.
     Remplace intégralement objectifs_courants — pas d'historique des
     anciens programmes (hors périmètre de l'issue)."""
-    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
     objectifs, error = llm_coach.get_training_program(
         coach_memory.get("patterns_erreurs", {}),
         coach_memory.get("repertoire_ouvertures", {}),
@@ -337,6 +407,12 @@ def on_exercise_answer(data):
     coup_reel = _current_exercise.get("coup_joue_san") or _current_exercise.get("coup_joue_uci", "")
     meilleur_coup = _current_exercise.get("meilleur_coup_san") or _current_exercise.get("meilleur_coup_uci", "")
 
+    # Pièce jouée/capturée par chacun des trois coups comparés, tous les
+    # trois depuis fen_avant (issue #18) — cf. _move_details_fr.
+    coup_propose_piece, coup_propose_capture = _move_details_fr(fen_avant, coup_propose_san)
+    coup_reel_piece, coup_reel_capture = _move_details_fr(fen_avant, coup_reel)
+    meilleur_coup_piece, meilleur_coup_capture = _move_details_fr(fen_avant, meilleur_coup)
+
     messages = [{
         "role": "user",
         "content": (
@@ -351,15 +427,25 @@ def on_exercise_answer(data):
         "fen": fen_avant,
         "camp_alain": _current_exercise.get("camp_alain", ""),
         "coup_propose": coup_propose_san,
+        "coup_propose_piece": coup_propose_piece,
+        "coup_propose_capture": coup_propose_capture,
         "coup_reel": coup_reel,
+        "coup_reel_piece": coup_reel_piece,
+        "coup_reel_capture": coup_reel_capture,
         "meilleur_coup": meilleur_coup,
+        "meilleur_coup_piece": meilleur_coup_piece,
+        "meilleur_coup_capture": meilleur_coup_capture,
         "eval_blancs_cp": eval_blancs_cp,
         "eval_mat": eval_mat,
         "verdict_qualite": verdict_qualite,
         "verdict_delta_cp": verdict_delta_cp,
         "mode_exercice": True,
     }
-    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     if error:
@@ -511,7 +597,11 @@ def on_pedagogic_move(data):
         "eval_blancs_cp": eval_blancs_cp,
         "eval_mat": eval_mat,
     }
-    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     if error:
@@ -563,7 +653,11 @@ def on_opening_start(data):
         emit("opening_error", {"error": "nom_ouverture_manquant"})
         return
 
-    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
     moves_san, error = llm_coach.get_opening_moves(opening_name, llm_config)
     if error:
         emit("opening_error", {"error": error})
@@ -768,7 +862,11 @@ def on_opening_move(data):
         "popularite_pct": popularite_pct,
         "coup_livre_recommande": coup_livre_top_san or "",
     }
-    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     if error:
@@ -1041,7 +1139,11 @@ def on_finale_move(data):
         "eval_mat": eval_mat,
         "theme_finale": _finale_description or "",
     }
-    llm_config = {"llm_api_key": config.LLM_API_KEY, "llm_model": config.LLM_MODEL}
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     if error:

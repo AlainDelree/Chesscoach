@@ -14,6 +14,13 @@ ENGINES_DIR = Path.home() / "ChessCoach" / "engines"
 COACH_MEMORY_PATH = DATA_DIR / "coach_memory.json"
 ERREURS_DETECTEES_PATH = DATA_DIR / "erreurs_detectees.json"
 
+# Log de chaque appel au coach en mode "Exercice" (issue #18) : horodatage,
+# system prompt complet, contexte construit et messages envoyés, en JSON
+# Lines — pour diagnostiquer les erreurs factuelles du coach à partir de ce
+# qui a été réellement transmis, pas d'une supposition. Sous DATA_DIR, donc
+# gitignoré comme le reste des données ; pas de rotation à ce stade.
+COACH_CALLS_LOG_PATH = DATA_DIR / "logs" / "coach_calls.log"
+
 # Bibliothèque de positions-types de finales (issue #13) — fichier de
 # données modifiable depuis l'interface (bouton "Enregistrer comme finale"
 # du mode "Partie libre"), plus une liste figée dans le code (finales.py).

@@ -26,6 +26,7 @@ import json
 import logging
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger("chesscoach.llm_coach")
@@ -169,6 +170,17 @@ def _build_context_text(context) -> str:
     coup_propose  = (context.get("coup_propose") or "").strip()
     coup_reel     = (context.get("coup_reel") or "").strip()
     meilleur_coup = (context.get("meilleur_coup") or "").strip()
+    # Pièce jouée / pièce capturée par chacun de ces trois coups (issue #18) :
+    # calculées côté app.py depuis la position réelle (python-chess), pas
+    # laissées à la charge du modèle qui a pu confondre le type de pièce
+    # capturée (ex. "tu prends le cavalier" pour la prise d'un pion) en ne
+    # se fiant qu'au nom SAN/UCI du coup, qui ne le précise pas lui-même.
+    coup_propose_piece    = (context.get("coup_propose_piece") or "").strip()
+    coup_propose_capture  = (context.get("coup_propose_capture") or "").strip()
+    coup_reel_piece       = (context.get("coup_reel_piece") or "").strip()
+    coup_reel_capture     = (context.get("coup_reel_capture") or "").strip()
+    meilleur_coup_piece   = (context.get("meilleur_coup_piece") or "").strip()
+    meilleur_coup_capture = (context.get("meilleur_coup_capture") or "").strip()
     # Verdict Stockfish chiffré du coup exact proposé (issue #17), calculé via
     # EngineManager.evaluate_move (mêmes seuils que classifier_coup) : donné
     # en contexte pour que le coach explique un jugement déjà tranché plutôt
@@ -206,11 +218,46 @@ def _build_context_text(context) -> str:
     if move:
         lines.append(f"Coup actuel : {move}")
     if coup_propose:
-        lines.append(f"Coup proposé par le joueur pour cet exercice : {coup_propose}")
+        # Étiquette explicite "MAINTENANT" / coup_reel étiqueté "À L'ÉPOQUE"
+        # ci-dessous (issue #18 point 3) : évite que le coach présente le
+        # coup réellement joué dans la partie d'origine comme si Alain
+        # venait de le proposer dans la tentative en cours.
+        lines.append(
+            "Coup que le joueur vient de proposer MAINTENANT, dans cette "
+            f"tentative d'exercice : {coup_propose}"
+        )
+        if coup_propose_piece:
+            detail = f"Pièce jouée par ce coup : {coup_propose_piece}."
+            if coup_propose_capture:
+                detail += (
+                    f" Pièce capturée sur la case d'arrivée : {coup_propose_capture} "
+                    "(c'est cette pièce, et aucune autre, qui se trouvait sur cette case)."
+                )
+            lines.append(detail)
     if coup_reel:
-        lines.append(f"Coup réellement joué par le joueur dans la partie d'origine : {coup_reel}")
+        lines.append(
+            "Coup que le joueur avait réellement joué À L'ÉPOQUE, dans la "
+            "partie d'origine dont cet exercice est tiré — PAS le coup qu'il "
+            f"vient de proposer ci-dessus : {coup_reel}"
+        )
+        if coup_reel_piece:
+            detail = f"Pièce jouée par ce coup-là : {coup_reel_piece}."
+            if coup_reel_capture:
+                detail += (
+                    f" Pièce capturée sur la case d'arrivée : {coup_reel_capture} "
+                    "(c'est cette pièce, et aucune autre, qui se trouvait sur cette case)."
+                )
+            lines.append(detail)
     if meilleur_coup:
-        lines.append(f"Meilleur coup selon Stockfish : {meilleur_coup}")
+        detail = f"Meilleur coup selon Stockfish : {meilleur_coup}."
+        if meilleur_coup_piece:
+            detail += f" Pièce jouée par ce coup : {meilleur_coup_piece}."
+            if meilleur_coup_capture:
+                detail += (
+                    f" Pièce capturée sur la case d'arrivée : {meilleur_coup_capture} "
+                    "(c'est cette pièce, et aucune autre, qui se trouvait sur cette case)."
+                )
+        lines.append(detail)
     if verdict_qualite:
         detail_cp = (
             f", perte de {verdict_delta_cp} centipawns par rapport au meilleur coup"
@@ -254,6 +301,32 @@ def _build_context_text(context) -> str:
     if pgn:
         lines.append(f"PGN de la partie :\n{pgn}")
     return "\n".join(lines)
+
+
+def _log_coach_call(log_path, system_prompt: str, context: dict, messages) -> None:
+    """Journalise un appel complet au coach en mode "Exercice" (issue #18) :
+    horodatage, system prompt complet, contexte construit (tous les champs,
+    y compris coup_propose/coup_reel/meilleur_coup/verdict_qualite/
+    verdict_delta_cp) et messages envoyés, en JSON Lines dans log_path — pour
+    diagnostiquer une erreur factuelle du coach à partir de ce qui a été
+    réellement transmis à Haiku, pas d'une supposition. Best-effort : une
+    erreur d'écriture ne doit jamais faire échouer la réponse au coach.
+    """
+    if not log_path:
+        return
+    try:
+        log_path = Path(log_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "horodatage": datetime.now().isoformat(),
+            "system_prompt": system_prompt,
+            "context": context or {},
+            "messages": messages,
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.warning(f"[LLM_COACH] Écriture du log coach_calls échouée : {e}")
 
 
 def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
@@ -444,6 +517,9 @@ def get_coach_response(messages, context, coach_memory, config):
     context_text = _build_context_text(context)
     if context_text:
         prompt_sys = f"{prompt_sys}\n\nContexte de la position en cours :\n{context_text}"
+
+    if (context or {}).get("mode_exercice"):
+        _log_coach_call((config or {}).get("coach_log_path"), prompt_sys, context, clean_messages)
 
     try:
         response = _call_claude(prompt_sys, clean_messages, api_key, model)
