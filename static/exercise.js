@@ -23,6 +23,14 @@ let exerciseCampAlain  = null;
 // commentaire automatique — juste pour visualiser la suite (coup suggéré,
 // variante) tout en gardant la conversation déjà affichée.
 let exerciseExploring  = false;
+// Vrai dès qu'un verdict officiel a été rendu pour l'exercice en cours, et le
+// reste quel que soit le nombre de "Reprendre mon coup" utilisés ensuite
+// (issue #22) — contrairement à exerciseExploring (remis à false par
+// reprendreExerciceCoup avant l'obtention d'un premier verdict), ce drapeau
+// ne redevient false qu'au démarrage d'un nouvel exercice, pour empêcher
+// "Reprendre mon coup" de rouvrir une attente de réponse officielle une fois
+// le verdict déjà rendu.
+let exerciseVerdictObtenu = false;
 let exerciseLastMove   = null; // { from, to } (cases algébriques) du dernier coup joué/exploré
 
 // État de la tentative en cours, transmis au chat libre pendant l'exercice
