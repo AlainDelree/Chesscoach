@@ -91,6 +91,7 @@ function reprendreFinaleCoup() {
   finaleGameOver = false;
   finaleSelected = null;
   finaleFenAvantCoup = null;
+  hideGameOverBanner();
   renderFinaleBoard();
   updateFinaleStatus();
 }
@@ -143,6 +144,7 @@ function onFinaleSelectChange() {
   if (descEl) descEl.textContent = entry ? entry.description : "";
 
   ensureModeSwitchClean("finale");
+  hideGameOverBanner();
   finaleWaiting  = true;
   finaleGameOver = false;
   finaleFenAvantCoup = null;
@@ -167,6 +169,7 @@ function startFinaleDemo() {
   if (descEl) descEl.textContent = entry ? entry.description : "";
 
   ensureModeSwitchClean("finale");
+  hideGameOverBanner();
   finaleWaiting  = true;
   finaleGameOver = false;
   finaleFenAvantCoup = null;
@@ -357,6 +360,7 @@ if (typeof socket !== "undefined") {
       finaleGameOver = true;
       const statusEl = document.getElementById("finale-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      showGameOverBanner(data.game_over_info, finaleCampAlain);
       return;
     }
     updateFinaleStatus();
@@ -386,6 +390,7 @@ if (typeof socket !== "undefined") {
       updateFinaleDemoNextButton();
       const statusEl = document.getElementById("finale-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      showGameOverBanner(data.game_over_info);
       return;
     }
     updateFinaleStatus();

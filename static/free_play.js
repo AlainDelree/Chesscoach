@@ -46,6 +46,7 @@ function abandonFreeGame() {
 
 function startFreeGame() {
   ensureModeSwitchClean("free");
+  hideGameOverBanner();
   freeGame           = new Chess();
   freePlayActive     = true;
   freeSelectedSquare = null;
@@ -197,6 +198,7 @@ if (typeof socket !== "undefined") {
     if (data && data.game_over) {
       const statusEl = document.getElementById("free-play-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      showGameOverBanner(data.game_over_info);
       return;
     }
 

@@ -111,6 +111,27 @@
 }
 .opening-suggestion-btn:hover { background: #dde6ef; }
 
+/* ── Bannière de fin de partie (issue #31) ──────────────────────────────────
+   Remplace la simple ligne de statut discrète (0.82rem, gris #445) par un
+   bandeau nettement plus visible, placé au-dessus de l'échiquier. Couleur
+   distincte selon le résultat quand il est connaissable (victoire/défaite du
+   camp d'Alain) ; sinon (démonstration Stockfish-Stockfish, partie libre où
+   les deux camps sont joués librement) une couleur neutre "mat" reste
+   utilisée plutôt que de deviner. */
+.game-over-banner {
+  margin-bottom: 8px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  text-align: center;
+  border: 2px solid transparent;
+}
+.game-over-banner--victoire { background: #d4edda; color: #1b5e20; border-color: #4caf50; }
+.game-over-banner--defaite  { background: #f8d7da; color: #7a1220; border-color: #f44336; }
+.game-over-banner--nulle    { background: #e3edf7; color: #1a2a3a; border-color: #a0b8d0; }
+.game-over-banner--mat      { background: #fff3cd; color: #7a5c00; border-color: #ffc107; }
+
 /* ── Flèches d'annotation (superposées au plateau) ── */
 #arrows-svg {
   position: absolute;

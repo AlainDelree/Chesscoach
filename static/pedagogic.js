@@ -31,6 +31,7 @@ function pedagogicCommenterChaqueCoup() {
 
 function startPedagogicGame(camp) {
   ensureModeSwitchClean("pedagogic");
+  hideGameOverBanner();
   pedagogicCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   pedagogicWaiting   = true;
   pedagogicGameOver  = false;
@@ -65,6 +66,7 @@ function reprendrePedagogicCoup() {
   pedagogicGameOver = false;
   pedagogicSelected = null;
   pedagogicFenAvantCoup = null;
+  hideGameOverBanner();
   renderPedagogicBoard();
   updatePedagogicStatus();
 }
@@ -195,6 +197,7 @@ if (typeof socket !== "undefined") {
       pedagogicGameOver = true;
       const statusEl = document.getElementById("pedagogic-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      showGameOverBanner(data.game_over_info, pedagogicCampAlain);
       return;
     }
     updatePedagogicStatus();

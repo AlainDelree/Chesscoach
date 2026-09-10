@@ -88,6 +88,7 @@ function reprendreOpeningCoup() {
   openingSelected  = null;
   openingInBook    = openingInBookAvantCoup;
   openingFenAvantCoup = null;
+  hideGameOverBanner();
   socket.emit("opening_undo", { in_book: openingInBookAvantCoup });
   renderOpeningBoard();
   updateOpeningStatus();
@@ -107,6 +108,7 @@ function startOpeningGame(camp) {
     return;
   }
   ensureModeSwitchClean("opening");
+  hideGameOverBanner();
   openingCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   openingWaiting   = true;
   openingGameOver  = false;
@@ -249,6 +251,7 @@ if (typeof socket !== "undefined") {
       openingGameOver = true;
       const statusEl = document.getElementById("opening-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      showGameOverBanner(data.game_over_info, openingCampAlain);
       return;
     }
     updateOpeningStatus();

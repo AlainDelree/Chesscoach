@@ -790,6 +790,34 @@ function resetBoardToNeutral() {
     boardEl.onclick = null;
     boardEl.classList.remove("free-play-active");
   }
+  hideGameOverBanner();
+}
+
+// ── Bannière de fin de partie (issue #31) ───────────────────────────────────
+// Rend le résultat (mat/pat/nulle, cf. app.py _game_over_info) nettement plus
+// visible que la ligne de statut discrète des panneaux de mode : bandeau
+// au-dessus de l'échiquier, texte plus grand et gras, couleur de fond selon
+// le résultat. `campAlain` ("blancs"/"noirs"), quand connu par l'appelant,
+// permet de distinguer victoire/défaite ; omis (démonstration, partie libre)
+// il retombe sur une couleur neutre "mat" plutôt que de deviner un camp.
+
+function showGameOverBanner(gameOverInfo, campAlain) {
+  const el = document.getElementById("game-over-banner");
+  if (!el || !gameOverInfo) return;
+  let categorie = "nulle";
+  if (gameOverInfo.gagnant) {
+    categorie = campAlain
+      ? (gameOverInfo.gagnant === campAlain ? "victoire" : "defaite")
+      : "mat";
+  }
+  el.className = "game-over-banner game-over-banner--" + categorie;
+  el.textContent = gameOverInfo.message;
+  el.style.display = "block";
+}
+
+function hideGameOverBanner() {
+  const el = document.getElementById("game-over-banner");
+  if (el) el.style.display = "none";
 }
 
 document.addEventListener("DOMContentLoaded", () => {
