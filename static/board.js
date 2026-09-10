@@ -486,6 +486,12 @@ function loadPgnFile(event, onLoaded) {
 }
 
 function parsePgn(pgn, onLoaded) {
+  // Charger une partie en revue (fichier local ou bibliothèque PGN) reprend
+  // le plateau pour l'usage de la revue — si un mode interactif tournait
+  // encore (partie pédagogique, exercice...), le terminer proprement d'abord
+  // (issue #23, ensureModeSwitchClean dans controls.js) plutôt que de laisser
+  // deux modes "actifs" en même temps sur le même plateau.
+  if (typeof ensureModeSwitchClean === "function") ensureModeSwitchClean("library");
   try {
     const chess = new Chess();
     if (!chess.load_pgn(pgn)) {

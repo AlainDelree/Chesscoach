@@ -45,6 +45,7 @@ function abandonFreeGame() {
 }
 
 function startFreeGame() {
+  ensureModeSwitchClean("free");
   freeGame           = new Chess();
   freePlayActive     = true;
   freeSelectedSquare = null;

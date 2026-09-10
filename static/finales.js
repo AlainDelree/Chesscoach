@@ -95,6 +95,7 @@ function onFinaleSelectChange() {
   const entry = finaleList.find((f) => f.id === id);
   if (descEl) descEl.textContent = entry ? entry.description : "";
 
+  ensureModeSwitchClean("finale");
   finaleWaiting  = true;
   finaleGameOver = false;
   finaleFenAvantCoup = null;

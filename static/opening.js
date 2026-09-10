@@ -75,6 +75,7 @@ function startOpeningGame(camp) {
     if (statusEl) statusEl.textContent = "Indiquez le nom d'une ouverture.";
     return;
   }
+  ensureModeSwitchClean("opening");
   openingCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   openingWaiting   = true;
   openingGameOver  = false;

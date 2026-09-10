@@ -47,13 +47,38 @@
       width: 240px;
       flex-shrink: 0;
     }
-    #library-column {
+    #mode-tabs-column {
       display: flex;
       flex-direction: column;
       gap: 12px;
-      width: 300px;
+      width: 320px;
       flex-shrink: 0;
     }
+    .mode-tab-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #a0b8d0;
+    }
+    .mode-tab-btn {
+      padding: 5px 8px;
+      font-size: 0.76rem;
+      border: 1px solid #a0b8d0;
+      background: #eef2f6;
+      border-radius: 4px;
+      cursor: pointer;
+      color: #1a2a3a;
+    }
+    .mode-tab-btn.active {
+      background: #1a2a3a;
+      color: #fff;
+      border-color: #1a2a3a;
+    }
+    .mode-tab-panel { display: none; }
+    .mode-tab-panel.active { display: block; }
+    #review-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
     .panel {
       background: #fff;
       border: 1px solid #a0b8d0;
@@ -112,10 +137,10 @@
       <div class="material-row"><span id="material-bottom"></span></div>
 
       <div id="review-controls">
-        <button onclick="reviewPrev()">◀ Précédent</button>
-        <button onclick="reviewNext()">Suivant ▶</button>
-        <button onclick="flipBoard()">Retourner</button>
-        <button onclick="showReviewBestMove()">Meilleur coup</button>
+        <button id="review-prev-btn" onclick="reviewPrev()">◀ Précédent</button>
+        <button id="review-next-btn" onclick="reviewNext()">Suivant ▶</button>
+        <button id="review-flip-btn" onclick="flipBoard()">Retourner</button>
+        <button id="review-bestmove-btn" onclick="showReviewBestMove()">Meilleur coup</button>
         <button onclick="extraireFen()">Extraire le FEN</button>
       </div>
       <div>
@@ -149,105 +174,149 @@
         <div id="shared-mode-status" style="font-size:0.78rem; color:#778; margin-top:4px;">Aucun mode interactif actif.</div>
       </div>
 
-      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
-        <h2>Partie libre</h2>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <button onclick="startFreeGame()">Nouvelle partie libre</button>
-          <button onclick="requestStockfishMove()">Coup Stockfish</button>
-          <label style="font-size:0.82rem;">
-            <input type="checkbox" id="free-auto-stockfish">
-            Stockfish joue auto
-          </label>
-        </div>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-          <input id="free-finale-nom" type="text" placeholder="Nom de la finale" style="flex:1; min-width:140px;">
-        </div>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-          <input id="free-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
-          <button onclick="saveFreeGameAsFinale()">Enregistrer comme finale</button>
-        </div>
-        <div id="free-play-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
-      </div>
+    </div>
 
-      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
-        <h2>Partie pédagogique</h2>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <button onclick="startPedagogicGame('blancs')">Jouer les Blancs</button>
-          <button onclick="startPedagogicGame('noirs')">Jouer les Noirs</button>
+    <!-- ── Colonne à onglets, un par mode (issue #23) ────────────────────────
+         Un seul panneau de contrôles spécifique visible à la fois (celui de
+         l'onglet cliqué, cf. switchModeTab dans controls.js) — remplace
+         l'ancien empilement vertical. L'échiquier, l'historique, le coach et
+         la barre "Contrôles du mode actif" restent hors des onglets
+         (toujours visibles, cf. board-column/coach-column) car ils
+         s'appliquent quel que soit le mode actif. -->
+    <div id="mode-tabs-column">
+      <div class="panel" style="width:100%; box-sizing:border-box;">
+        <div class="mode-tab-bar">
+          <button type="button" class="mode-tab-btn" id="tab-btn-library" onclick="switchModeTab('library')">Bibliothèque / Revue PGN</button>
+          <button type="button" class="mode-tab-btn" id="tab-btn-free" onclick="switchModeTab('free')">Partie libre</button>
+          <button type="button" class="mode-tab-btn" id="tab-btn-pedagogic" onclick="switchModeTab('pedagogic')">Partie pédagogique</button>
+          <button type="button" class="mode-tab-btn" id="tab-btn-opening" onclick="switchModeTab('opening')">Travail d'ouverture</button>
+          <button type="button" class="mode-tab-btn" id="tab-btn-finale" onclick="switchModeTab('finale')">Travail de finales</button>
+          <button type="button" class="mode-tab-btn" id="tab-btn-exercise" onclick="switchModeTab('exercise')">Mode exercice</button>
+          <button type="button" class="mode-tab-btn" id="tab-btn-editor" onclick="switchModeTab('editor')">Éditeur de position</button>
         </div>
-        <div id="pedagogic-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
-      </div>
 
-      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
-        <h2>Travail d'ouverture</h2>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <input id="opening-name-input" type="text" placeholder="Nom de l'ouverture (ex. Défense française)" style="flex:1; min-width:180px;">
+        <div class="mode-tab-panel" id="tab-panel-library">
+          <div style="display:flex; gap:4px; margin-bottom:6px;">
+            <select id="pgn-lib-collection-select" style="flex:1;" onchange="pgnLibOnCollectionChange()"></select>
+          </div>
+          <div style="display:flex; gap:4px; margin-bottom:6px;">
+            <input id="pgn-lib-new-name" type="text" placeholder="Nouvelle collection" style="flex:1;">
+            <button onclick="pgnLibCreateCollection()">+</button>
+          </div>
+          <div style="display:flex; gap:4px; margin-bottom:6px;">
+            <input id="pgn-lib-search" type="text" placeholder="Rechercher un adversaire..." style="flex:1;" oninput="pgnLibApplyFilters()">
+          </div>
+          <div style="display:flex; gap:4px; margin-bottom:6px;">
+            <select id="pgn-lib-result-filter" style="flex:1;" onchange="pgnLibApplyFilters()">
+              <option value="">Tous les résultats</option>
+              <option value="victoire">Victoires (Alain)</option>
+              <option value="defaite">Défaites (Alain)</option>
+              <option value="nulle">Nulles</option>
+            </select>
+          </div>
+          <ul id="pgn-lib-games"></ul>
+          <div style="margin-top:6px;">
+            <label style="font-size:0.82rem;">Importer un PGN dans la collection :
+              <input type="file" accept=".pgn,.txt" onchange="pgnLibImportFile(event)">
+            </label>
+          </div>
+          <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
         </div>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-          <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
-          <button onclick="startOpeningGame('noirs')">Jouer les Noirs</button>
-        </div>
-        <div id="opening-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
-      </div>
 
-      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
-        <h2>Travail de finales</h2>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <select id="finale-select" style="flex:1; min-width:0;" onchange="onFinaleSelectChange()">
-            <option value="">— Choisir une finale —</option>
-          </select>
+        <div class="mode-tab-panel" id="tab-panel-free">
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <button onclick="startFreeGame()">Nouvelle partie libre</button>
+            <button onclick="requestStockfishMove()">Coup Stockfish</button>
+            <label style="font-size:0.82rem;">
+              <input type="checkbox" id="free-auto-stockfish">
+              Stockfish joue auto
+            </label>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <input id="free-finale-nom" type="text" placeholder="Nom de la finale" style="flex:1; min-width:140px;">
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <input id="free-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
+            <button onclick="saveFreeGameAsFinale()">Enregistrer comme finale</button>
+          </div>
+          <div id="free-play-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
         </div>
-        <div id="finale-description" style="font-size:0.78rem; color:#556; margin-top:4px;"></div>
-        <div id="finale-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
-      </div>
 
-      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
-        <h2>Éditeur de position</h2>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <button onclick="startPositionEditor()">Ouvrir l'éditeur de position</button>
-          <button onclick="clearEditorBoard()">Vider l'échiquier</button>
+        <div class="mode-tab-panel" id="tab-panel-pedagogic">
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <button onclick="startPedagogicGame('blancs')">Jouer les Blancs</button>
+            <button onclick="startPedagogicGame('noirs')">Jouer les Noirs</button>
+          </div>
+          <div id="pedagogic-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
         </div>
-        <div id="editor-palette" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:8px;"></div>
-        <div id="editor-trash" style="margin-top:6px; padding:6px; border:1px dashed #a0b8d0; border-radius:4px; font-size:0.78rem; color:#778; text-align:center;">
-          Glisser une pièce ici pour la retirer de l'échiquier
-        </div>
-        <div style="display:flex; gap:12px; align-items:center; margin-top:8px; font-size:0.82rem;">
-          <label><input type="radio" name="editor-trait" id="editor-trait-blancs" value="blancs" checked onchange="onEditorTraitChange()"> Trait aux Blancs</label>
-          <label><input type="radio" name="editor-trait" value="noirs" onchange="onEditorTraitChange()"> Trait aux Noirs</label>
-        </div>
-        <div style="display:flex; gap:12px; align-items:center; margin-top:4px; font-size:0.82rem;">
-          <span style="color:#556;">Alain joue :</span>
-          <label><input type="radio" name="editor-camp-alain" id="editor-camp-alain-blancs" value="blancs" checked onchange="onEditorCampAlainChange()"> les Blancs</label>
-          <label><input type="radio" name="editor-camp-alain" id="editor-camp-alain-noirs" value="noirs" onchange="onEditorCampAlainChange()"> les Noirs</label>
-        </div>
-        <div id="editor-validation-status" style="font-size:0.82rem; margin-top:6px;"></div>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-          <input id="editor-finale-nom" type="text" placeholder="Nom de la finale" style="flex:1; min-width:140px;">
-        </div>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-          <input id="editor-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
-          <button id="editor-save-btn" onclick="saveEditorPositionAsFinale()" disabled>Enregistrer comme finale</button>
-        </div>
-        <div id="editor-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
-      </div>
 
-      <div class="panel" style="margin-top:10px; width:100%; box-sizing:border-box;">
-        <h2>Mode exercice</h2>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <select id="exercise-phase-select" style="flex:1; min-width:140px;">
-            <option value="toutes">Toutes les phases</option>
-            <option value="ouverture">Ouverture</option>
-            <option value="milieu_de_partie">Milieu de partie</option>
-            <option value="finale">Finale</option>
-          </select>
+        <div class="mode-tab-panel" id="tab-panel-opening">
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <input id="opening-name-input" type="text" placeholder="Nom de l'ouverture (ex. Défense française)" style="flex:1; min-width:180px;">
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
+            <button onclick="startOpeningGame('noirs')">Jouer les Noirs</button>
+          </div>
+          <div id="opening-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
         </div>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-          <button onclick="startExercise()">Nouvel exercice</button>
-          <button onclick="startExercise()">Position suivante</button>
+
+        <div class="mode-tab-panel" id="tab-panel-finale">
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <select id="finale-select" style="flex:1; min-width:0;" onchange="onFinaleSelectChange()">
+              <option value="">— Choisir une finale —</option>
+            </select>
+          </div>
+          <div id="finale-description" style="font-size:0.78rem; color:#556; margin-top:4px;"></div>
+          <div id="finale-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
         </div>
-        <div id="exercise-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
-        <div id="exercise-coup-reel" style="display:none; font-size:0.82rem; color:#1a2a3a; margin-top:4px; padding:4px 6px; background:#fff6da; border-radius:4px;">
-          Coup réellement joué à l'époque : <strong id="exercise-coup-reel-value"></strong>
+
+        <div class="mode-tab-panel" id="tab-panel-exercise">
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <select id="exercise-phase-select" style="flex:1; min-width:140px;">
+              <option value="toutes">Toutes les phases</option>
+              <option value="ouverture">Ouverture</option>
+              <option value="milieu_de_partie">Milieu de partie</option>
+              <option value="finale">Finale</option>
+            </select>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <button onclick="startExercise()">Nouvel exercice</button>
+            <button onclick="startExercise()">Position suivante</button>
+          </div>
+          <div id="exercise-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+          <div id="exercise-coup-reel" style="display:none; font-size:0.82rem; color:#1a2a3a; margin-top:4px; padding:4px 6px; background:#fff6da; border-radius:4px;">
+            Coup réellement joué à l'époque : <strong id="exercise-coup-reel-value"></strong>
+          </div>
+        </div>
+
+        <div class="mode-tab-panel" id="tab-panel-editor">
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <button onclick="startPositionEditor()">Ouvrir l'éditeur de position</button>
+            <button onclick="clearEditorBoard()">Vider l'échiquier</button>
+          </div>
+          <div id="editor-palette" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:8px;"></div>
+          <div id="editor-trash" style="margin-top:6px; padding:6px; border:1px dashed #a0b8d0; border-radius:4px; font-size:0.78rem; color:#778; text-align:center;">
+            Glisser une pièce ici pour la retirer de l'échiquier
+          </div>
+          <div style="display:flex; gap:12px; align-items:center; margin-top:8px; font-size:0.82rem;">
+            <label><input type="radio" name="editor-trait" id="editor-trait-blancs" value="blancs" checked onchange="onEditorTraitChange()"> Trait aux Blancs</label>
+            <label><input type="radio" name="editor-trait" value="noirs" onchange="onEditorTraitChange()"> Trait aux Noirs</label>
+          </div>
+          <div style="display:flex; gap:12px; align-items:center; margin-top:4px; font-size:0.82rem;">
+            <span style="color:#556;">Alain joue :</span>
+            <label><input type="radio" name="editor-camp-alain" id="editor-camp-alain-blancs" value="blancs" checked onchange="onEditorCampAlainChange()"> les Blancs</label>
+            <label><input type="radio" name="editor-camp-alain" id="editor-camp-alain-noirs" value="noirs" onchange="onEditorCampAlainChange()"> les Noirs</label>
+          </div>
+          <div id="editor-validation-status" style="font-size:0.82rem; margin-top:6px;"></div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <input id="editor-finale-nom" type="text" placeholder="Nom de la finale" style="flex:1; min-width:140px;">
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <input id="editor-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
+            <button id="editor-save-btn" onclick="saveEditorPositionAsFinale()" disabled>Enregistrer comme finale</button>
+          </div>
+          <div id="editor-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
         </div>
       </div>
     </div>
@@ -278,38 +347,6 @@
           <button id="coach-send-btn" class="coach-send-btn" onclick="coachSend()">Envoyer</button>
           <div id="coach-spinner" class="coach-spinner"></div>
         </div>
-      </div>
-    </div>
-
-    <!-- ── Colonne bibliothèque PGN ─────────────────────────────────────── -->
-    <div id="library-column">
-      <div class="panel">
-        <h2>Bibliothèque PGN</h2>
-        <div style="display:flex; gap:4px; margin-bottom:6px;">
-          <select id="pgn-lib-collection-select" style="flex:1;" onchange="pgnLibOnCollectionChange()"></select>
-        </div>
-        <div style="display:flex; gap:4px; margin-bottom:6px;">
-          <input id="pgn-lib-new-name" type="text" placeholder="Nouvelle collection" style="flex:1;">
-          <button onclick="pgnLibCreateCollection()">+</button>
-        </div>
-        <div style="display:flex; gap:4px; margin-bottom:6px;">
-          <input id="pgn-lib-search" type="text" placeholder="Rechercher un adversaire..." style="flex:1;" oninput="pgnLibApplyFilters()">
-        </div>
-        <div style="display:flex; gap:4px; margin-bottom:6px;">
-          <select id="pgn-lib-result-filter" style="flex:1;" onchange="pgnLibApplyFilters()">
-            <option value="">Tous les résultats</option>
-            <option value="victoire">Victoires (Alain)</option>
-            <option value="defaite">Défaites (Alain)</option>
-            <option value="nulle">Nulles</option>
-          </select>
-        </div>
-        <ul id="pgn-lib-games"></ul>
-        <div style="margin-top:6px;">
-          <label style="font-size:0.82rem;">Importer un PGN dans la collection :
-            <input type="file" accept=".pgn,.txt" onchange="pgnLibImportFile(event)">
-          </label>
-        </div>
-        <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
       </div>
     </div>
 

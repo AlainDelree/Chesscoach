@@ -72,7 +72,30 @@ function _exerciseResetTentative() {
   exercisePvMeilleurCoup = null;
 }
 
+// Pas d'événement serveur "exercise_abandon" : contrairement aux autres
+// modes, exercise_new ne laisse aucun état serveur à nettoyer entre deux
+// exercices (cf. _current_exercise, app.py, simplement remplacé au prochain
+// tirage) — juste l'état client à réinitialiser avant de basculer vers un
+// autre mode (issue #23, ensureModeSwitchClean dans controls.js). Pas
+// exposée dans MODE_CAPS.exercise.abandon (inchangé, toujours null) : le
+// bouton "Abandonner" partagé reste absent en mode exercice comme avant.
+function abandonExerciseGame() {
+  if (!exerciseActive) return;
+  exerciseActive    = false;
+  exerciseGame      = null;
+  exerciseSelected  = null;
+  exerciseAnswered  = false;
+  exerciseExploring = false;
+  exerciseVerdictObtenu = false;
+  exerciseLastMove  = null;
+  _exerciseResetTentative();
+  _exerciseUpdateCoupReelDisplay();
+  resetBoardToNeutral();
+  setActiveMode(null);
+}
+
 function startExercise() {
+  ensureModeSwitchClean("exercise");
   exerciseAnswered  = false;
   exerciseSelected  = null;
   exerciseFenAvant  = null;

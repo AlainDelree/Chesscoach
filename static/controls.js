@@ -49,7 +49,64 @@ const MODE_LABELS = {
 function setActiveMode(mode) {
   activeMode = mode;
   updateSharedControlBar();
+  updateReviewControlsEnabled();
   renderHistory(reviewIdx);
+}
+
+// ── Onglets par mode (issue #23) ────────────────────────────────────────────
+// Remplace l'empilement vertical des panneaux spécifiques à chaque mode :
+// un seul panneau de contrôles visible à la fois (celui de l'onglet cliqué).
+// Naviguer entre onglets est de la pure consultation — ne passe jamais par
+// ensureModeSwitchClean ci-dessous, qui ne s'exécute qu'au moment où un
+// panneau démarre effectivement une nouvelle partie/exercice/revue.
+const MODE_TABS = ["library", "free", "pedagogic", "opening", "finale", "exercise", "editor"];
+let currentModeTab = "library";
+
+function switchModeTab(tabKey) {
+  if (MODE_TABS.indexOf(tabKey) === -1) return;
+  currentModeTab = tabKey;
+  MODE_TABS.forEach((key) => {
+    const btn   = document.getElementById(`tab-btn-${key}`);
+    const panel = document.getElementById(`tab-panel-${key}`);
+    const isActive = key === tabKey;
+    if (btn)   btn.classList.toggle("active", isActive);
+    if (panel) panel.classList.toggle("active", isActive);
+  });
+}
+
+// ── Bascule propre entre modes (issue #23) ──────────────────────────────────
+// Si un mode interactif est déjà actif (activeMode) et qu'un autre onglet
+// démarre une nouvelle partie/exercice/revue, termine proprement l'ancien
+// d'abord — réutilise les fonctions abandon* déjà existantes de chaque
+// fichier de mode (abandonExerciseGame étant le seul ajout, cf. exercise.js,
+// exercise n'ayant jusqu'ici aucun état serveur à abandonner) — pour éviter
+// deux modes "actifs" en même temps. "library" représente la revue de
+// bibliothèque/PGN, qui ne fait pas partie de MODE_CAPS/activeMode.
+const MODE_SWITCH_CLEANUP = {
+  free:      () => abandonFreeGame(),
+  pedagogic: () => abandonPedagogicGame(),
+  opening:   () => abandonOpeningGame(),
+  finale:    () => abandonFinaleGame(),
+  exercise:  () => abandonExerciseGame(),
+  editor:    () => abandonPositionEditor(),
+};
+
+function ensureModeSwitchClean(newMode) {
+  if (!activeMode || activeMode === newMode) return;
+  const cleanup = MODE_SWITCH_CLEANUP[activeMode];
+  if (cleanup) cleanup();
+}
+
+// ── Désactivation des boutons de revue hors contexte (issue #23) ───────────
+// Précédent/Suivant/Retourner/Meilleur coup n'ont de sens qu'en revue de
+// bibliothèque (activeMode null) — dès qu'un mode interactif tourne, ils
+// sont grisés plutôt que de rester cliquables sans effet cohérent.
+function updateReviewControlsEnabled() {
+  const disabled = !!activeMode;
+  ["review-prev-btn", "review-next-btn", "review-flip-btn", "review-bestmove-btn"].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = disabled;
+  });
 }
 
 function updateSharedControlBar() {
@@ -150,4 +207,8 @@ function extraireFen() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", updateSharedControlBar);
+document.addEventListener("DOMContentLoaded", () => {
+  updateSharedControlBar();
+  updateReviewControlsEnabled();
+  switchModeTab("library");
+});

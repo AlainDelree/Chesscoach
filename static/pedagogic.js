@@ -30,6 +30,7 @@ function pedagogicCommenterChaqueCoup() {
 }
 
 function startPedagogicGame(camp) {
+  ensureModeSwitchClean("pedagogic");
   pedagogicCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   pedagogicWaiting   = true;
   pedagogicGameOver  = false;

@@ -264,6 +264,7 @@ function editorValidate() {
 // ── Cycle de vie du panneau ──────────────────────────────────────────────
 
 function startPositionEditor() {
+  ensureModeSwitchClean("editor");
   editorPosition          = {};
   editorTool              = null;
   editorBoardSelected     = null;
