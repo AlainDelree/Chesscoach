@@ -710,6 +710,20 @@ _opening_camp_alain: str | None = None
 _opening_in_book: bool = False
 
 
+@socketio.on("opening_suggestions")
+def on_opening_suggestions(_data):
+    """Suggestions rapides de coups d'ouverture populaires à la position de
+    départ (issue #27, panneau "Travail d'ouverture") : coups les plus
+    pondérés du livre Polyglot réel gm2001.bin, en plus du champ texte libre
+    déjà existant — pour proposer un point de départ sans qu'Alain ait à
+    connaître un nom d'ouverture avant de commencer."""
+    if not opening_book.book_available(config.BOOK_PATH):
+        emit("opening_suggestions_response", {"suggestions": []})
+        return
+    suggestions = opening_book.get_starting_suggestions(config.BOOK_PATH)
+    emit("opening_suggestions_response", {"suggestions": suggestions})
+
+
 @socketio.on("opening_start")
 def on_opening_start(data):
     """Démarre le mode "travail d'ouverture" (issue #9) : Alain choisit son

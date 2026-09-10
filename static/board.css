@@ -81,6 +81,18 @@
 .editor-palette-piece.selected { background: #6fa8dc; border-color: #1a2a3a; }
 .editor-palette-piece.editor-palette-delete { font-size: 0.68rem; text-align: center; color: #445; }
 
+/* ── Suggestions d'ouvertures populaires (issue #27) ── */
+.opening-suggestion-btn {
+  padding: 3px 7px;
+  font-size: 0.76rem;
+  border: 1px solid #a0b8d0;
+  background: #eef2f6;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #1a2a3a;
+}
+.opening-suggestion-btn:hover { background: #dde6ef; }
+
 /* ── Flèches d'annotation (superposées au plateau) ── */
 #arrows-svg {
   position: absolute;

@@ -179,10 +179,6 @@
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           <button id="shared-reprendre-btn" onclick="sharedReprendreCoup()">Reprendre mon coup</button>
           <button id="shared-abandon-btn" onclick="sharedAbandonMode()">Abandonner</button>
-          <label id="shared-comment-row" style="font-size:0.82rem;">
-            <input type="checkbox" id="shared-auto-comment">
-            Commenter chaque coup
-          </label>
           <button id="shared-ask-coach-btn" onclick="sharedAskCoach()">Demander l'avis du coach</button>
         </div>
         <div id="shared-mode-status" style="font-size:0.78rem; color:#778; margin-top:4px;">Aucun mode interactif actif.</div>
@@ -268,6 +264,13 @@
           <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
             <input id="opening-name-input" type="text" placeholder="Nom de l'ouverture (ex. Défense française)" style="flex:1; min-width:180px;">
           </div>
+          <!-- Suggestions rapides (issue #27) : coups les plus pondérés du
+               livre Polyglot gm2001.bin à la position de départ, en plus du
+               champ texte libre ci-dessus — un clic préremplit le champ avec
+               le nom reconnu (1.e4/1.d4/1.c4/1.Nf3) ou, au-delà, le coup lui-même
+               (voir opening_book.FIRST_MOVE_OPENING_NAMES). -->
+          <div id="opening-suggestions-label" style="font-size:0.76rem; color:#778; margin-top:6px;"></div>
+          <div id="opening-suggestions" style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;"></div>
           <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
             <button onclick="startOpeningGame('noirs')">Jouer les Noirs</button>
@@ -335,21 +338,27 @@
     </div>
 
     <!-- ── Colonne chat coach ───────────────────────────────────────────── -->
+    <!-- Coach en tête de colonne (issue #27) : son haut doit démarrer au même
+         niveau vertical que le haut de l'échiquier (#app aligne toutes ses
+         colonnes en flex-start), ce que l'empilement précédent (Programme
+         d'entraînement au-dessus, avec sa liste à puces potentiellement
+         longue) empêchait. -->
     <div id="coach-column">
-      <div class="panel" style="margin-bottom:12px;">
-        <h2>Programme d'entraînement</h2>
-        <ul id="training-program-list" style="margin:0 0 6px; padding-left:18px; font-size:0.85rem;">
-          {% for objectif in objectifs_courants %}
-          <li>{{ objectif }}</li>
-          {% else %}
-          <li id="training-program-empty" style="list-style:none; padding-left:0; color:#778;">Aucun programme établi pour l'instant.</li>
-          {% endfor %}
-        </ul>
-        <button id="training-program-btn" onclick="buildTrainingProgram()">Établir mon programme d'entraînement</button>
-        <div id="training-program-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
-      </div>
-      <div class="panel coach-drawer">
-        <h2>Coach <button onclick="coachClear()" style="font-size:0.75rem; font-weight:normal; float:right;">Effacer</button></h2>
+      <div class="panel coach-drawer" style="margin-bottom:12px;">
+        <h2 style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+          <span>Coach</span>
+          <!-- Case "Commenter chaque coup" (issue #27) : déplacée ici depuis la
+               barre mutualisée "Contrôles du mode actif" (issue #15), pour
+               plus de proximité visuelle avec le fil de discussion qu'elle
+               affecte. Même id (#shared-auto-comment) et même logique
+               d'affichage/état partagé (controls.js updateSharedControlBar) —
+               seul l'emplacement change. -->
+          <label id="shared-comment-row" style="font-size:0.75rem; font-weight:normal; display:flex; align-items:center; gap:4px;">
+            <input type="checkbox" id="shared-auto-comment">
+            Commenter chaque coup
+          </label>
+          <button onclick="coachClear()" style="font-size:0.75rem; font-weight:normal;">Effacer</button>
+        </h2>
         <div id="coach-history" class="coach-history">
           <div id="coach-empty" style="color:#778; font-size:0.82rem; text-align:center; padding:20px 8px;">
             Posez une question sur la position affichée.
@@ -360,6 +369,18 @@
           <button id="coach-send-btn" class="coach-send-btn" onclick="coachSend()">Envoyer</button>
           <div id="coach-spinner" class="coach-spinner"></div>
         </div>
+      </div>
+      <div class="panel">
+        <h2>Programme d'entraînement</h2>
+        <ul id="training-program-list" style="margin:0 0 6px; padding-left:18px; font-size:0.85rem;">
+          {% for objectif in objectifs_courants %}
+          <li>{{ objectif }}</li>
+          {% else %}
+          <li id="training-program-empty" style="list-style:none; padding-left:0; color:#778;">Aucun programme établi pour l'instant.</li>
+          {% endfor %}
+        </ul>
+        <button id="training-program-btn" onclick="buildTrainingProgram()">Établir mon programme d'entraînement</button>
+        <div id="training-program-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
       </div>
     </div>
 

@@ -49,6 +49,39 @@ def get_book_entries(book_path, board: chess.Board) -> list[dict]:
         return []
 
 
+# Familles d'ouvertures reconnaissables au tout premier coup (issue #27,
+# suggestions rapides du panneau "Travail d'ouverture") — uniquement les
+# quatre citées par Alain, qui correspondent à des familles bien identifiées
+# sans ambiguïté. Au-delà d'un coup, aucun nom n'est déterminable de façon
+# fiable à partir des seules statistiques pondérées du livre (voir docstring
+# du module) : get_starting_suggestions se limite alors au coup lui-même.
+FIRST_MOVE_OPENING_NAMES = {
+    "e4":  "Ouverture du Roi (1.e4)",
+    "d4":  "Ouverture de la Dame (1.d4)",
+    "c4":  "Ouverture anglaise (1.c4)",
+    "Nf3": "Ouverture Réti (1.Nf3)",
+}
+
+
+def get_starting_suggestions(book_path, limit: int = 8) -> list[dict]:
+    """Retourne les coups les plus pondérés du livre à la position de départ
+    (issue #27) : [{"san": str, "nom": str|None, "pct": float|None}, ...],
+    triés par poids décroissant. "nom" n'est renseigné que pour les quatre
+    familles standards de FIRST_MOVE_OPENING_NAMES — les autres coups ne
+    renvoient que leur SAN, sans nom d'ouverture inventé.
+    """
+    entries = get_book_entries(book_path, chess.Board())
+    total_weight = sum(e["weight"] for e in entries)
+    return [
+        {
+            "san": e["san"],
+            "nom": FIRST_MOVE_OPENING_NAMES.get(e["san"]),
+            "pct": round(e["weight"] / total_weight * 100, 1) if total_weight else None,
+        }
+        for e in entries[:limit]
+    ]
+
+
 def choose_weighted_move(book_path, board: chess.Board) -> chess.Move | None:
     """Tire un coup pondéré aléatoirement parmi les entrées du livre pour
     cette position (chess.polyglot.MemoryMappedReader.weighted_choice) —

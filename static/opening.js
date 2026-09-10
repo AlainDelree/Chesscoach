@@ -24,6 +24,37 @@ let openingGameOver   = false; // fin de partie détectée côté serveur (issue
 let openingFenAvantCoup     = null;  // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 let openingInBookAvantCoup  = false; // valeur de openingInBook avant ce même coup
 
+// ── Suggestions rapides d'ouvertures populaires (issue #27) ────────────────
+// Coups les plus pondérés du livre Polyglot gm2001.bin à la position de
+// départ (opening_book.get_starting_suggestions côté serveur), en plus du
+// champ texte libre déjà existant. Un clic préremplit ce même champ — le nom
+// reconnu (1.e4/1.d4/1.c4/1.Nf3) pour les quatre familles standards, sinon
+// juste le coup lui-même — puis Alain clique "Jouer les Blancs/Noirs" comme
+// pour un nom saisi à la main : aucun nouveau chemin de démarrage de partie.
+function renderOpeningSuggestions(suggestions) {
+  const listEl  = document.getElementById("opening-suggestions");
+  const labelEl = document.getElementById("opening-suggestions-label");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  if (!suggestions || !suggestions.length) {
+    if (labelEl) labelEl.textContent = "";
+    return;
+  }
+  if (labelEl) labelEl.textContent = "Ouvertures populaires (livre gm2001.bin) :";
+  suggestions.forEach((s) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "opening-suggestion-btn";
+    const label = s.nom || `1.${s.san}`;
+    btn.textContent = s.pct !== null && s.pct !== undefined ? `${label} (${s.pct}%)` : label;
+    btn.onclick = () => {
+      const nameEl = document.getElementById("opening-name-input");
+      if (nameEl) nameEl.value = s.nom || `1.${s.san}`;
+    };
+    listEl.appendChild(btn);
+  });
+}
+
 function openingCommenterChaqueCoup() {
   const cb = document.getElementById("shared-auto-comment");
   return !!(cb && cb.checked);
@@ -167,6 +198,10 @@ function onOpeningBoardClick(e) {
 }
 
 if (typeof socket !== "undefined") {
+  socket.on("opening_suggestions_response", (data) => {
+    renderOpeningSuggestions((data && data.suggestions) || []);
+  });
+
   socket.on("opening_started", (data) => {
     if (!data || !data.fen) return;
     openingGame      = new Chess(data.fen);
@@ -252,3 +287,7 @@ if (typeof socket !== "undefined") {
     console.warn("[travail d'ouverture]", msg, data);
   });
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof socket !== "undefined") socket.emit("opening_suggestions", {});
+});
