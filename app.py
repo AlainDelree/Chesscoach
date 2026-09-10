@@ -1037,11 +1037,22 @@ def on_opening_move(data):
 # demi-coup à la fois via finale_demo_next, sans jamais déclencher de
 # commentaire automatique du coach (seul "Demander l'avis du coach" reste
 # disponible).
+#
+# _finale_demo_board : plateau de la démonstration en cours, tenu côté
+# serveur plutôt que reconstruit depuis la FEN envoyée par le client à
+# chaque appel de finale_demo_next (issue #29) — une FEN seule ne porte pas
+# l'historique des positions déjà traversées, indispensable à
+# chess.Board.outcome(claim_draw=True) (_game_over_info) pour détecter une
+# nulle par répétition : reconstruit à chaque appel, le plateau n'aurait
+# jamais pu voir la partie se répéter, seule la règle des 50 coups (portée
+# par le seul compteur halfmove_clock de la FEN) aurait fini par arrêter la
+# démonstration.
 _finale_camp_alain: str | None = None
 _finale_camp_perdant: bool | None = None
 _finale_nom: str | None = None
 _finale_description: str | None = None
 _finale_demo_active: bool = False
+_finale_demo_board: chess.Board | None = None
 
 
 @socketio.on("finale_list")
@@ -1162,7 +1173,7 @@ def on_finale_start(data):
     (on_finale_move ci-dessous, inchangé). Le camp perdant (celui qui n'a
     que son roi, pour les cases hachurées) reste toujours déterminé par la
     définition de la finale, jamais par ce choix."""
-    global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active
+    global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active, _finale_demo_board
 
     if not engine_manager:
         emit("finale_error", {"error": "stockfish_indisponible"})
@@ -1181,6 +1192,7 @@ def on_finale_start(data):
     _finale_nom = entry["nom"]
     _finale_description = entry["description"]
     _finale_demo_active = False
+    _finale_demo_board = None
 
     board = chess.Board(entry["fen"])
     camp_alain_color = chess.WHITE if _finale_camp_alain == "blancs" else chess.BLACK
@@ -1208,7 +1220,7 @@ def on_finale_demo_start(data):
     via finale_demo_next (un demi-coup à la fois, sur clic "Coup suivant" —
     aucun coup n'est joué ici, contrairement à finale_start dont le coup
     d'ouverture automatique n'aurait pas de sens en démonstration pure)."""
-    global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active
+    global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active, _finale_demo_board
 
     if not engine_manager:
         emit("finale_error", {"error": "stockfish_indisponible"})
@@ -1228,6 +1240,10 @@ def on_finale_demo_start(data):
     _finale_demo_active = True
 
     board = chess.Board(entry["fen"])
+    # Issue #29 : plateau tenu côté serveur pour toute la durée de la
+    # démonstration (voir le commentaire sur _finale_demo_board ci-dessus),
+    # pas reconstruit depuis une FEN client à chaque demi-coup.
+    _finale_demo_board = board
     emit("finale_demo_started", {
         "fen": board.fen(),
         "camp_alain": _finale_camp_alain,
@@ -1238,25 +1254,27 @@ def on_finale_demo_start(data):
 
 
 @socketio.on("finale_demo_next")
-def on_finale_demo_next(data):
+def on_finale_demo_next(_data):
     """Bouton "Coup suivant" en démonstration (issue #28) : Stockfish (pleine
-    force) joue exactement un demi-coup pour le camp au trait de la FEN
-    reçue, quel qu'il soit — pas d'enchaînement automatique, pas de
-    commentaire du coach (aucun coup n'est "celui d'Alain" ici)."""
+    force) joue exactement un demi-coup pour le camp au trait, quel qu'il
+    soit — pas d'enchaînement automatique, pas de commentaire du coach
+    (aucun coup n'est "celui d'Alain" ici).
+
+    Issue #29 : joue sur _finale_demo_board (plateau tenu côté serveur
+    depuis finale_demo_start, avec l'historique complet de la
+    démonstration), pas sur une FEN reconstruite depuis le client à chaque
+    appel — indispensable pour que _game_over_info puisse détecter une
+    nulle par répétition, pas seulement la règle des 50 coups. Dès que la
+    partie est terminée (mat, pat ou nulle), on n'interroge plus Stockfish :
+    la démonstration s'arrête et le résultat est renvoyé au client."""
     if not engine_manager:
         emit("finale_error", {"error": "stockfish_indisponible"})
         return
-    if not _finale_demo_active:
+    if not _finale_demo_active or _finale_demo_board is None:
         emit("finale_error", {"error": "finale_inconnue"})
         return
 
-    fen = (data or {}).get("fen", "")
-    try:
-        board = chess.Board(fen)
-    except Exception:
-        emit("finale_error", {"error": "fen_ou_coup_invalide"})
-        return
-
+    board = _finale_demo_board
     game_over_info = _game_over_info(board)
     move_uci = None
     if game_over_info is None:
@@ -1271,6 +1289,7 @@ def on_finale_demo_next(data):
         "uci": move_uci,
         "game_over": game_over_info is not None,
         "game_over_info": game_over_info,
+        "coups_joues": len(board.move_stack),
         "king_restricted_squares": _finale_restricted_king_squares(board, _finale_camp_perdant),
     })
 
@@ -1279,12 +1298,13 @@ def on_finale_demo_next(data):
 def on_finale_abandon(_data):
     """Bouton "Abandonner" (issue #11) : retour à un état neutre côté
     serveur, pas de sauvegarde."""
-    global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active
+    global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active, _finale_demo_board
     _finale_camp_alain = None
     _finale_camp_perdant = None
     _finale_nom = None
     _finale_description = None
     _finale_demo_active = False
+    _finale_demo_board = None
 
 
 @socketio.on("finale_move")

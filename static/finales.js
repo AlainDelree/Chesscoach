@@ -41,6 +41,7 @@ let finaleList       = [];    // bibliothèque reçue du serveur (finale_list_re
 let finaleFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 let finaleDemoActive  = false; // démonstration en cours (issue #28) : Stockfish joue les deux camps
 let finaleKingRestrictedSquares = []; // cases algébriques hachurées (issue #28)
+let finaleDemoCoupsJoues = 0; // nombre de demi-coups joués dans la démonstration en cours (issue #29, contexte coach)
 
 function finaleCommenterChaqueCoup() {
   const cb = document.getElementById("shared-auto-comment");
@@ -57,6 +58,7 @@ function abandonFinaleGame() {
   finaleGameOver  = false;
   finaleFenAvantCoup = null;
   finaleDemoActive = false;
+  finaleDemoCoupsJoues = 0;
   finaleKingRestrictedSquares = [];
   updateFinaleDemoNextButton();
   resetBoardToNeutral();
@@ -71,7 +73,12 @@ function abandonFinaleGame() {
 
 function updateFinaleDemoNextButton() {
   const btn = document.getElementById("finale-demo-next-btn");
-  if (btn) btn.style.display = finaleDemoActive ? "" : "none";
+  if (!btn) return;
+  btn.style.display = finaleDemoActive ? "" : "none";
+  // Issue #29 : grisé (plutôt que simplement laissé cliquable sans effet)
+  // dès que la démonstration est terminée (mat, pat ou nulle) — visible
+  // immédiatement, pas seulement déduit du texte de statut.
+  btn.disabled = finaleGameOver;
 }
 
 function reprendreFinaleCoup() {
@@ -86,6 +93,23 @@ function reprendreFinaleCoup() {
   finaleFenAvantCoup = null;
   renderFinaleBoard();
   updateFinaleStatus();
+}
+
+// Complément de contexte pour le chat libre du coach (issue #29,
+// coachBuildContext() dans board.js) : sans lui, sollicité pendant ou après
+// une démonstration Stockfish-contre-Stockfish (aucun coup d'Alain), le
+// coach n'a aucun moyen de savoir que la position affichée ne vient pas
+// d'une partie qu'Alain vient de jouer — il a déjà inventé à tort un récit
+// l'accusant d'avoir mal joué la finale. mode_demonstration reste vrai même
+// après la fin de la démonstration (finaleGameOver), tant qu'une nouvelle
+// finale/démonstration n'a pas été chargée : la position affichée reste
+// celle de la démonstration.
+function finaleChatContextExtra() {
+  if (!finaleDemoActive) return {};
+  return {
+    mode_demonstration: true,
+    demo_coups_joues: finaleDemoCoupsJoues,
+  };
 }
 
 function askFinaleCoach() {
@@ -147,6 +171,7 @@ function startFinaleDemo() {
   finaleGameOver = false;
   finaleFenAvantCoup = null;
   finaleDemoActive = true;
+  finaleDemoCoupsJoues = 0;
   updateFinaleDemoNextButton();
   if (statusEl) statusEl.textContent = "Chargement de la démonstration...";
   socket.emit("finale_demo_start", { id });
@@ -156,7 +181,10 @@ function finaleDemoNext() {
   if (!finaleActive || !finaleDemoActive || !finaleGame || finaleGameOver || finaleWaiting) return;
   finaleWaiting = true;
   updateFinaleStatus();
-  socket.emit("finale_demo_next", { fen: finaleGame.fen() });
+  // Issue #29 : le plateau de la démonstration est désormais tenu côté
+  // serveur (_finale_demo_board, avec l'historique complet) — plus besoin
+  // d'envoyer une FEN reconstruite côté client à chaque demi-coup.
+  socket.emit("finale_demo_next", {});
 }
 
 function renderFinaleBoard(lastFrom, lastTo) {
@@ -290,6 +318,7 @@ if (typeof socket !== "undefined") {
     finaleSelected  = null;
     finaleGameOver  = false;
     finaleDemoActive = true;
+    finaleDemoCoupsJoues = 0;
     finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     finaleKingRestrictedSquares = data.king_restricted_squares || [];
     updateFinaleDemoNextButton();
@@ -338,6 +367,7 @@ if (typeof socket !== "undefined") {
     if (!finaleActive || !finaleDemoActive || !finaleGame || !data) return;
 
     finaleKingRestrictedSquares = data.king_restricted_squares || [];
+    if (typeof data.coups_joues === "number") finaleDemoCoupsJoues = data.coups_joues;
     if (data.uci) {
       const move = finaleGame.move({
         from: data.uci.slice(0, 2),
@@ -349,7 +379,11 @@ if (typeof socket !== "undefined") {
       }
     }
     if (data.game_over) {
+      // Issue #29 : la démonstration s'arrête ici — plus d'appel à
+      // finale_demo_next tant qu'une nouvelle finale/démonstration n'est
+      // pas relancée (bouton grisé par updateFinaleDemoNextButton).
       finaleGameOver = true;
+      updateFinaleDemoNextButton();
       const statusEl = document.getElementById("finale-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       return;

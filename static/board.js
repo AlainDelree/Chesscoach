@@ -579,6 +579,13 @@ function coachBuildContext() {
       if (activeMode === "exercise" && typeof exerciseChatContextExtra === "function") {
         return Object.assign(ctx, exerciseChatContextExtra());
       }
+      // Mode "Travail de finales" en démonstration (issue #29) : sans ce
+      // complément, le coach ne peut pas distinguer une position atteinte
+      // par une démonstration Stockfish-contre-Stockfish d'une partie
+      // réellement jouée par Alain (voir finales.js finaleChatContextExtra).
+      if (activeMode === "finale" && typeof finaleChatContextExtra === "function") {
+        return Object.assign(ctx, finaleChatContextExtra());
+      }
       return ctx;
     }
   }

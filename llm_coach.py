@@ -97,6 +97,28 @@ _ANTI_INVENTION_ADDENDUM = (
     "concrétise."
 )
 
+# Complément de system prompt pour une position issue d'une démonstration
+# Stockfish-contre-Stockfish (issue #29, mode "Travail de finales" — voir
+# app.py on_finale_demo_start/on_finale_demo_next) : sans ce garde-fou, un
+# chat libre sollicité pendant/après une démonstration (aucun coup joué par
+# Alain) a déjà inventé un récit accusant Alain d'avoir mal joué la finale,
+# en confondant la position affichée avec une partie qu'il aurait lui-même
+# jouée. Ajouté dès que context["mode_demonstration"] est vrai (cf.
+# _build_context_text), indépendamment des autres compléments ci-dessous.
+_DEMONSTRATION_ADDENDUM = (
+    "Mode \"démonstration\" en cours (voir le champ mode_demonstration du "
+    "contexte) : la position affichée résulte d'une séquence où Stockfish "
+    "joue seul les deux camps, coup après coup, sans aucune intervention "
+    "d'Alain. Tu peux expliquer la position elle-même, la technique de mat "
+    "ou de finale qu'elle illustre, ou pourquoi tel camp joue tel coup — "
+    "mais tu ne dois JAMAIS attribuer une erreur, une faute ou un mauvais "
+    "coup à Alain sur cette séquence, ni raconter qu'il aurait \"mal joué\" "
+    "ou \"laissé échapper\" quoi que ce soit : il n'a joué aucun des coups "
+    "affichés. Tu peux mentionner ses erreurs passées sur ce thème comme "
+    "contexte général si sa mémoire de progression en fournit, mais jamais "
+    "comme si elles venaient de se reproduire dans cette démonstration."
+)
+
 # Complément de system prompt spécifique au mode "Exercice" (issue #17),
 # ajouté à _SYSTEM_PROMPT quand context["mode_exercice"] est vrai — que ce
 # soit pour le commentaire du coup proposé (exercise_answer) ou pour une
@@ -270,6 +292,13 @@ def _build_context_text(context) -> str:
     # position-type sélectionnée (finales.py), pour que le commentaire
     # puisse s'y référer explicitement (ex. mentionner l'opposition).
     theme_finale = (context.get("theme_finale") or "").strip()
+    # Démonstration Stockfish-contre-Stockfish en cours (issue #29, mode
+    # "Travail de finales") : la position affichée ne résulte d'aucun coup
+    # d'Alain, contrairement au jeu normal — sans ce champ explicite, le
+    # coach n'a aucun moyen de distinguer une démonstration d'une partie
+    # réellement jouée par Alain (voir _DEMONSTRATION_ADDENDUM).
+    mode_demonstration = bool(context.get("mode_demonstration"))
+    demo_coups_joues = context.get("demo_coups_joues")
     lines = []
     if camp_alain in ("blancs", "noirs"):
         camp_txt = "Blancs" if camp_alain == "blancs" else "Noirs"
@@ -371,6 +400,15 @@ def _build_context_text(context) -> str:
         lines.append(f"Coup le plus joué dans le livre pour cette position : {coup_livre_recommande}")
     if theme_finale:
         lines.append(f"Thème technique de cette finale : {theme_finale}")
+    if mode_demonstration:
+        detail_coups = (
+            f" ({demo_coups_joues} demi-coup(s) joué(s), tous par Stockfish, 0 par Alain)"
+            if isinstance(demo_coups_joues, int) else ""
+        )
+        lines.append(
+            "Mode démonstration : Stockfish joue seul les deux camps sur "
+            f"cette position, Alain n'a joué AUCUN coup{detail_coups}."
+        )
     if pgn:
         lines.append(f"PGN de la partie :\n{pgn}")
     return "\n".join(lines)
@@ -590,6 +628,11 @@ def get_coach_response(messages, context, coach_memory, config):
         # et/ou une PV Stockfish sont transmis par un autre mode (pédagogique,
         # ouverture hors-livre, finales) — pas de flag mode_exercice requis.
         prompt_sys = f"{prompt_sys}\n\n{_ANTI_INVENTION_ADDENDUM}"
+    if (context or {}).get("mode_demonstration"):
+        # Indépendant des branches ci-dessus (issue #29) : une démonstration
+        # ne transmet ni mode_exercice ni verdict Stockfish, ce garde-fou doit
+        # donc pouvoir s'ajouter seul.
+        prompt_sys = f"{prompt_sys}\n\n{_DEMONSTRATION_ADDENDUM}"
 
     memory_text = _build_memory_text(coach_memory)
     if memory_text:
