@@ -27,7 +27,7 @@ from pathlib import Path
 # Remplacer cet import par le point d'entrée de config du nouveau projet.
 # Valeur attendue : un pathlib.Path pointant vers le dossier contenant les
 # exécutables moteurs (ex. Path.home() / "ChessCoach" / "engines").
-from config import ENGINES_DIR
+from config import ENGINES_DIR, SYZYGY_PATH
 
 logger = logging.getLogger("EngineManager")
 
@@ -94,11 +94,16 @@ class EngineManager:
     Gestionnaire universel de moteur UCI (utilisé ici uniquement avec Stockfish).
 
     Utilise python-chess pour communiquer avec le moteur UCI.
-    Deux instances internes :
-      - _engine_play  : pour calculer les coups (Elo limité, optionnel côté
-                        ChessCoach — utile surtout pour un mode "rejoue
-                        contre le coach", pas indispensable pour l'analyse)
-      - _engine_eval  : pour évaluer les positions (pleine force, rapide)
+    Instances internes (les deux dernières lancées à la demande) :
+      - _engine_play        : pour calculer les coups (Elo limité, optionnel
+                               côté ChessCoach — utile surtout pour un mode
+                               "rejoue contre le coach", pas indispensable
+                               pour l'analyse)
+      - _engine_eval         : pour évaluer les positions (pleine force, rapide)
+      - _engine_pedagogique  : adversaire automatique affaibli (issue #8)
+      - _engine_finales      : mode "travail de finales" (issue #32), pleine
+                               force, sans plafond Elo, tables Syzygy si
+                               présentes
     """
 
     def __init__(self, engine_path: str, engine_elo: int = ELO_DEFAUT,
@@ -121,8 +126,18 @@ class EngineManager:
         self._lock_pedagogique = threading.Lock()
         self._supports_skill_level = False
 
+        # Quatrième instance, lancée à la demande (issue #32, mode "travail de
+        # finales", jeu normal et démonstration) : jusqu'ici ce mode réutilisait
+        # _engine_play (Elo plafonné ~1500 pour le bouton "Coup Stockfish" du
+        # mode partie libre), ce qui dégrade les techniques de mat longues et
+        # précises. Instance séparée, sans UCI_LimitStrength, avec accès aux
+        # tables de finales Syzygy si présentes (cf. _configure_syzygy).
+        self._engine_finales: chess.engine.SimpleEngine | None = None
+        self._lock_finales = threading.Lock()
+
         self._supports_wdl     = False
         self._supports_elo_limit = False
+        self._supports_syzygy  = False
         self._engine_name      = "Moteur UCI"
 
         self._init_engines()
@@ -143,16 +158,19 @@ class EngineManager:
             )
             self._supports_wdl = "UCI_ShowWDL" in options
             self._supports_skill_level = "Skill Level" in options
+            self._supports_syzygy = "SyzygyPath" in options
 
             # Configurer le moteur de jeu (Elo limité)
             self._apply_elo(self._engine_play)
+            self._configure_syzygy(self._engine_play)
 
             # Configurer le moteur d'évaluation (pleine force, rapide)
             if self._supports_wdl:
                 self._engine_eval.configure({"UCI_ShowWDL": True})
+            self._configure_syzygy(self._engine_eval)
 
             logger.info(f"Moteur : {self._engine_name}")
-            logger.info(f"Elo limité : {self._supports_elo_limit} | WDL : {self._supports_wdl}")
+            logger.info(f"Elo limité : {self._supports_elo_limit} | WDL : {self._supports_wdl} | Syzygy : {self._supports_syzygy}")
 
         except Exception as e:
             logger.error(f"Impossible de lancer le moteur : {e}")
@@ -170,6 +188,25 @@ class EngineManager:
         else:
             # Fallback : moteur sans UCI_Elo → pas de limitation de force
             logger.warning(f"{self._engine_name} ne supporte pas UCI_Elo.")
+
+    def _configure_syzygy(self, engine: chess.engine.SimpleEngine) -> None:
+        """Configure l'option UCI SyzygyPath sur une instance si des fichiers
+        de tables de finales sont présents dans SYZYGY_PATH (issue #32).
+        Dégradation gracieuse si le dossier est vide ou absent (même
+        pattern que le livre Polyglot, issue #9) : log informatif, pas
+        d'erreur — les tables ne sont pas indispensables au fonctionnement."""
+        if not self._supports_syzygy:
+            return
+        try:
+            a_des_fichiers = SYZYGY_PATH.is_dir() and any(
+                p.is_file() for p in SYZYGY_PATH.iterdir()
+            )
+        except OSError:
+            a_des_fichiers = False
+        if a_des_fichiers:
+            engine.configure({"SyzygyPath": str(SYZYGY_PATH)})
+        else:
+            logger.info(f"SyzygyPath vide ou absent ({SYZYGY_PATH}) — tables de finales Syzygy non utilisées.")
 
     # ── API publique ──────────────────────────────────────────────────────────
 
@@ -234,6 +271,7 @@ class EngineManager:
                 })
             else:
                 logger.warning(f"{self._engine_name} ne supporte pas Skill Level.")
+            self._configure_syzygy(engine)
             self._engine_pedagogique = engine
         except Exception as e:
             logger.error(f"Impossible de lancer le moteur pédagogique : {e}")
@@ -256,6 +294,47 @@ class EngineManager:
                 return result.move
             except Exception as e:
                 logger.error(f"Erreur get_move_pedagogique : {e}")
+                return None
+
+    def _ensure_engine_finales(self) -> None:
+        """Lance à la demande la 4e instance, dédiée au mode "travail de
+        finales" (jeu normal et démonstration, issue #32) — pas de coût tant
+        que ce mode n'est pas utilisé. Pleine force, sans UCI_LimitStrength,
+        contrairement à _engine_play (Elo plafonné ~1500, dédié au bouton
+        "Coup Stockfish" du mode partie libre) que ce mode réutilisait par
+        erreur jusqu'ici, dégradant les techniques de mat longues et
+        précises."""
+        if self._engine_finales:
+            return
+        try:
+            engine = chess.engine.SimpleEngine.popen_uci(self._engine_path)
+            if self._supports_elo_limit:
+                engine.configure({"UCI_LimitStrength": False})
+            if self._supports_wdl:
+                engine.configure({"UCI_ShowWDL": True})
+            self._configure_syzygy(engine)
+            self._engine_finales = engine
+        except Exception as e:
+            logger.error(f"Impossible de lancer le moteur du mode finales : {e}")
+            self._engine_finales = None
+
+    def get_move_finales(self, board: chess.Board, think_time: float = 1.0) -> chess.Move | None:
+        """Demande un coup pour le mode "travail de finales" (jeu normal et
+        démonstration, issue #32) — instance dédiée à pleine force, plus
+        adaptée aux mats techniques longs (ex. cavalier+fou, jusqu'à 33 coups)
+        que get_move(), qui reste Elo limité pour le mode partie libre."""
+        with self._lock_finales:
+            self._ensure_engine_finales()
+            if not self._engine_finales:
+                return None
+            try:
+                result = self._engine_finales.play(
+                    board,
+                    chess.engine.Limit(time=think_time),
+                )
+                return result.move
+            except Exception as e:
+                logger.error(f"Erreur get_move_finales : {e}")
                 return None
 
     def evaluate(self, board: chess.Board, depth: int = 8) -> dict:
@@ -602,7 +681,7 @@ class EngineManager:
 
     def quit(self) -> None:
         """Arrête proprement les instances du moteur."""
-        for engine in [self._engine_play, self._engine_eval, self._engine_pedagogique]:
+        for engine in [self._engine_play, self._engine_eval, self._engine_pedagogique, self._engine_finales]:
             if engine:
                 try:
                     engine.quit()
@@ -611,6 +690,7 @@ class EngineManager:
         self._engine_play = None
         self._engine_eval = None
         self._engine_pedagogique = None
+        self._engine_finales = None
 
 
 # ── Fonction utilitaire ───────────────────────────────────────────────────────

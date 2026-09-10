@@ -8,3 +8,7 @@ __pycache__/
 # ne jamais committer.
 data/
 .env
+
+# Tables de finales Syzygy (issue #32) — fichiers binaires volumineux
+# (~1 Go, déposés manuellement par Alain), jamais à committer.
+engines/syzygy/

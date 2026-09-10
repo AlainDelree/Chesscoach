@@ -1198,7 +1198,7 @@ def on_finale_start(data):
     camp_alain_color = chess.WHITE if _finale_camp_alain == "blancs" else chess.BLACK
     coup_ouverture = None
     if board.turn != camp_alain_color and not board.is_game_over():
-        move = engine_manager.get_move(board, think_time=0.5)
+        move = engine_manager.get_move_finales(board, think_time=0.5)
         if move:
             board.push(move)
             coup_ouverture = move.uci()
@@ -1278,7 +1278,7 @@ def on_finale_demo_next(_data):
     game_over_info = _game_over_info(board)
     move_uci = None
     if game_over_info is None:
-        move = engine_manager.get_move(board, think_time=0.5)
+        move = engine_manager.get_move_finales(board, think_time=0.5)
         if move:
             board.push(move)
             move_uci = move.uci()
@@ -1351,12 +1351,13 @@ def on_finale_move(data):
     # (issue #12 point 3), avant que l'adversaire ne rejoue.
     eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
 
-    # Réponse automatique de l'adversaire à pleine force (pas le moteur
-    # affaibli des modes pédagogique/ouverture).
+    # Réponse automatique de l'adversaire à pleine force, sans plafond Elo
+    # (issue #32 — instance dédiée get_move_finales, séparée du moteur
+    # Elo limité du bouton "Coup Stockfish"/mode partie libre).
     game_over_info = _game_over_info(board)
     stockfish_move_uci = None
     if game_over_info is None:
-        reply = engine_manager.get_move(board, think_time=0.5)
+        reply = engine_manager.get_move_finales(board, think_time=0.5)
         if reply:
             board.push(reply)
             stockfish_move_uci = reply.uci()

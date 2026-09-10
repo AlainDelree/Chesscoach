@@ -32,7 +32,16 @@ FINALES_PATH = DATA_DIR / "finales.json"
 # planter plus loin si le fichier est absent.
 BOOK_PATH = DATA_DIR / "books" / "gm2001.bin"
 
+# Tables de finales Syzygy 3-4-5 pièces (issue #32, mode "travail de
+# finales") — déposées manuellement par Alain (depuis
+# https://tablebase.lichess.ovh/tables/standard/, ~1 Go), gitignoré comme
+# le reste d'engines/. Leur présence (dossier non vide) est vérifiée
+# explicitement par engine_stockfish.py avant de configurer l'option UCI
+# SyzygyPath, plutôt que de supposer qu'elles sont là.
+SYZYGY_PATH = ENGINES_DIR / "syzygy"
+
 LLM_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 LLM_MODEL = os.environ.get("CHESSCOACH_LLM_MODEL", "claude-haiku-4-5")
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+SYZYGY_PATH.mkdir(parents=True, exist_ok=True)
