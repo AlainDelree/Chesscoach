@@ -101,6 +101,28 @@ def _game_over_info(board: chess.Board) -> dict | None:
     return {"gagnant": None, "message": "Partie nulle."}
 
 
+def _finale_restricted_king_squares(board: chess.Board, camp_perdant_color: bool | None) -> list[str]:
+    """Cases adjacentes au roi du camp perdant d'une finale (issue #28) qui
+    lui sont interdites : attaquées par l'autre camp (board.is_attacked_by,
+    indépendamment du trait — pas de génération de coups légaux, qui
+    dépendrait de qui doit jouer) ou occupées par une pièce alliée. Retourne
+    une liste vide si camp_perdant_color est None (hors mode finales) ou si
+    ce roi a disparu du plateau (ne devrait pas arriver en pratique)."""
+    if camp_perdant_color is None:
+        return []
+    king_square = board.king(camp_perdant_color)
+    if king_square is None:
+        return []
+    restricted = []
+    for sq in chess.SquareSet(chess.BB_KING_ATTACKS[king_square]):
+        piece = board.piece_at(sq)
+        if piece is not None and piece.color == camp_perdant_color:
+            restricted.append(chess.square_name(sq))
+        elif board.is_attacked_by(not camp_perdant_color, sq):
+            restricted.append(chess.square_name(sq))
+    return restricted
+
+
 # Noms FR bruts (sans article) des types de pièce python-chess, utilisés par
 # _move_details_fr (issue #18) — le mode Exercice les injecte explicitement
 # dans le contexte du coach plutôt que de le laisser déduire seul, à partir
@@ -997,9 +1019,29 @@ def on_opening_move(data):
 # libre — pas le moteur affaibli get_move_pedagogique) : l'objectif est que
 # Stockfish défende/attaque correctement pour que l'exercice technique ait
 # un sens.
+#
+# _finale_camp_alain : camp qu'Alain contrôle réellement CETTE session — égal
+# à finales.json camp_alain sauf en cas de démarrage "camps inversés" (issue
+# #28), où c'est le camp normalement tenu par Stockfish. Ne modifie jamais
+# data/finales.json, juste un choix ponctuel côté état serveur.
+#
+# _finale_camp_perdant : couleur python-chess (bool) du camp qui n'a que son
+# roi dans cette finale — propriété FIXE de la définition (toujours l'opposé
+# du camp_alain déclaré dans finales.json), indépendante de qui le contrôle
+# dans la session (jeu normal, camps inversés ou démonstration) : sert de
+# référence stable pour les cases hachurées (issue #28,
+# _finale_restricted_king_squares).
+#
+# _finale_demo_active : True pendant une démonstration ("Voir une
+# démonstration", issue #28) — Stockfish contrôle les deux camps, un
+# demi-coup à la fois via finale_demo_next, sans jamais déclencher de
+# commentaire automatique du coach (seul "Demander l'avis du coach" reste
+# disponible).
 _finale_camp_alain: str | None = None
+_finale_camp_perdant: bool | None = None
 _finale_nom: str | None = None
 _finale_description: str | None = None
+_finale_demo_active: bool = False
 
 
 @socketio.on("finale_list")
@@ -1110,9 +1152,17 @@ def on_editor_validate(data):
 def on_finale_start(data):
     """Charge une position-type de la bibliothèque de finales (issue #10) et
     fait jouer l'adversaire (Stockfish à pleine force) si la FEN de départ
-    laisse le trait à l'adversaire du camp d'Alain (camp_alain est fixé par
-    la position-type elle-même, pas choisi librement par Alain)."""
-    global _finale_camp_alain, _finale_nom, _finale_description
+    laisse le trait à l'adversaire du camp contrôlé par Alain.
+
+    Camps inversés (issue #28, data["inverser"]) : Alain joue alors le camp
+    normalement tenu par Stockfish (la défense, camp_alain de la
+    position-type inchangé dans data/finales.json — juste un choix ponctuel
+    pour cette session), et Stockfish tient automatiquement le camp
+    technique via le même mécanisme de réponse automatique qu'en jeu normal
+    (on_finale_move ci-dessous, inchangé). Le camp perdant (celui qui n'a
+    que son roi, pour les cases hachurées) reste toujours déterminé par la
+    définition de la finale, jamais par ce choix."""
+    global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active
 
     if not engine_manager:
         emit("finale_error", {"error": "stockfish_indisponible"})
@@ -1124,11 +1174,15 @@ def on_finale_start(data):
         emit("finale_error", {"error": "finale_inconnue"})
         return
 
-    board = chess.Board(entry["fen"])
-    _finale_camp_alain = entry["camp_alain"]
+    camp_alain_def = entry["camp_alain"]
+    inverser = bool((data or {}).get("inverser", False))
+    _finale_camp_alain = ("noirs" if camp_alain_def == "blancs" else "blancs") if inverser else camp_alain_def
+    _finale_camp_perdant = chess.BLACK if camp_alain_def == "blancs" else chess.WHITE
     _finale_nom = entry["nom"]
     _finale_description = entry["description"]
+    _finale_demo_active = False
 
+    board = chess.Board(entry["fen"])
     camp_alain_color = chess.WHITE if _finale_camp_alain == "blancs" else chess.BLACK
     coup_ouverture = None
     if board.turn != camp_alain_color and not board.is_game_over():
@@ -1143,6 +1197,81 @@ def on_finale_start(data):
         "nom": _finale_nom,
         "description": _finale_description,
         "coup_ouverture": coup_ouverture,
+        "king_restricted_squares": _finale_restricted_king_squares(board, _finale_camp_perdant),
+    })
+
+
+@socketio.on("finale_demo_start")
+def on_finale_demo_start(data):
+    """Bouton "Voir une démonstration" (issue #28) : recharge la position de
+    départ de la finale sélectionnée, Stockfish contrôlera les deux camps
+    via finale_demo_next (un demi-coup à la fois, sur clic "Coup suivant" —
+    aucun coup n'est joué ici, contrairement à finale_start dont le coup
+    d'ouverture automatique n'aurait pas de sens en démonstration pure)."""
+    global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active
+
+    if not engine_manager:
+        emit("finale_error", {"error": "stockfish_indisponible"})
+        return
+
+    finale_id = (data or {}).get("id", "")
+    entry = finales.get_finale_by_id(finale_id)
+    if not entry:
+        emit("finale_error", {"error": "finale_inconnue"})
+        return
+
+    camp_alain_def = entry["camp_alain"]
+    _finale_camp_alain = camp_alain_def
+    _finale_camp_perdant = chess.BLACK if camp_alain_def == "blancs" else chess.WHITE
+    _finale_nom = entry["nom"]
+    _finale_description = entry["description"]
+    _finale_demo_active = True
+
+    board = chess.Board(entry["fen"])
+    emit("finale_demo_started", {
+        "fen": board.fen(),
+        "camp_alain": _finale_camp_alain,
+        "nom": _finale_nom,
+        "description": _finale_description,
+        "king_restricted_squares": _finale_restricted_king_squares(board, _finale_camp_perdant),
+    })
+
+
+@socketio.on("finale_demo_next")
+def on_finale_demo_next(data):
+    """Bouton "Coup suivant" en démonstration (issue #28) : Stockfish (pleine
+    force) joue exactement un demi-coup pour le camp au trait de la FEN
+    reçue, quel qu'il soit — pas d'enchaînement automatique, pas de
+    commentaire du coach (aucun coup n'est "celui d'Alain" ici)."""
+    if not engine_manager:
+        emit("finale_error", {"error": "stockfish_indisponible"})
+        return
+    if not _finale_demo_active:
+        emit("finale_error", {"error": "finale_inconnue"})
+        return
+
+    fen = (data or {}).get("fen", "")
+    try:
+        board = chess.Board(fen)
+    except Exception:
+        emit("finale_error", {"error": "fen_ou_coup_invalide"})
+        return
+
+    game_over_info = _game_over_info(board)
+    move_uci = None
+    if game_over_info is None:
+        move = engine_manager.get_move(board, think_time=0.5)
+        if move:
+            board.push(move)
+            move_uci = move.uci()
+            game_over_info = _game_over_info(board)
+
+    emit("finale_demo_move", {
+        "fen": board.fen(),
+        "uci": move_uci,
+        "game_over": game_over_info is not None,
+        "game_over_info": game_over_info,
+        "king_restricted_squares": _finale_restricted_king_squares(board, _finale_camp_perdant),
     })
 
 
@@ -1150,10 +1279,12 @@ def on_finale_start(data):
 def on_finale_abandon(_data):
     """Bouton "Abandonner" (issue #11) : retour à un état neutre côté
     serveur, pas de sauvegarde."""
-    global _finale_camp_alain, _finale_nom, _finale_description
+    global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active
     _finale_camp_alain = None
+    _finale_camp_perdant = None
     _finale_nom = None
     _finale_description = None
+    _finale_demo_active = False
 
 
 @socketio.on("finale_move")
@@ -1216,6 +1347,7 @@ def on_finale_move(data):
         "uci": stockfish_move_uci,
         "game_over": game_over_info is not None,
         "game_over_info": game_over_info,
+        "king_restricted_squares": _finale_restricted_king_squares(board, _finale_camp_perdant),
     })
 
     if game_over_info is not None or not commenter:

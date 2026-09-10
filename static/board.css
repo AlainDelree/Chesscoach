@@ -61,6 +61,24 @@
 .square.feedback-blunder     { background: #9c27b0 !important; }
 .square.free-play-selected   { background: #6fa8dc !important; }
 
+/* Cases interdites au roi du camp perdant en mode "travail de finales"
+   (issue #28) : hachures superposées, pas un fond plein, pour rester
+   lisibles par-dessus n'importe quelle case/pièce déjà présente. */
+.square.finale-king-restricted::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(180, 20, 20, 0.45),
+    rgba(180, 20, 20, 0.45) 4px,
+    transparent 4px,
+    transparent 9px
+  );
+  pointer-events: none;
+  z-index: 5;
+}
+
 /* ── Partie libre ── */
 #board.free-play-active .square { cursor: pointer; }
 

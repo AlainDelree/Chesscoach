@@ -284,6 +284,16 @@
               <option value="">— Choisir une finale —</option>
             </select>
           </div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <label style="font-size:0.78rem;">
+              <input type="checkbox" id="finale-inverser-camps">
+              Camps inversés (je joue la défense)
+            </label>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+            <button type="button" onclick="startFinaleDemo()">Voir une démonstration</button>
+            <button type="button" id="finale-demo-next-btn" onclick="finaleDemoNext()" style="display:none;">Coup suivant</button>
+          </div>
           <div id="finale-description" style="font-size:0.78rem; color:#556; margin-top:4px;"></div>
           <div id="finale-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
         </div>

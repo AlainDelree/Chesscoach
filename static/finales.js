@@ -11,7 +11,20 @@
  * Contrairement aux modes pédagogique/ouverture, le camp qu'Alain doit
  * jouer est fixé par la position-type elle-même (finales.py), pas un choix
  * libre : pas de boutons "Jouer les Blancs/Noirs" ici, juste la sélection
- * dans le menu déroulant.
+ * dans le menu déroulant (avec une case "Camps inversés" pour jouer le camp
+ * normalement tenu par Stockfish, issue #28).
+ *
+ * Issue #28 : deux compléments à côté du jeu normal.
+ *   - Démonstration ("Voir une démonstration") : Stockfish contrôle les deux
+ *     camps, un demi-coup à la fois sur clic "Coup suivant"
+ *     (finaleDemoActive) — jamais de commentaire automatique du coach, le
+ *     plateau n'accepte aucun clic.
+ *   - Cases hachurées autour du roi du camp perdant (celui qui n'a que son
+ *     roi, propriété fixe de la finale — voir app.py
+ *     _finale_restricted_king_squares) : reçues du serveur à chaque nouvelle
+ *     position (finale_started/finale_stockfish_move/finale_demo_started/
+ *     finale_demo_move) et appliquées par renderFinaleBoard, dans tous les
+ *     contextes (jeu normal, camps inversés, démonstration).
  *
  * Réutilise buildBoard()/renderBoard() de board.js et
  * freeSquareIdToAlgebraic()/freeAlgebraicToSquareId() de free_play.js, comme
@@ -26,6 +39,8 @@ let finaleWaiting    = false; // coup en cours de traitement côté serveur
 let finaleGameOver   = false; // fin de partie détectée côté serveur (issue #11)
 let finaleList       = [];    // bibliothèque reçue du serveur (finale_list_response)
 let finaleFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
+let finaleDemoActive  = false; // démonstration en cours (issue #28) : Stockfish joue les deux camps
+let finaleKingRestrictedSquares = []; // cases algébriques hachurées (issue #28)
 
 function finaleCommenterChaqueCoup() {
   const cb = document.getElementById("shared-auto-comment");
@@ -41,6 +56,9 @@ function abandonFinaleGame() {
   finaleSelected  = null;
   finaleGameOver  = false;
   finaleFenAvantCoup = null;
+  finaleDemoActive = false;
+  finaleKingRestrictedSquares = [];
+  updateFinaleDemoNextButton();
   resetBoardToNeutral();
   setActiveMode(null);
   const statusEl = document.getElementById("finale-status");
@@ -49,6 +67,11 @@ function abandonFinaleGame() {
   if (descEl) descEl.textContent = "";
   const selectEl = document.getElementById("finale-select");
   if (selectEl) selectEl.value = "";
+}
+
+function updateFinaleDemoNextButton() {
+  const btn = document.getElementById("finale-demo-next-btn");
+  if (btn) btn.style.display = finaleDemoActive ? "" : "none";
 }
 
 function reprendreFinaleCoup() {
@@ -99,9 +122,41 @@ function onFinaleSelectChange() {
   finaleWaiting  = true;
   finaleGameOver = false;
   finaleFenAvantCoup = null;
+  finaleDemoActive = false;
+  updateFinaleDemoNextButton();
   const statusEl = document.getElementById("finale-status");
   if (statusEl) statusEl.textContent = "Chargement de la position...";
-  socket.emit("finale_start", { id });
+  const inverserEl = document.getElementById("finale-inverser-camps");
+  socket.emit("finale_start", { id, inverser: !!(inverserEl && inverserEl.checked) });
+}
+
+function startFinaleDemo() {
+  const selectEl = document.getElementById("finale-select");
+  const statusEl = document.getElementById("finale-status");
+  const id = selectEl ? selectEl.value : "";
+  if (!id) {
+    if (statusEl) statusEl.textContent = "Choisissez d'abord une finale dans la liste.";
+    return;
+  }
+  const entry = finaleList.find((f) => f.id === id);
+  const descEl = document.getElementById("finale-description");
+  if (descEl) descEl.textContent = entry ? entry.description : "";
+
+  ensureModeSwitchClean("finale");
+  finaleWaiting  = true;
+  finaleGameOver = false;
+  finaleFenAvantCoup = null;
+  finaleDemoActive = true;
+  updateFinaleDemoNextButton();
+  if (statusEl) statusEl.textContent = "Chargement de la démonstration...";
+  socket.emit("finale_demo_start", { id });
+}
+
+function finaleDemoNext() {
+  if (!finaleActive || !finaleDemoActive || !finaleGame || finaleGameOver || finaleWaiting) return;
+  finaleWaiting = true;
+  updateFinaleStatus();
+  socket.emit("finale_demo_next", { fen: finaleGame.fen() });
 }
 
 function renderFinaleBoard(lastFrom, lastTo) {
@@ -114,6 +169,10 @@ function renderFinaleBoard(lastFrom, lastTo) {
     const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(finaleSelected)}`);
     if (sq) sq.classList.add("free-play-selected");
   }
+  finaleKingRestrictedSquares.forEach((square) => {
+    const sq = document.getElementById(`sq-${freeAlgebraicToSquareId(square)}`);
+    if (sq) sq.classList.add("finale-king-restricted");
+  });
   renderHistory();
 }
 
@@ -125,7 +184,9 @@ function updateFinaleStatus() {
   else if (finaleGame.in_stalemate()) text = "Pat.";
   else if (finaleGame.in_draw())      text = "Partie nulle.";
   else if (finaleGame.in_check())     text += " (échec)";
-  if (finaleWaiting) text += " — Stockfish (pleine force) et le coach réfléchissent...";
+  if (finaleWaiting) {
+    text += finaleDemoActive ? " — Stockfish (démonstration) réfléchit..." : " — Stockfish (pleine force) et le coach réfléchissent...";
+  }
   statusEl.textContent = text;
 }
 
@@ -136,6 +197,7 @@ function finaleIsAlainTurn() {
 }
 
 function onFinaleBoardClick(e) {
+  if (finaleDemoActive) return;
   if (!finaleActive || !finaleGame || finaleWaiting || finaleGameOver) return;
   if (!finaleIsAlainTurn()) return;
   const sqEl = e.target.closest(".square");
@@ -195,7 +257,10 @@ if (typeof socket !== "undefined") {
     finaleActive    = true;
     finaleSelected  = null;
     finaleGameOver  = false;
+    finaleDemoActive = false;
     finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
+    finaleKingRestrictedSquares = data.king_restricted_squares || [];
+    updateFinaleDemoNextButton();
     setActiveMode("finale");
 
     const descEl = document.getElementById("finale-description");
@@ -217,10 +282,62 @@ if (typeof socket !== "undefined") {
     _coachRenderBubble("assistant", `Finale "${data.nom}" chargée. ${data.description || ""}`);
   });
 
+  socket.on("finale_demo_started", (data) => {
+    finaleWaiting = false;
+    if (!data || !data.fen) return;
+    finaleGame      = new Chess(data.fen);
+    finaleActive    = true;
+    finaleSelected  = null;
+    finaleGameOver  = false;
+    finaleDemoActive = true;
+    finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
+    finaleKingRestrictedSquares = data.king_restricted_squares || [];
+    updateFinaleDemoNextButton();
+    setActiveMode("finale");
+
+    const descEl = document.getElementById("finale-description");
+    if (descEl && data.description) descEl.textContent = data.description;
+
+    _boardFlipped = (finaleCampAlain === "noirs");
+    buildBoard();
+    const boardEl = document.getElementById("board");
+    if (boardEl) boardEl.onclick = onFinaleBoardClick;
+
+    renderFinaleBoard();
+    updateFinaleStatus();
+
+    _coachRenderBubble("assistant", `Démonstration "${data.nom}" chargée — Stockfish joue les deux camps, un demi-coup à la fois ("Coup suivant"). ${data.description || ""}`);
+  });
+
   socket.on("finale_stockfish_move", (data) => {
     finaleWaiting = false;
     if (!finaleActive || !finaleGame || !data) return;
 
+    finaleKingRestrictedSquares = data.king_restricted_squares || [];
+    if (data.uci) {
+      const move = finaleGame.move({
+        from: data.uci.slice(0, 2),
+        to: data.uci.slice(2, 4),
+        promotion: data.uci.slice(4, 5) || "q",
+      });
+      if (move) {
+        renderFinaleBoard(move.from, move.to);
+      }
+    }
+    if (data.game_over) {
+      finaleGameOver = true;
+      const statusEl = document.getElementById("finale-status");
+      if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      return;
+    }
+    updateFinaleStatus();
+  });
+
+  socket.on("finale_demo_move", (data) => {
+    finaleWaiting = false;
+    if (!finaleActive || !finaleDemoActive || !finaleGame || !data) return;
+
+    finaleKingRestrictedSquares = data.king_restricted_squares || [];
     if (data.uci) {
       const move = finaleGame.move({
         from: data.uci.slice(0, 2),
