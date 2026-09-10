@@ -18,8 +18,19 @@
       padding: 10px 16px;
       background: #1a2a3a;
       color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
     }
     header h1 { margin: 0; font-size: 1.1rem; }
+    header .cout-api-link {
+      color: #cfe0f0;
+      font-size: 0.9rem;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    header .cout-api-link:hover { text-decoration: underline; }
     #app {
       display: flex;
       gap: 16px;
@@ -98,7 +109,10 @@
   </style>
 </head>
 <body>
-  <header><h1>ChessCoach — plateau &amp; revue de partie</h1></header>
+  <header>
+    <h1>ChessCoach — plateau &amp; revue de partie</h1>
+    <a class="cout-api-link" href="https://platform.claude.com/cost" target="_blank" rel="noopener noreferrer">Coût API</a>
+  </header>
 
   <div id="app">
 
@@ -282,7 +296,6 @@
           </div>
           <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button onclick="startExercise()">Nouvel exercice</button>
-            <button onclick="startExercise()">Position suivante</button>
           </div>
           <div id="exercise-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
           <div id="exercise-coup-reel" style="display:none; font-size:0.82rem; color:#1a2a3a; margin-top:4px; padding:4px 6px; background:#fff6da; border-radius:4px;">

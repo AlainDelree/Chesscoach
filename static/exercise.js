@@ -313,7 +313,7 @@ if (typeof socket !== "undefined") {
     exerciseVerdictObtenu = true;
     const statusEl = document.getElementById("exercise-status");
     if (statusEl) {
-      statusEl.textContent = 'Verdict rendu — déplace librement les pièces pour explorer la suite, ou clique sur "Position suivante" pour continuer.';
+      statusEl.textContent = 'Verdict rendu — déplace librement les pièces pour explorer la suite, ou clique sur "Nouvel exercice" pour continuer.';
     }
     // Mémorise le verdict pour l'exposer au chat libre (exerciseChatContextExtra,
     // issue #17) — jamais affiché tel quel côté UI, seulement reformulé par le
