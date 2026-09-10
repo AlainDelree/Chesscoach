@@ -49,32 +49,16 @@ _SYSTEM_PROMPT = (
     "Réponds en français."
 )
 
-# Complément de system prompt spécifique au mode "Exercice" (issue #17),
-# ajouté à _SYSTEM_PROMPT quand context["mode_exercice"] est vrai — que ce
-# soit pour le commentaire du coup proposé (exercise_answer) ou pour une
-# question de suivi posée dans le chat libre pendant l'exercice. Les LLM
-# (tous modèles confondus) se sont révélés peu fiables pour juger eux-mêmes
-# la qualité d'un coup à partir du seul nom des coups (ex. verdicts
-# contradictoires sur un même roque selon le tour de conversation) : ce
-# complément leur retire ce rôle de jugement dès qu'un verdict Stockfish est
-# fourni dans le contexte (cf. _build_context_text), tout en gardant un ton
-# chaleureux et pédagogique — l'ancrage sur Stockfish doit rendre le coach
-# plus fiable, pas plus froid.
-_EXERCISE_SYSTEM_ADDENDUM = (
-    "Mode \"exercice\" en cours : Alain s'entraîne sur une position tirée "
-    "d'une de ses erreurs passées. Quand un verdict Stockfish est fourni "
-    "dans le contexte pour un coup qu'il a proposé, ce verdict est déjà "
-    "tranché — ton rôle est d'expliquer POURQUOI il est justifié (menaces, "
-    "pièces en jeu, plans), jamais de rejuger toi-même la qualité du coup à "
-    "partir du seul nom des coups, et jamais de le contredire dans un "
-    "message ultérieur de la même conversation. Ne cite jamais de chiffre "
-    "brut de centipawns ni d'étiquette technique (\"delta\", \"blunder\"...) "
-    "à Alain, sauf s'il le demande explicitement : reformule toujours ce "
-    "verdict en langage naturel, chaleureux et pédagogique. Si Alain pose "
-    "une question de suivi sur cet exercice dans le chat libre, réponds "
-    "directement à partir du contexte fourni (position, coup proposé, "
-    "verdict) sans lui redemander des informations déjà données. "
-    "\n\n"
+# Complément de system prompt partagé (issue #26), ajouté dès qu'un verdict
+# Stockfish et/ou une PV (ligne calculée) figurent dans le contexte — plus
+# seulement en mode "exercice" (cf. get_coach_response) : les mêmes classes
+# de bugs (verdicts improvisés/contradictoires, inventions tactiques) valent
+# pour tout mode qui transmet ces champs au coach (pédagogique/ouverture
+# hors-livre/finales), pas seulement l'exercice qui les a fait apparaître en
+# premier (issue #17/#20/#25). Texte volontairement neutre sur le vocabulaire
+# ("le coup" / "la position en cours", jamais "cette tentative d'exercice")
+# pour rester valable quel que soit le mode appelant.
+_ANTI_INVENTION_ADDENDUM = (
     "Vérification des affirmations tactiques (issue #20) : quand le "
     "contexte fournit une suite réellement calculée par Stockfish (\"Suite "
     "réellement calculée par Stockfish...\"), c'est ta SEULE base pour "
@@ -82,16 +66,15 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     "commentaire sur cette ligne précise, pas sur une justification "
     "positionnelle générique improvisée. Si Alain affirme lui-même une "
     "menace, une combinaison ou un mat (annoncé ou évité) sur le coup ou la "
-    "position en cours d'exercice, ne confirme JAMAIS cette affirmation par "
-    "simple plausibilité : vérifie-la contre la ou les lignes calculées "
-    "fournies dans le contexte. Si elle y est explicitement présente, "
-    "confirme-la en t'appuyant sur cette ligne précise. Si elle n'y "
-    "apparaît pas, ou si aucune ligne calculée n'a été fournie pour ce "
-    "coup, dis-le clairement (par exemple \"je ne suis pas sûr, je ne vois "
-    "pas cette suite dans mon analyse\") plutôt que d'acquiescer sans base "
-    "réelle — une réponse honnête et prudente est toujours préférable à une "
-    "confirmation non fondée, même si l'affirmation d'Alain paraît "
-    "plausible."
+    "position en cours, ne confirme JAMAIS cette affirmation par simple "
+    "plausibilité : vérifie-la contre la ou les lignes calculées fournies "
+    "dans le contexte. Si elle y est explicitement présente, confirme-la en "
+    "t'appuyant sur cette ligne précise. Si elle n'y apparaît pas, ou si "
+    "aucune ligne calculée n'a été fournie pour ce coup, dis-le clairement "
+    "(par exemple \"je ne suis pas sûr, je ne vois pas cette suite dans mon "
+    "analyse\") plutôt que d'acquiescer sans base réelle — une réponse "
+    "honnête et prudente est toujours préférable à une confirmation non "
+    "fondée, même si l'affirmation d'Alain paraît plausible."
     "\n\n"
     "Interdiction d'inventer une pièce, une case ou une menace (issue #25) : "
     "une ligne calculée par Stockfish (\"Suite réellement calculée...\") ne "
@@ -112,6 +95,36 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     "en question — décris le plan tel qu'il s'enchaîne réellement, coup "
     "après coup, sans raccourci qui déforme le moment où la menace se "
     "concrétise."
+)
+
+# Complément de system prompt spécifique au mode "Exercice" (issue #17),
+# ajouté à _SYSTEM_PROMPT quand context["mode_exercice"] est vrai — que ce
+# soit pour le commentaire du coup proposé (exercise_answer) ou pour une
+# question de suivi posée dans le chat libre pendant l'exercice. Les LLM
+# (tous modèles confondus) se sont révélés peu fiables pour juger eux-mêmes
+# la qualité d'un coup à partir du seul nom des coups (ex. verdicts
+# contradictoires sur un même roque selon le tour de conversation) : ce
+# complément leur retire ce rôle de jugement dès qu'un verdict Stockfish est
+# fourni dans le contexte (cf. _build_context_text), tout en gardant un ton
+# chaleureux et pédagogique — l'ancrage sur Stockfish doit rendre le coach
+# plus fiable, pas plus froid. Le garde-fou anti-invention (issue #25/#26)
+# lui-même est mutualisé avec les autres modes via _ANTI_INVENTION_ADDENDUM.
+_EXERCISE_SYSTEM_ADDENDUM = (
+    "Mode \"exercice\" en cours : Alain s'entraîne sur une position tirée "
+    "d'une de ses erreurs passées. Quand un verdict Stockfish est fourni "
+    "dans le contexte pour un coup qu'il a proposé, ce verdict est déjà "
+    "tranché — ton rôle est d'expliquer POURQUOI il est justifié (menaces, "
+    "pièces en jeu, plans), jamais de rejuger toi-même la qualité du coup à "
+    "partir du seul nom des coups, et jamais de le contredire dans un "
+    "message ultérieur de la même conversation. Ne cite jamais de chiffre "
+    "brut de centipawns ni d'étiquette technique (\"delta\", \"blunder\"...) "
+    "à Alain, sauf s'il le demande explicitement : reformule toujours ce "
+    "verdict en langage naturel, chaleureux et pédagogique. Si Alain pose "
+    "une question de suivi sur cet exercice dans le chat libre, réponds "
+    "directement à partir du contexte fourni (position, coup proposé, "
+    "verdict) sans lui redemander des informations déjà données. "
+    "\n\n"
+    + _ANTI_INVENTION_ADDENDUM
 )
 
 # Appel dédié, distinct du chat coach (issue #14, "Établir mon programme
@@ -363,14 +376,16 @@ def _build_context_text(context) -> str:
     return "\n".join(lines)
 
 
-def _log_coach_call(log_path, system_prompt: str, context: dict, messages) -> None:
-    """Journalise un appel complet au coach en mode "Exercice" (issue #18) :
-    horodatage, system prompt complet, contexte construit (tous les champs,
-    y compris coup_propose/coup_reel/meilleur_coup/verdict_qualite/
-    verdict_delta_cp) et messages envoyés, en JSON Lines dans log_path — pour
-    diagnostiquer une erreur factuelle du coach à partir de ce qui a été
-    réellement transmis à Haiku, pas d'une supposition. Best-effort : une
-    erreur d'écriture ne doit jamais faire échouer la réponse au coach.
+def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str) -> None:
+    """Journalise un appel complet au coach (issue #18, étendu à tous les
+    modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
+    mode d'origine, system prompt complet, contexte construit (tous les
+    champs, y compris coup_propose/coup_reel/meilleur_coup/verdict_qualite/
+    verdict_delta_cp/pv_coup_propose/pv_meilleur_coup) et messages envoyés,
+    en JSON Lines dans log_path — pour diagnostiquer une erreur factuelle du
+    coach à partir de ce qui a été réellement transmis à Haiku, pas d'une
+    supposition, quel que soit le mode. Best-effort : une erreur d'écriture
+    ne doit jamais faire échouer la réponse au coach.
     """
     if not log_path:
         return
@@ -379,6 +394,7 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages) -> No
         log_path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "horodatage": datetime.now().isoformat(),
+            "mode_origine": mode_origine,
             "system_prompt": system_prompt,
             "context": context or {},
             "messages": messages,
@@ -569,6 +585,11 @@ def get_coach_response(messages, context, coach_memory, config):
     prompt_sys = _SYSTEM_PROMPT
     if (context or {}).get("mode_exercice"):
         prompt_sys = f"{prompt_sys}\n\n{_EXERCISE_SYSTEM_ADDENDUM}"
+    elif (context or {}).get("verdict_qualite") or (context or {}).get("pv_coup_propose") or (context or {}).get("pv_meilleur_coup"):
+        # Mêmes garde-fous qu'en mode "exercice" (issue #26) dès qu'un verdict
+        # et/ou une PV Stockfish sont transmis par un autre mode (pédagogique,
+        # ouverture hors-livre, finales) — pas de flag mode_exercice requis.
+        prompt_sys = f"{prompt_sys}\n\n{_ANTI_INVENTION_ADDENDUM}"
 
     memory_text = _build_memory_text(coach_memory)
     if memory_text:
@@ -578,8 +599,14 @@ def get_coach_response(messages, context, coach_memory, config):
     if context_text:
         prompt_sys = f"{prompt_sys}\n\nContexte de la position en cours :\n{context_text}"
 
-    if (context or {}).get("mode_exercice"):
-        _log_coach_call((config or {}).get("coach_log_path"), prompt_sys, context, clean_messages)
+    # Logging étendu à tous les modes (issue #26) — plus seulement l'exercice
+    # (issue #18) : mode_origine explicite si fourni par l'appelant, sinon
+    # déduit de mode_exercice, sinon "chat_libre" (conversation hors mode
+    # d'entraînement actif, ex. revue d'une partie importée).
+    mode_origine = (context or {}).get("mode_origine") or (
+        "exercice" if (context or {}).get("mode_exercice") else "chat_libre"
+    )
+    _log_coach_call((config or {}).get("coach_log_path"), prompt_sys, context, clean_messages, mode_origine)
 
     try:
         response = _call_claude(prompt_sys, clean_messages, api_key, model)

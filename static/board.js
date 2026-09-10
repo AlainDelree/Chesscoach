@@ -554,6 +554,16 @@ function lancerAnalyse(movesUci, seqMoves) {
 let _coachHistory = [];
 let _coachBusy    = false;
 
+// Correspondance activeMode (controls.js) → mode_origine attendu côté
+// serveur pour le logging coach_calls.log (issue #26, part. 3) — partagée
+// entre coachBuildContext() et askCoachOnDemand() ci-dessous.
+const _MODE_ORIGINE_LABELS = {
+  pedagogic: "pedagogique",
+  opening: "ouverture",
+  finale: "finales",
+  exercise: "exercice",
+};
+
 function coachBuildContext() {
   // Chat libre pendant un mode interactif en cours (issue #15 point 3) : le
   // coach doit connaître la position réelle du mode actif (activeMode, cf.
@@ -561,7 +571,8 @@ function coachBuildContext() {
   if (typeof activeMode !== "undefined" && activeMode && typeof activeModeGameState === "function") {
     const state = activeModeGameState();
     if (state && state.fen) {
-      const ctx = { fen: state.fen, move: "", pgn: "", camp_alain: state.campAlain || "" };
+      const modeOrigine = _MODE_ORIGINE_LABELS[activeMode] || "chat_libre";
+      const ctx = { fen: state.fen, move: "", pgn: "", camp_alain: state.campAlain || "", mode_origine: modeOrigine };
       // Mode exercice (issue #17) : sans ce complément, le chat libre ne
       // connaît que la position/le camp, pas le coup proposé ni le verdict
       // Stockfish déjà rendu par le coach pour cette tentative.
@@ -580,7 +591,7 @@ function coachBuildContext() {
     if (m.color === "white") pgn += `${Math.floor(i / 2) + 1}. `;
     pgn += `${m.san} `;
   }
-  return { fen, move: move.trim(), pgn: pgn.trim() };
+  return { fen, move: move.trim(), pgn: pgn.trim(), mode_origine: "chat_libre" };
 }
 
 function stripMarkdownForChat(text) {
@@ -729,7 +740,10 @@ if (typeof socket !== "undefined") {
 function askCoachOnDemand(fen, themeFinale, campAlain) {
   if (!fen) return;
   setCoachOnDemandButtonsDisabled(true);
-  socket.emit("coach_comment_on_demand", { fen, theme_finale: themeFinale || "", camp_alain: campAlain || "" });
+  const modeOrigine = (typeof activeMode !== "undefined" && _MODE_ORIGINE_LABELS[activeMode]) || "chat_libre";
+  socket.emit("coach_comment_on_demand", {
+    fen, theme_finale: themeFinale || "", camp_alain: campAlain || "", mode_origine: modeOrigine,
+  });
 }
 
 function setCoachOnDemandButtonsDisabled(disabled) {

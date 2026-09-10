@@ -183,6 +183,49 @@ def _eval_blancs_apres(board: chess.Board, depth: int = 8) -> tuple[int | None, 
     return None, None
 
 
+def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
+    """Évalue un coup avec Stockfish selon le même mécanisme que le mode
+    Exercice (verdict + PV à DEPTH_EXERCICE_TEMPS_REEL, issue #17/#19/#20),
+    factorisé ici (issue #26) pour que pédagogique, ouverture (hors livre) et
+    finales en bénéficient aussi, au lieu de la simple comparaison au
+    meilleur coup (evaluate() sans PV) qu'ils utilisaient jusque-là.
+    EngineManager.evaluate_move est déjà générique — seuls ses appelants
+    étaient limités à l'exercice. `move` doit déjà être légal sur la
+    position fen_avant (vérifié par l'appelant).
+
+    Retourne {"meilleur_coup": str, "verdict_qualite": str|None,
+    "verdict_delta_cp": int|None, "pv_coup_propose": str,
+    "pv_meilleur_coup": str} — clés directement fusionnables dans le context
+    de get_coach_response. Best-effort : valeurs vides/None si Stockfish est
+    indisponible ou si l'évaluation échoue."""
+    result = {
+        "meilleur_coup": "",
+        "verdict_qualite": None,
+        "verdict_delta_cp": None,
+        "pv_coup_propose": "",
+        "pv_meilleur_coup": "",
+    }
+    if not engine_manager:
+        return result
+    try:
+        board = chess.Board(fen_avant)
+        verdict_qualite, verdict_delta_cp, meilleur_coup_uci, pv_info = engine_manager.evaluate_move(
+            board, move, depth=DEPTH_EXERCICE_TEMPS_REEL, always_return_best=True, return_pv=True
+        )
+        result["verdict_qualite"] = verdict_qualite
+        result["verdict_delta_cp"] = verdict_delta_cp
+        result["pv_coup_propose"] = pv_info.get("pv_coup_propose", "")
+        result["pv_meilleur_coup"] = pv_info.get("pv_meilleur_coup", "")
+        if meilleur_coup_uci:
+            try:
+                result["meilleur_coup"] = board.san(chess.Move.from_uci(meilleur_coup_uci))
+            except Exception:
+                result["meilleur_coup"] = meilleur_coup_uci
+    except Exception:
+        pass
+    return result
+
+
 @socketio.on("coach_comment_on_demand")
 def on_coach_comment_on_demand(data):
     """Bouton "Demander l'avis du coach" (issue #11) : commentaire à la
@@ -229,6 +272,10 @@ def on_coach_comment_on_demand(data):
     # (pedagogicCampAlain / openingCampAlain / finaleCampAlain).
     camp_alain = ((data or {}).get("camp_alain") or "").strip()
     theme_finale = ((data or {}).get("theme_finale") or "").strip()
+    # Mode d'origine transmis par le client (issue #26, cf. static/board.js
+    # askCoachOnDemand) — pour le logging uniquement (part. 3), ce handler
+    # reste mode-agnostique par ailleurs.
+    mode_origine = ((data or {}).get("mode_origine") or "").strip() or "chat_libre"
 
     messages = [{
         "role": "user",
@@ -245,6 +292,7 @@ def on_coach_comment_on_demand(data):
         "eval_blancs_cp": eval_blancs_cp,
         "eval_mat": eval_mat,
         "theme_finale": theme_finale,
+        "mode_origine": mode_origine,
     }
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
@@ -400,25 +448,15 @@ def on_exercise_answer(data):
             # du même appel evaluate_move, à une profondeur plus élevée que
             # celle du calcul par lot d'origine (depth=10 dans
             # build_patterns_erreurs.py, choix de vitesse pour traiter 280
-            # parties d'un coup — non pertinent ici pour une position unique).
-            # always_return_best=True : sans quoi evaluate_move renvoie None
-            # dès que le coup proposé EST le meilleur coup (cf.
-            # engine_stockfish.py), ce qui masquerait le meilleur coup côté
-            # affichage/log dans ce cas précis. return_pv=True (issue #20) :
-            # récupère aussi la ligne (PV) réellement calculée par Stockfish
-            # pour le coup proposé et pour le meilleur coup, à transmettre au
-            # coach — pas seulement le verdict chiffré final.
-            if engine_manager:
-                verdict_qualite, verdict_delta_cp, meilleur_coup_uci_recalcule, pv_info = engine_manager.evaluate_move(
-                    board, move, depth=DEPTH_EXERCICE_TEMPS_REEL, always_return_best=True, return_pv=True
-                )
-                pv_coup_propose = pv_info.get("pv_coup_propose", "")
-                pv_meilleur_coup = pv_info.get("pv_meilleur_coup", "")
-                if meilleur_coup_uci_recalcule:
-                    try:
-                        meilleur_coup_recalcule_san = board.san(chess.Move.from_uci(meilleur_coup_uci_recalcule))
-                    except Exception:
-                        meilleur_coup_recalcule_san = meilleur_coup_uci_recalcule
+            # parties d'un coup — non pertinent ici pour une position unique),
+            # plus la PV (issue #20) — factorisé dans _evaluate_move_for_coach
+            # (issue #26) pour être réutilisé tel quel par les autres modes.
+            eval_result = _evaluate_move_for_coach(fen_avant, move)
+            verdict_qualite = eval_result["verdict_qualite"]
+            verdict_delta_cp = eval_result["verdict_delta_cp"]
+            pv_coup_propose = eval_result["pv_coup_propose"]
+            pv_meilleur_coup = eval_result["pv_meilleur_coup"]
+            meilleur_coup_recalcule_san = eval_result["meilleur_coup"]
             board.push(move)
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
     except Exception:
@@ -481,6 +519,7 @@ def on_exercise_answer(data):
         # évaluations partagent bien la même profondeur.
         "profondeur_reeval": DEPTH_EXERCICE_TEMPS_REEL if meilleur_coup_recalcule_san else None,
         "mode_exercice": True,
+        "mode_origine": "exercice",
     }
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
@@ -589,16 +628,11 @@ def on_pedagogic_move(data):
 
     coup_alain_san = board.san(move)
 
-    # Meilleur coup Stockfish pour cette position, à pleine force (moteur
-    # d'évaluation partagé, inchangé — cf. EngineManager.evaluate).
-    eval_avant = engine_manager.evaluate(board, depth=8)
-    meilleur_coup_uci = eval_avant.get("best_move")
-    meilleur_coup_san = ""
-    if meilleur_coup_uci:
-        try:
-            meilleur_coup_san = board.san(chess.Move.from_uci(meilleur_coup_uci))
-        except Exception:
-            meilleur_coup_san = meilleur_coup_uci
+    # Verdict Stockfish + PV du coup joué (issue #17/#19/#20, mutualisé aux
+    # modes hors exercice par l'issue #26) — remplace la simple comparaison
+    # au meilleur coup (evaluate() sans PV) utilisée jusque-là ici.
+    eval_result = _evaluate_move_for_coach(fen_avant, move)
+    meilleur_coup_san = eval_result["meilleur_coup"]
 
     board.push(move)
 
@@ -642,6 +676,11 @@ def on_pedagogic_move(data):
         "meilleur_coup": meilleur_coup_san,
         "eval_blancs_cp": eval_blancs_cp,
         "eval_mat": eval_mat,
+        "verdict_qualite": eval_result["verdict_qualite"],
+        "verdict_delta_cp": eval_result["verdict_delta_cp"],
+        "pv_coup_propose": eval_result["pv_coup_propose"],
+        "pv_meilleur_coup": eval_result["pv_meilleur_coup"],
+        "mode_origine": "pedagogique",
     }
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
@@ -811,6 +850,7 @@ def on_opening_move(data):
     popularite_pct = None
     coup_livre_top_san = None
     meilleur_coup_san = ""
+    eval_result = None
 
     if etait_dans_le_livre:
         entries = opening_book.get_book_entries(config.BOOK_PATH, board)
@@ -826,14 +866,12 @@ def on_opening_move(data):
 
     if not dans_le_livre:
         # Hors livre à partir de ce coup (ou déjà avant) : comparaison au
-        # meilleur coup Stockfish, comme le mode pédagogique (issue #8).
-        eval_avant = engine_manager.evaluate(board, depth=8)
-        meilleur_coup_uci = eval_avant.get("best_move")
-        if meilleur_coup_uci:
-            try:
-                meilleur_coup_san = board.san(chess.Move.from_uci(meilleur_coup_uci))
-            except Exception:
-                meilleur_coup_san = meilleur_coup_uci
+        # meilleur coup Stockfish, comme le mode pédagogique (issue #8), avec
+        # verdict + PV (issue #26) — tant que la position reste dans le
+        # livre, la comparaison à la popularité du livre suffit, pas besoin
+        # de PV Stockfish (cf. issue #26, hors périmètre pour cette branche).
+        eval_result = _evaluate_move_for_coach(fen_avant, move)
+        meilleur_coup_san = eval_result["meilleur_coup"]
 
     board.push(move)
 
@@ -907,7 +945,16 @@ def on_opening_move(data):
         "dans_le_livre": dans_le_livre,
         "popularite_pct": popularite_pct,
         "coup_livre_recommande": coup_livre_top_san or "",
+        "mode_origine": "ouverture",
     }
+    if eval_result:
+        # Verdict + PV (issue #26) uniquement calculés hors livre ci-dessus —
+        # absents tant que la position reste dans le livre, comportement
+        # inchangé pour cette branche.
+        context["verdict_qualite"] = eval_result["verdict_qualite"]
+        context["verdict_delta_cp"] = eval_result["verdict_delta_cp"]
+        context["pv_coup_propose"] = eval_result["pv_coup_propose"]
+        context["pv_meilleur_coup"] = eval_result["pv_meilleur_coup"]
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
@@ -1127,16 +1174,11 @@ def on_finale_move(data):
 
     coup_alain_san = board.san(move)
 
-    # Meilleur coup Stockfish pour cette position, à pleine force (moteur
-    # d'évaluation partagé, inchangé — cf. EngineManager.evaluate).
-    eval_avant = engine_manager.evaluate(board, depth=8)
-    meilleur_coup_uci = eval_avant.get("best_move")
-    meilleur_coup_san = ""
-    if meilleur_coup_uci:
-        try:
-            meilleur_coup_san = board.san(chess.Move.from_uci(meilleur_coup_uci))
-        except Exception:
-            meilleur_coup_san = meilleur_coup_uci
+    # Verdict Stockfish + PV du coup joué (issue #17/#19/#20, mutualisé aux
+    # modes hors exercice par l'issue #26) — remplace la simple comparaison
+    # au meilleur coup (evaluate() sans PV) utilisée jusque-là ici.
+    eval_result = _evaluate_move_for_coach(fen_avant, move)
+    meilleur_coup_san = eval_result["meilleur_coup"]
 
     board.push(move)
 
@@ -1184,6 +1226,11 @@ def on_finale_move(data):
         "eval_blancs_cp": eval_blancs_cp,
         "eval_mat": eval_mat,
         "theme_finale": _finale_description or "",
+        "verdict_qualite": eval_result["verdict_qualite"],
+        "verdict_delta_cp": eval_result["verdict_delta_cp"],
+        "pv_coup_propose": eval_result["pv_coup_propose"],
+        "pv_meilleur_coup": eval_result["pv_meilleur_coup"],
+        "mode_origine": "finales",
     }
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
