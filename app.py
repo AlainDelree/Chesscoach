@@ -1226,11 +1226,20 @@ def on_finale_start(data):
 
 @socketio.on("finale_demo_start")
 def on_finale_demo_start(data):
-    """Bouton "Voir une démonstration" (issue #28) : recharge la position de
-    départ de la finale sélectionnée, Stockfish contrôlera les deux camps
-    via finale_demo_next (un demi-coup à la fois, sur clic "Coup suivant" —
-    aucun coup n'est joué ici, contrairement à finale_start dont le coup
-    d'ouverture automatique n'aurait pas de sens en démonstration pure)."""
+    """Bouton "Voir une démonstration" (issue #28) : Stockfish contrôlera les
+    deux camps via finale_demo_next (un demi-coup à la fois, sur clic "Coup
+    suivant" — aucun coup n'est joué ici, contrairement à finale_start dont
+    le coup d'ouverture automatique n'aurait pas de sens en démonstration
+    pure).
+
+    Issue #36 : repart de la position actuellement affichée côté client
+    (data["fen"], transmise par startFinaleDemo() dès qu'une partie est déjà
+    chargée pour cette finale — coups joués par Alain et/ou par une
+    précédente démonstration), pas systématiquement de la position de départ
+    de data/finales.json. Le client n'envoie ce champ que lorsqu'une partie
+    est effectivement en cours ; sinon (aucune partie encore chargée, ou FEN
+    invalide) on retombe sur la FEN de départ de la finale, comportement
+    inchangé."""
     global _finale_camp_alain, _finale_camp_perdant, _finale_nom, _finale_description, _finale_demo_active, _finale_demo_board
 
     if not engine_manager:
@@ -1250,7 +1259,15 @@ def on_finale_demo_start(data):
     _finale_description = entry["description"]
     _finale_demo_active = True
 
-    board = chess.Board(entry["fen"])
+    board = None
+    fen_client = ((data or {}).get("fen") or "").strip()
+    if fen_client:
+        try:
+            board = chess.Board(fen_client)
+        except ValueError:
+            board = None
+    if board is None:
+        board = chess.Board(entry["fen"])
     # Issue #29 : plateau tenu côté serveur pour toute la durée de la
     # démonstration (voir le commentaire sur _finale_demo_board ci-dessus),
     # pas reconstruit depuis une FEN client à chaque demi-coup.

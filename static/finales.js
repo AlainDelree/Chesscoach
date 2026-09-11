@@ -190,7 +190,16 @@ function startFinaleDemo() {
   updateFinaleDemoNextButton();
   updateFinaleDemoToggleButton();
   if (statusEl) statusEl.textContent = "Chargement de la démonstration...";
-  socket.emit("finale_demo_start", { id });
+  // Issue #36 : si une partie est déjà chargée pour cette finale (finaleGame
+  // porte la position atteinte après d'éventuels coups joués par Alain et/ou
+  // une précédente démonstration), la transmettre au serveur pour que la
+  // démonstration reparte de là plutôt que de la position de départ de
+  // data/finales.json (voir app.py on_finale_demo_start). Rien n'est envoyé
+  // si aucune partie n'est encore en cours — le serveur retombe alors sur la
+  // FEN de départ, comportement inchangé.
+  const payload = { id };
+  if (finaleActive && finaleGame) payload.fen = finaleGame.fen();
+  socket.emit("finale_demo_start", payload);
 }
 
 // Issue #35 : bouton à bascule "Voir une démonstration"/"Arrêter la
@@ -357,7 +366,16 @@ if (typeof socket !== "undefined") {
   socket.on("finale_demo_started", (data) => {
     finaleWaiting = false;
     if (!data || !data.fen) return;
-    finaleGame      = new Chess(data.fen);
+    // Issue #36 : ne recréer l'instance chess.js que si aucune partie
+    // n'était déjà chargée pour cette finale, ou si la position renvoyée par
+    // le serveur diffère de celle transmise (repli sur la position de
+    // départ côté serveur, ex. FEN client invalide) — sinon on garde
+    // finaleGame tel quel pour préserver tout son historique réel de coups
+    // (pgn/move, issue #33), qu'une reconstruction depuis une simple FEN
+    // effacerait.
+    if (!finaleGame || finaleGame.fen() !== data.fen) {
+      finaleGame = new Chess(data.fen);
+    }
     finaleActive    = true;
     finaleSelected  = null;
     finaleGameOver  = false;
