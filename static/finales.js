@@ -92,6 +92,17 @@ function updateFinaleDemoToggleButton() {
   btn.textContent = finaleDemoActive ? "Arrêter la démonstration" : "Voir une démonstration";
 }
 
+// Issue #40 : la case "Camps inversés" n'est lue qu'au chargement d'une
+// finale (loadSelectedFinale) — la cocher/décocher en cours de partie n'a
+// aucun effet tant qu'on n'a pas rechargé la finale. Grisée dès qu'Alain a
+// joué au moins un coup, pour ne pas laisser croire qu'elle agit en direct ;
+// réactivée au chargement (sélection ou "Recommencer cette finale", tous
+// deux via loadSelectedFinale).
+function setFinaleInverserCampsDisabled(disabled) {
+  const cb = document.getElementById("finale-inverser-camps");
+  if (cb) cb.disabled = disabled;
+}
+
 function reprendreFinaleCoup() {
   const statusEl = document.getElementById("finale-status");
   if (!finaleActive || finaleWaiting || !finaleFenAvantCoup) {
@@ -177,6 +188,7 @@ function loadSelectedFinale(id) {
   finaleDemoActive = false;
   updateFinaleDemoNextButton();
   updateFinaleDemoToggleButton();
+  setFinaleInverserCampsDisabled(false);
   const statusEl = document.getElementById("finale-status");
   if (statusEl) statusEl.textContent = "Chargement de la position...";
   const inverserEl = document.getElementById("finale-inverser-camps");
@@ -330,6 +342,7 @@ function onFinaleBoardClick(e) {
   renderFinaleBoard(move.from, move.to);
   finaleWaiting = true;
   finaleFenAvantCoup = fenAvant;
+  setFinaleInverserCampsDisabled(true);
   updateFinaleStatus();
   _coachRenderBubble("user", `Travail de finales — je joue ${move.san}`);
   socket.emit("finale_move", {
