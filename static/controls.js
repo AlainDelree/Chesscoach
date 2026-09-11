@@ -165,7 +165,17 @@ function _activeModeCampAlain() {
 function activeModeGameState() {
   const game = _activeModeGameInstance();
   if (!game) return null;
-  return { fen: game.fen(), campAlain: _activeModeCampAlain() };
+  // pgn/move (issue #33) : historique réel des coups joués depuis le début
+  // de la partie en cours (chess.js game.pgn()/game.history()), pour que le
+  // chat libre du coach connaisse les coups déjà joués (ex. un fianchetto au
+  // coup 8) et pas seulement l'instantané FEN de la position actuelle.
+  const history = game.history();
+  return {
+    fen: game.fen(),
+    campAlain: _activeModeCampAlain(),
+    pgn: game.pgn(),
+    move: history.length ? history[history.length - 1] : "",
+  };
 }
 
 function getActiveModeMoves() {

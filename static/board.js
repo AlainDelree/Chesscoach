@@ -572,7 +572,19 @@ function coachBuildContext() {
     const state = activeModeGameState();
     if (state && state.fen) {
       const modeOrigine = _MODE_ORIGINE_LABELS[activeMode] || "chat_libre";
-      const ctx = { fen: state.fen, move: "", pgn: "", camp_alain: state.campAlain || "", mode_origine: modeOrigine };
+      // Historique des coups (pgn/move, issue #33) : pertinent pour les
+      // parties pédagogique/ouverture/finale (une vraie partie en cours),
+      // pas pour le mode exercice qui porte sur une position isolée par
+      // nature (hors périmètre issue #33, cf. exerciseChatContextExtra qui
+      // fournit déjà son propre contexte dédié).
+      const avecHistorique = activeMode === "pedagogic" || activeMode === "opening" || activeMode === "finale";
+      const ctx = {
+        fen: state.fen,
+        move: avecHistorique ? (state.move || "") : "",
+        pgn: avecHistorique ? (state.pgn || "") : "",
+        camp_alain: state.campAlain || "",
+        mode_origine: modeOrigine,
+      };
       // Mode exercice (issue #17) : sans ce complément, le chat libre ne
       // connaît que la position/le camp, pas le coup proposé ni le verdict
       // Stockfish déjà rendu par le coach pour cette tentative.
