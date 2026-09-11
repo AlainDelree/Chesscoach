@@ -144,9 +144,24 @@ function populateFinaleSelect() {
 
 function onFinaleSelectChange() {
   const selectEl = document.getElementById("finale-select");
-  const descEl = document.getElementById("finale-description");
   if (!selectEl) return;
-  const id = selectEl.value;
+  loadSelectedFinale(selectEl.value);
+}
+
+// Issue #37 : bouton "Recommencer cette finale" — un <select> HTML ne
+// déclenche pas d'événement "change" quand l'option resélectionnée est déjà
+// celle active (comportement standard du navigateur), donc resélectionner la
+// même finale dans #finale-select n'exécute jamais onFinaleSelectChange().
+// Ce bouton appelle directement loadSelectedFinale() pour l'id actuellement
+// affiché dans le menu, en cours de partie comme après une fin de partie.
+function restartCurrentFinale() {
+  const selectEl = document.getElementById("finale-select");
+  if (!selectEl) return;
+  loadSelectedFinale(selectEl.value);
+}
+
+function loadSelectedFinale(id) {
+  const descEl = document.getElementById("finale-description");
   if (!id) {
     if (descEl) descEl.textContent = "";
     return;
