@@ -382,7 +382,11 @@ def on_training_program_build(_data=None):
 def on_free_play_stockfish_move(data):
     """Calcule le meilleur coup Stockfish pour la position (FEN) reçue —
     mode partie libre (bouton "Coup Stockfish" / case "Stockfish joue auto").
-    """
+
+    Issue #34 : détection de fin de partie (voir _game_over_info) vérifiée
+    aussi APRÈS le coup de Stockfish, pas seulement avant — sinon un mat
+    délivré par Stockfish lui-même n'est jamais signalé côté serveur, comme
+    déjà fait dans les autres handlers depuis l'issue #10."""
     if not engine_manager:
         emit("free_play_stockfish_move_response", {"error": "stockfish_indisponible"})
         return
@@ -407,7 +411,14 @@ def on_free_play_stockfish_move(data):
         emit("free_play_stockfish_move_response", {"error": "aucun_coup"})
         return
 
-    emit("free_play_stockfish_move_response", {"uci": move.uci()})
+    board.push(move)
+    game_over_info = _game_over_info(board)
+
+    emit("free_play_stockfish_move_response", {
+        "uci": move.uci(),
+        "game_over": game_over_info is not None,
+        "game_over_info": game_over_info,
+    })
 
 
 @socketio.on("exercise_new")

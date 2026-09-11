@@ -150,6 +150,24 @@ function uciToCoords(uci) {
 function flipBoard() {
   _boardFlipped = !_boardFlipped;
   buildBoard();
+
+  // Issue #34 : le bouton "Retourner" (hérité du mode revue PGN) doit
+  // retourner l'échiquier du mode interactif actif (partie libre,
+  // pédagogique, ouverture, finales, exercice, éditeur) s'il y en a un,
+  // plutôt que de toujours réafficher la position de revue — même repli
+  // que extraireFen() (controls.js).
+  if (activeMode === "editor" && typeof renderEditorBoard === "function") {
+    renderEditorBoard();
+    return;
+  }
+  if (activeMode && typeof activeModeGameState === "function") {
+    const state = activeModeGameState();
+    if (state && state.fen) {
+      renderBoard(state.fen.split(" ")[0], null, null, null, null, null, null);
+      return;
+    }
+  }
+
   const fen = reviewFens[reviewIdx] || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
   renderBoard(fen, null, null, null, null, null, null);
 }

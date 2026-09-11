@@ -98,12 +98,17 @@ function ensureModeSwitchClean(newMode) {
 }
 
 // ── Désactivation des boutons de revue hors contexte (issue #23) ───────────
-// Précédent/Suivant/Retourner/Meilleur coup n'ont de sens qu'en revue de
-// bibliothèque (activeMode null) — dès qu'un mode interactif tourne, ils
-// sont grisés plutôt que de rester cliquables sans effet cohérent.
+// Précédent/Suivant/Meilleur coup n'ont de sens qu'en revue de bibliothèque
+// (activeMode null) — dès qu'un mode interactif tourne, ils sont grisés
+// plutôt que de rester cliquables sans effet cohérent.
+//
+// Issue #34 : "Retourner" en est exclu — contrairement aux trois autres, il
+// garde un sens dans n'importe quel mode interactif (voir sa position
+// affichée sous un autre angle), donc reste toujours cliquable ; flipBoard()
+// (board.js) se charge de cibler la bonne position (mode actif ou revue).
 function updateReviewControlsEnabled() {
   const disabled = !!activeMode;
-  ["review-prev-btn", "review-next-btn", "review-flip-btn", "review-bestmove-btn"].forEach((id) => {
+  ["review-prev-btn", "review-next-btn", "review-bestmove-btn"].forEach((id) => {
     const btn = document.getElementById(id);
     if (btn) btn.disabled = disabled;
   });

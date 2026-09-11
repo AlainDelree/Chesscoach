@@ -195,6 +195,22 @@ if (typeof socket !== "undefined") {
     freeWaitingEngine = false;
     if (!freePlayActive || !freeGame) return;
 
+    // Issue #34 : un data.uci peut accompagner un game_over (mat délivré par
+    // le coup de Stockfish lui-même) — appliquer le coup d'abord pour que le
+    // plateau affiche la position finale avant la bannière de fin de partie.
+    if (data && data.uci) {
+      const uci = data.uci;
+      const move = freeGame.move({
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+        promotion: uci.slice(4, 5) || "q",
+      });
+      if (move) {
+        freeLastMove = { from: move.from, to: move.to };
+        renderFreePlayBoard();
+      }
+    }
+
     if (data && data.game_over) {
       const statusEl = document.getElementById("free-play-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
@@ -204,19 +220,6 @@ if (typeof socket !== "undefined") {
 
     if (!data || data.error || !data.uci) {
       console.warn("[partie libre] Stockfish n'a pas retourné de coup :", data && data.error);
-      updateFreePlayStatus();
-      return;
-    }
-
-    const uci = data.uci;
-    const move = freeGame.move({
-      from: uci.slice(0, 2),
-      to: uci.slice(2, 4),
-      promotion: uci.slice(4, 5) || "q",
-    });
-    if (move) {
-      freeLastMove = { from: move.from, to: move.to };
-      renderFreePlayBoard();
     }
     updateFreePlayStatus();
   });
