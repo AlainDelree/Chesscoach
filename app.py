@@ -1305,6 +1305,52 @@ def on_finale_demo_next(_data):
     })
 
 
+@socketio.on("finale_demo_stop")
+def on_finale_demo_stop(_data):
+    """Bouton "Arrêter la démonstration" (issue #35) : transforme la
+    position atteinte par _finale_demo_board en position de jeu normale du
+    mode finales, sans réinitialisation — le client garde intact son
+    historique de coups (finaleGame, déjà tenu à jour demi-coup par
+    demi-coup pendant la démonstration, voir finales.js). _finale_camp_alain
+    et _finale_camp_perdant, propriétés fixes de la finale sélectionnée, ne
+    changent pas.
+
+    Si c'est au tour de l'adversaire automatique sur la position atteinte,
+    il joue immédiatement (comme le coup d'ouverture de finale_start ou la
+    réponse automatique de finale_move) ; sinon la position est simplement
+    renvoyée telle quelle et Alain reprend la main normalement."""
+    global _finale_demo_active, _finale_demo_board
+
+    if not engine_manager:
+        emit("finale_error", {"error": "stockfish_indisponible"})
+        return
+    if not _finale_demo_active or _finale_demo_board is None:
+        emit("finale_error", {"error": "finale_inconnue"})
+        return
+
+    board = _finale_demo_board
+    _finale_demo_active = False
+    _finale_demo_board = None
+
+    camp_alain_color = chess.WHITE if _finale_camp_alain == "blancs" else chess.BLACK
+    game_over_info = _game_over_info(board)
+    move_uci = None
+    if game_over_info is None and board.turn != camp_alain_color:
+        move = engine_manager.get_move_finales(board, think_time=0.5)
+        if move:
+            board.push(move)
+            move_uci = move.uci()
+            game_over_info = _game_over_info(board)
+
+    emit("finale_demo_stopped", {
+        "fen": board.fen(),
+        "uci": move_uci,
+        "game_over": game_over_info is not None,
+        "game_over_info": game_over_info,
+        "king_restricted_squares": _finale_restricted_king_squares(board, _finale_camp_perdant),
+    })
+
+
 @socketio.on("finale_abandon")
 def on_finale_abandon(_data):
     """Bouton "Abandonner" (issue #11) : retour à un état neutre côté

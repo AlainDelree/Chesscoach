@@ -61,6 +61,7 @@ function abandonFinaleGame() {
   finaleDemoCoupsJoues = 0;
   finaleKingRestrictedSquares = [];
   updateFinaleDemoNextButton();
+  updateFinaleDemoToggleButton();
   resetBoardToNeutral();
   setActiveMode(null);
   const statusEl = document.getElementById("finale-status");
@@ -79,6 +80,16 @@ function updateFinaleDemoNextButton() {
   // dès que la démonstration est terminée (mat, pat ou nulle) — visible
   // immédiatement, pas seulement déduit du texte de statut.
   btn.disabled = finaleGameOver;
+}
+
+// Issue #35 : le bouton "Voir une démonstration"/"Coup suivant" reste un
+// bouton à bascule unique (finale-demo-toggle-btn) — son libellé suit
+// simplement finaleDemoActive, mis à jour en même temps que
+// updateFinaleDemoNextButton() partout où celle-ci est appelée.
+function updateFinaleDemoToggleButton() {
+  const btn = document.getElementById("finale-demo-toggle-btn");
+  if (!btn) return;
+  btn.textContent = finaleDemoActive ? "Arrêter la démonstration" : "Voir une démonstration";
 }
 
 function reprendreFinaleCoup() {
@@ -150,6 +161,7 @@ function onFinaleSelectChange() {
   finaleFenAvantCoup = null;
   finaleDemoActive = false;
   updateFinaleDemoNextButton();
+  updateFinaleDemoToggleButton();
   const statusEl = document.getElementById("finale-status");
   if (statusEl) statusEl.textContent = "Chargement de la position...";
   const inverserEl = document.getElementById("finale-inverser-camps");
@@ -176,8 +188,36 @@ function startFinaleDemo() {
   finaleDemoActive = true;
   finaleDemoCoupsJoues = 0;
   updateFinaleDemoNextButton();
+  updateFinaleDemoToggleButton();
   if (statusEl) statusEl.textContent = "Chargement de la démonstration...";
   socket.emit("finale_demo_start", { id });
+}
+
+// Issue #35 : bouton à bascule "Voir une démonstration"/"Arrêter la
+// démonstration" (finale-demo-toggle-btn, voir index.html).
+function toggleFinaleDemo() {
+  if (finaleDemoActive) {
+    stopFinaleDemo();
+  } else {
+    startFinaleDemo();
+  }
+}
+
+// Arrête la démonstration en cours et fait de la position atteinte la
+// position de jeu normale du mode finales (finale_demo_stop, app.py) — pas
+// une réinitialisation : finaleGame garde tout l'historique de la
+// démonstration (déjà tenu à jour demi-coup par demi-coup par
+// finale_demo_move), donc rien à reconstruire côté client au-delà du dernier
+// coup éventuel de l'adversaire automatique si c'était son tour.
+function stopFinaleDemo() {
+  if (!finaleActive || !finaleDemoActive || finaleWaiting) return;
+  finaleWaiting = true;
+  finaleDemoActive = false;
+  finaleFenAvantCoup = null;
+  updateFinaleDemoNextButton();
+  updateFinaleDemoToggleButton();
+  updateFinaleStatus();
+  socket.emit("finale_demo_stop", {});
 }
 
 function finaleDemoNext() {
@@ -292,6 +332,7 @@ if (typeof socket !== "undefined") {
     finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     finaleKingRestrictedSquares = data.king_restricted_squares || [];
     updateFinaleDemoNextButton();
+    updateFinaleDemoToggleButton();
     setActiveMode("finale");
 
     const descEl = document.getElementById("finale-description");
@@ -325,6 +366,7 @@ if (typeof socket !== "undefined") {
     finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     finaleKingRestrictedSquares = data.king_restricted_squares || [];
     updateFinaleDemoNextButton();
+    updateFinaleDemoToggleButton();
     setActiveMode("finale");
 
     const descEl = document.getElementById("finale-description");
@@ -391,6 +433,43 @@ if (typeof socket !== "undefined") {
       const statusEl = document.getElementById("finale-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       showGameOverBanner(data.game_over_info);
+      return;
+    }
+    updateFinaleStatus();
+  });
+
+  socket.on("finale_demo_stopped", (data) => {
+    finaleWaiting = false;
+    if (!finaleActive || !finaleGame || !data) return;
+
+    // Issue #35 : finaleGame porte déjà tout l'historique de la
+    // démonstration (accumulé demi-coup par demi-coup par finale_demo_move)
+    // — pas de reconstruction ici, seulement l'éventuel coup joué
+    // immédiatement par l'adversaire automatique si c'était son tour sur la
+    // position atteinte (voir app.py on_finale_demo_stop).
+    finaleDemoActive = false;
+    updateFinaleDemoNextButton();
+    updateFinaleDemoToggleButton();
+
+    finaleKingRestrictedSquares = data.king_restricted_squares || [];
+    if (data.uci) {
+      const move = finaleGame.move({
+        from: data.uci.slice(0, 2),
+        to: data.uci.slice(2, 4),
+        promotion: data.uci.slice(4, 5) || "q",
+      });
+      if (move) {
+        renderFinaleBoard(move.from, move.to);
+      }
+    } else {
+      renderFinaleBoard();
+    }
+
+    if (data.game_over) {
+      finaleGameOver = true;
+      const statusEl = document.getElementById("finale-status");
+      if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
+      showGameOverBanner(data.game_over_info, finaleCampAlain);
       return;
     }
     updateFinaleStatus();
