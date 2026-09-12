@@ -95,6 +95,20 @@ _ANTI_INVENTION_ADDENDUM = (
     "en question — décris le plan tel qu'il s'enchaîne réellement, coup "
     "après coup, sans raccourci qui déforme le moment où la menace se "
     "concrétise."
+    "\n\n"
+    "Vérification des cases mentionnées (issue #44) : avant de nommer "
+    "explicitement la case précise où se trouve une pièce (par exemple "
+    "\"ta dame est en b5\"), vérifie cette affirmation contre le FEN fourni "
+    "dans le contexte, case par case si nécessaire — ne la déduis JAMAIS de "
+    "mémoire, par association avec un message précédent de la même "
+    "conversation, ou par supposition sur l'endroit où une pièce \"devrait\" "
+    "se trouver après tel ou tel coup. Un message que tu as toi-même écrit "
+    "plus tôt dans la conversation n'est pas une source fiable pour "
+    "localiser une pièce maintenant : la position a pu changer depuis, ou "
+    "ce message précédent contenir lui-même une erreur. En cas de doute "
+    "réel sur la case exacte d'une pièce, décris la situation sans donner "
+    "de case précise plutôt que d'en affirmer une qui n'est pas vérifiée "
+    "contre le FEN."
 )
 
 # Complément de system prompt pour une position issue d'une démonstration
@@ -542,7 +556,8 @@ def _build_context_text(context) -> str:
     return "\n".join(lines)
 
 
-def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str) -> None:
+def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str,
+                     reponse: str = None, erreur: str = None) -> None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -552,6 +567,15 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     coach à partir de ce qui a été réellement transmis à Haiku, pas d'une
     supposition, quel que soit le mode. Best-effort : une erreur d'écriture
     ne doit jamais faire échouer la réponse au coach.
+
+    Étendu par l'issue #44 : le log n'enregistrait jusque-là que la requête
+    envoyée à Claude, jamais sa réponse réelle — un diagnostic sur une
+    affirmation erronée du coach (ex. case mentionnée incorrecte) dépendait
+    donc d'un copier-coller manuel d'Alain. `reponse`/`erreur` sont les
+    champs `text`/erreur retournés par `_call_claude` (un seul des deux non
+    None), écrits dans la même entrée que la requête plutôt que dans une
+    entrée séparée, pour garder la corrélation requête/réponse triviale à
+    relire.
     """
     if not log_path:
         return
@@ -564,6 +588,8 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
             "system_prompt": system_prompt,
             "context": context or {},
             "messages": messages,
+            "reponse": reponse,
+            "erreur": erreur,
         }
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -777,12 +803,20 @@ def get_coach_response(messages, context, coach_memory, config):
     mode_origine = (context or {}).get("mode_origine") or (
         "exercice" if (context or {}).get("mode_exercice") else "chat_libre"
     )
-    _log_coach_call((config or {}).get("coach_log_path"), prompt_sys, context, clean_messages, mode_origine)
+    log_path = (config or {}).get("coach_log_path")
 
+    # Appel loggé une seule fois, après coup (issue #44) : plus tôt, seule la
+    # requête était journalisée (avant même l'appel API) — la réponse réelle
+    # du coach n'apparaissait donc jamais dans coach_calls.log, obligeant à
+    # se fier à un copier-coller manuel d'Alain pour diagnostiquer une
+    # affirmation erronée.
     try:
         response = _call_claude(prompt_sys, clean_messages, api_key, model)
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude échoué : {e}")
+        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, erreur=str(e))
         return None, str(e)
 
-    return (response or "").strip(), None
+    response = (response or "").strip()
+    _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, reponse=response)
+    return response, None
