@@ -234,14 +234,19 @@
           </div>
           <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
 
-          <!-- ── Analyse post-partie complète (issue #41) ────────────────
-               Repère mécaniquement (delta_cp/qualite, pas d'explication
-               automatique du coach) les coups en perte d'évaluation de la
-               partie chargée ci-dessus ; cliquer un coup du rapport l'ouvre
-               en mode "partie libre" explorable (onglet Partie libre). -->
+          <!-- ── Analyse post-partie complète (issues #41/#42) ───────────
+               Repère mécaniquement (delta_cp/qualite) les coups en perte
+               d'évaluation de la partie chargée ci-dessus ; cliquer un coup
+               du rapport l'ouvre en mode "partie libre" explorable (onglet
+               Partie libre). Une fois ce rapport mécanique généré, un appel
+               dédié au coach (issue #42) choisit jusqu'à 5 coups qu'il juge
+               décisifs et fournit une explication en langage naturel pour
+               chacun ; les autres coups flagués gardent un bouton
+               "Expliquer ce coup" à la demande (pas d'appel automatique). -->
           <div style="margin-top:10px; padding-top:8px; border-top:1px solid #dde6ee;">
             <button id="game-analysis-btn" onclick="analyserPartieCourante()">Analyser cette partie</button>
             <div id="game-analysis-status" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
+            <div id="game-analysis-coach-status" style="font-size:0.8rem; color:#778; margin-top:2px; font-style:italic;"></div>
             <ul id="game-analysis-report" style="list-style:none; margin:6px 0 0; padding:0; max-height:260px; overflow-y:auto;"></ul>
           </div>
         </div>

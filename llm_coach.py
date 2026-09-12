@@ -186,6 +186,134 @@ _OPENING_SYSTEM_PROMPT = (
 )
 
 
+# Appel dédié, distinct du chat coach (issue #42, module d'analyse post-
+# partie) : comme get_opening_moves/get_training_program, une réponse
+# structurée en JSON plutôt que de la prose libre. Contrairement à un simple
+# classement mécanique par delta_cp (issue #41), c'est le coach qui choisit
+# lui-même les coups les plus instructifs parmi ceux flagués, avec pour
+# consigne explicite de rester ancré sur les données réelles transmises
+# (jamais un coup hors de la liste fournie) — même logique de garde-fou
+# anti-invention qu'ailleurs (issue #17/#22/#25), adaptée ici à un appel en
+# lot plutôt qu'à un coup unique avec PV.
+_MOVE_SELECTION_SYSTEM_PROMPT = (
+    "Tu es un coach d'échecs personnel. On te fournit la liste complète des "
+    "coups flagués (imprécision, erreur ou gaffe) d'une partie qu'Alain "
+    "vient de jouer, au format JSON — un objet par coup, avec : id (identifiant "
+    "numérique unique de ce coup dans la liste — à recopier tel quel dans ta "
+    "réponse, il ne te renseigne sur rien d'autre), camp (\"blancs\"/"
+    "\"noirs\"), coup_plein (numéro du coup plein), san et uci (le coup "
+    "réellement joué — ATTENTION, un même uci/san peut réapparaître "
+    "plusieurs fois dans la liste, par exemple lors d'échecs répétés par "
+    "va-et-vient d'une tour : c'est bien \"id\" qui identifie CE coup précis, "
+    "jamais uci ni san), meilleur_coup (le coup recommandé par Stockfish à "
+    "cette position, ou null si non disponible), qualite "
+    "(\"imprecision\"/\"erreur\"/\"blunder\"), delta_cp (perte en "
+    "centipawns par rapport au meilleur coup) et phase "
+    "(\"ouverture\"/\"milieu_de_partie\"/\"finale\"). Choisis, PARMI CETTE "
+    "LISTE UNIQUEMENT, jusqu'à 5 coups que tu juges réellement décisifs pour "
+    "l'issue ou l'apprentissage de la partie — pas nécessairement ceux à la "
+    "plus grosse perte en centipawns : un coup moins spectaculaire en "
+    "chiffre peut être plus instructif (par exemple un coup passif qui ne "
+    "participe pas à une attaque en cours, ou un échange favorable manqué). "
+    "Pour chaque coup choisi, rédige une explication courte et concrète en "
+    "langage naturel, comme un coach donnerait à l'oral (par exemple \"tu "
+    "as raté l'occasion d'un échange favorable\" ou \"ce coup est passif, "
+    "il ne participe pas à l'assaut du roque adverse\"), fondée UNIQUEMENT "
+    "sur les données fournies pour ce coup précis (camp, coup joué, "
+    "meilleur coup, phase, qualité, perte en centipawns) — n'invente jamais "
+    "de pièce, case, menace ou combinaison qui n'en serait pas déductible. "
+    "Ne cite jamais le chiffre brut de centipawns ni l'étiquette technique "
+    "(\"delta\", \"blunder\"...) dans l'explication : reformule toujours en "
+    "langage naturel. Réponds UNIQUEMENT avec un objet JSON, sans aucun "
+    "texte ni balise autour, au format exact {\"choix\": [{\"id\": 0, "
+    "\"explication\": \"...\"}, ...]} où chaque \"id\" correspond EXACTEMENT "
+    "à l'un des coups de la liste fournie (aucun id inventé, aucun autre "
+    "coup ne doit apparaître), en français."
+)
+
+
+def get_move_explanations(flagged_moves, config):
+    """Sélectionne jusqu'à 5 coups décisifs parmi les coups flagués d'une
+    partie et fournit une explication en langage naturel pour chacun (issue
+    #42, module d'explications narratives du rapport d'analyse post-partie
+    de l'issue #41) — un appel dédié, indépendant du chat coach multi-tours,
+    même pattern que get_opening_moves/get_training_program (réponse JSON
+    structurée, pas du chat libre).
+
+    Paramètres :
+      flagged_moves : liste de dicts, un par coup flagué de la partie
+                      ({"id", "uci", "san", "camp", "coup_plein", "delta_cp",
+                      "qualite", "phase", "meilleur_coup"}) — construite par
+                      l'appelant (app.py) à partir du rapport mécanique de
+                      l'issue #41. "id" doit être unique par coup : un même
+                      uci/san peut réapparaître plusieurs fois dans une
+                      partie (ex. échecs répétés par va-et-vient d'une tour,
+                      constaté en vérification réelle), donc l'uci seul ne
+                      suffit pas à réassocier sans ambiguïté le choix du
+                      coach à son coup d'origine.
+      config        : dict avec au moins "llm_api_key" et, optionnellement,
+                      "llm_model" (même convention que get_opening_moves)
+
+    Retourne (liste de {"id", "explication"}, erreur) — un seul des deux
+    est non vide/None. La liste retournée est filtrée pour ne contenir QUE
+    des id présents dans flagged_moves (garde-fou appliqué ici, pas
+    seulement dans le system prompt : jamais d'invention au-delà des coups
+    listés, même si le modèle en proposait un autre). Erreurs possibles :
+    "no_api_key", "aucun_coup_flague", "reponse_invalide", ou le message de
+    l'exception réseau.
+    """
+    api_key = (config or {}).get("llm_api_key", "")
+    if not api_key:
+        return None, "no_api_key"
+
+    if not flagged_moves:
+        return None, "aucun_coup_flague"
+
+    model = (config or {}).get("llm_model", "")
+    data_text = json.dumps(flagged_moves, ensure_ascii=False, indent=2)
+    prompt_user = f"Coups flagués de la partie (JSON) :\n{data_text}"
+
+    try:
+        raw = _call_claude(_MOVE_SELECTION_SYSTEM_PROMPT, prompt_user, api_key, model)
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
+        logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) échoué : {e}")
+        return None, str(e)
+
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        logger.warning(f"[LLM_COACH] Réponse sélection de coups décisifs non-JSON : {raw!r}")
+        return None, "reponse_invalide"
+
+    if not isinstance(parsed, dict):
+        return None, "reponse_invalide"
+
+    choix = parsed.get("choix")
+    if not isinstance(choix, list):
+        return None, "reponse_invalide"
+
+    ids_valides = {m.get("id") for m in flagged_moves if m.get("id") is not None}
+    resultat = []
+    for c in choix:
+        if not isinstance(c, dict):
+            continue
+        id_ = c.get("id")
+        explication = (c.get("explication") or "").strip()
+        if id_ in ids_valides and explication:
+            resultat.append({"id": id_, "explication": explication})
+
+    if not resultat:
+        return None, "reponse_invalide"
+
+    return resultat[:5], None
+
+
 def load_coach_memory(path) -> dict:
     """Charge le fichier de contexte JSON externe (mémoire du coach).
 

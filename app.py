@@ -274,7 +274,14 @@ def _analyse_full_game(moves_uci: list) -> list:
     Retourne une liste, un élément par demi-coup (même ordre que moves_uci) :
       {"san", "uci", "color" ("white"/"black"), "coup_plein", "delta_cp",
        "qualite", "best_move" (UCI du meilleur coup si différent du coup
-       joué, sinon None), "fen_avant"}.
+       joué, sinon None), "fen_avant", "phase"}.
+
+    "phase" (issue #42, ajouté pour le module d'explications narratives du
+    coach) reprend l'heuristique déjà utilisée par build_patterns_erreurs.py
+    (_phase) : numéro de coup plein <= 10 -> "ouverture", sinon <= 12 pièces
+    sur l'échiquier -> "finale", sinon "milieu_de_partie" — évaluée sur la
+    position AVANT le coup, comme dans build_patterns_erreurs.py. N'affecte
+    pas le calcul de delta_cp/qualite (issue #41, inchangé).
 
     Lève ValueError si un coup de moves_uci n'est pas légal sur la partie
     reconstruite depuis la position de départ standard."""
@@ -306,6 +313,9 @@ def _analyse_full_game(moves_uci: list) -> list:
         color = "white" if board.turn == chess.WHITE else "black"
         fen_avant = board.fen()
         san = board.san(move)
+        phase = "ouverture" if coup_plein <= 10 else (
+            "finale" if chess.popcount(board.occupied) <= 12 else "milieu_de_partie"
+        )
 
         board.push(move)
         eval_apres = engine_manager.evaluate(board, depth=DEPTH_ANALYSE_PARTIE)
@@ -337,6 +347,7 @@ def _analyse_full_game(moves_uci: list) -> list:
             "qualite": qualite,
             "best_move": best_move,
             "fen_avant": fen_avant,
+            "phase": phase,
         })
 
         val_avant = val_apres
@@ -369,6 +380,162 @@ def on_analyser_pgn(data):
         return
 
     emit("analyser_pgn_response", {"moves": resultats})
+
+
+def _camp_label(color: str) -> str:
+    return "blancs" if color == "white" else "noirs"
+
+
+def _meilleur_coup_san(move: dict) -> str:
+    """Convertit le "best_move" UCI d'un élément du rapport mécanique
+    (_analyse_full_game) en SAN, à partir de son "fen_avant" — best-effort,
+    chaîne vide si absent ou invalide."""
+    fen_avant = (move or {}).get("fen_avant") or ""
+    best_move_uci = (move or {}).get("best_move")
+    if not fen_avant or not best_move_uci:
+        return ""
+    try:
+        board = chess.Board(fen_avant)
+        return board.san(chess.Move.from_uci(best_move_uci))
+    except Exception:
+        return ""
+
+
+def _prepare_flagged_moves_for_coach(moves: list) -> list:
+    """Convertit les coups flagués du rapport mécanique (issue #41, tels que
+    renvoyés au client par on_analyser_pgn) au format attendu par
+    llm_coach.get_move_explanations (issue #42) : mêmes champs que ceux
+    exposés au client (san/uci/camp/coup_plein/delta_cp/qualite/phase), plus
+    meilleur_coup en SAN (calculé ici depuis fen_avant/best_move, pas
+    envoyé tel quel par le client) pour ancrer les explications sur une
+    donnée réelle plutôt que de laisser le coach en deviner un.
+
+    "id" (position du coup dans la partie, transmise par le client comme
+    "idx") sert de seule clé fiable pour réassocier le choix du coach à son
+    coup d'origine : un même uci peut réapparaître plusieurs fois dans une
+    partie (ex. échecs répétés Rh4+/Rg4+ par shuttle de tour), constaté en
+    vérification réelle sur une partie de la bibliothèque — indexer par uci
+    seul aurait fait apparaître la même explication sur plusieurs coups
+    distincts."""
+    prepared = []
+    for m in moves or []:
+        meilleur_coup = _meilleur_coup_san(m)
+        prepared.append({
+            "id": (m or {}).get("idx"),
+            "uci": (m or {}).get("uci"),
+            "san": (m or {}).get("san"),
+            "camp": _camp_label((m or {}).get("color")),
+            "coup_plein": (m or {}).get("coup_plein"),
+            "delta_cp": (m or {}).get("delta_cp"),
+            "qualite": (m or {}).get("qualite"),
+            "phase": (m or {}).get("phase"),
+            "meilleur_coup": meilleur_coup or None,
+        })
+    return prepared
+
+
+@socketio.on("analyse_choisir_coups_decisifs")
+def on_analyse_choisir_coups_decisifs(data):
+    """Étape 1 du module d'explications narratives (issue #42) : transmet au
+    coach, en un seul appel dédié (llm_coach.get_move_explanations, même
+    pattern que get_opening_moves/get_training_program), la liste complète
+    des coups flagués du rapport mécanique (issue #41, inchangé) déjà reçue
+    côté client (analyser_pgn_response) — le client la renvoie telle quelle
+    ici. Le coach choisit jusqu'à 5 coups qu'il juge réellement décisifs et
+    fournit une explication en langage naturel pour chacun ; les coups non
+    retenus restent disponibles pour "Expliquer ce coup" à la demande
+    (on_analyse_expliquer_coup ci-dessous), sans appel automatique."""
+    moves = (data or {}).get("moves") or []
+    if not moves:
+        emit("analyse_choix_coach_error", {"error": "aucun_coup_flague"})
+        return
+
+    prepared = _prepare_flagged_moves_for_coach(moves)
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
+    choix, error = llm_coach.get_move_explanations(prepared, llm_config)
+    if error:
+        emit("analyse_choix_coach_error", {"error": error})
+        return
+
+    # Réassocie chaque choix (id + explication) aux champs d'affichage du
+    # coup d'origine (uci/san/camp/coup_plein) via "idx" (position du coup
+    # dans la partie) — PAS via uci, qui peut se répéter dans une même
+    # partie (voir _prepare_flagged_moves_for_coach).
+    par_idx = {m.get("idx"): m for m in moves if m.get("idx") is not None}
+    reponse = []
+    for c in choix:
+        original = par_idx.get(c["id"])
+        if not original:
+            continue
+        reponse.append({
+            "idx": c["id"],
+            "uci": original.get("uci"),
+            "explication": c["explication"],
+            "san": original.get("san"),
+            "camp": _camp_label(original.get("color")),
+            "coup_plein": original.get("coup_plein"),
+        })
+
+    emit("analyse_choix_coach_response", {"choix": reponse})
+
+
+@socketio.on("analyse_expliquer_coup")
+def on_analyse_expliquer_coup(data):
+    """Étape 2 du module d'explications narratives (issue #42) : bouton
+    "Expliquer ce coup" à la demande, pour un coup flagué non retenu par le
+    coach à l'étape 1 — appel simple, réutilisant get_coach_response comme
+    les autres modes (contexte fen/move/verdict_qualite/verdict_delta_cp/
+    meilleur_coup déjà supporté par _build_context_text, issue #17/#20/#26),
+    pas de nouvelle logique de prompt dédiée. La réponse est réassociée
+    côté client via "idx" (position du coup dans la partie), pas via uci
+    (qui peut se répéter dans une même partie, cf.
+    _prepare_flagged_moves_for_coach)."""
+    move = data or {}
+    fen_avant = (move.get("fen_avant") or "").strip()
+    san = (move.get("san") or "").strip()
+    if not fen_avant or not san:
+        emit("analyse_expliquer_coup_error", {
+            "error": "coup_invalide", "uci": move.get("uci"), "idx": move.get("idx"),
+        })
+        return
+
+    context = {
+        "fen": fen_avant,
+        "move": san,
+        "verdict_qualite": move.get("qualite"),
+        "verdict_delta_cp": move.get("delta_cp"),
+        "meilleur_coup": _meilleur_coup_san(move),
+        # Réutilise le garde-fou _EXERCISE_SYSTEM_ADDENDUM (issue #17/#26) :
+        # verdict déjà tranché à expliquer (pas à rejuger), jamais de chiffre
+        # brut de centipawns ni d'étiquette technique ("blunder"...) cité à
+        # Alain — cohérent avec l'objectif de l'issue #42 (explications
+        # narratives, pas seulement des chiffres). mode_origine explicite
+        # ci-dessous prime sur la déduction "exercice" de llm_coach pour le
+        # logging (issue #26), donc sans effet de bord sur celui-ci.
+        "mode_exercice": True,
+        "mode_origine": "analyse_partie",
+    }
+    messages = [{
+        "role": "user",
+        "content": "Explique ce coup.",
+    }]
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+    }
+
+    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    if error:
+        emit("analyse_expliquer_coup_error", {"error": error, "uci": move.get("uci"), "idx": move.get("idx")})
+    else:
+        emit("analyse_expliquer_coup_response", {
+            "uci": move.get("uci"), "idx": move.get("idx"), "text": response,
+        })
 
 
 @socketio.on("coach_comment_on_demand")
