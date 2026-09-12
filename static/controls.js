@@ -26,7 +26,7 @@
 let activeMode = null; // null | "free" | "pedagogic" | "opening" | "finale" | "exercise" | "editor"
 
 const MODE_CAPS = {
-  free:      { abandon: () => abandonFreeGame(),         reprendre: null,                            askCoach: null,                       hasComment: false },
+  free:      { abandon: () => abandonFreeGame(),         reprendre: null,                            askCoach: () => askFreeCoach(),       hasComment: false },
   pedagogic: { abandon: () => abandonPedagogicGame(),     reprendre: () => reprendrePedagogicCoup(),  askCoach: () => askPedagogicCoach(),  hasComment: true  },
   opening:   { abandon: () => abandonOpeningGame(),       reprendre: () => reprendreOpeningCoup(),    askCoach: () => askOpeningCoach(),    hasComment: true  },
   finale:    { abandon: () => abandonFinaleGame(),        reprendre: () => reprendreFinaleCoup(),     askCoach: () => askFinaleCoach(),     hasComment: true  },

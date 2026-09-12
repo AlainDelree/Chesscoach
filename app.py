@@ -21,7 +21,13 @@ import config
 import finales
 import llm_coach
 import opening_book
-from engine_stockfish import DEPTH_EXERCICE_TEMPS_REEL, EngineManager, find_stockfish
+from engine_stockfish import (
+    DEPTH_ANALYSE_PARTIE,
+    DEPTH_EXERCICE_TEMPS_REEL,
+    EngineManager,
+    classifier_coup,
+    find_stockfish,
+)
 from socketio_pgn_handlers import register_pgn_library_handlers
 
 logging.basicConfig(level=logging.INFO)
@@ -246,6 +252,123 @@ def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
     except Exception:
         pass
     return result
+
+
+def _analyse_full_game(moves_uci: list) -> list:
+    """Analyse chaque demi-coup d'une partie une seule fois avec Stockfish, à
+    DEPTH_ANALYSE_PARTIE (issue #41, bouton "Analyser cette partie" du mode
+    Bibliothèque/Revue PGN, et point d'entrée depuis la fin d'une partie
+    pédagogique/libre) : reprend la technique à passe unique de
+    build_patterns_erreurs.py (l'évaluation "après" d'un coup sert
+    directement d'évaluation "avant" du suivant, comme dans _eval_blancs_apres
+    ci-dessus) plutôt que d'appeler evaluate_move coup par coup (qui
+    réévaluerait deux fois chaque position), pour rester synchrone sur une
+    partie complète malgré une profondeur plus élevée que celle du lot
+    d'amorçage (profondeur 10, choix de vitesse pour 280 parties).
+
+    Purement mécanique — aucun appel au coach ici (issue #41 point 2) :
+    l'objectif du programme d'entraînement est qu'Alain réfléchisse d'abord,
+    le coach restant disponible à la demande une fois un coup flagué rejoué
+    (coach_comment_on_demand, mode partie libre).
+
+    Retourne une liste, un élément par demi-coup (même ordre que moves_uci) :
+      {"san", "uci", "color" ("white"/"black"), "coup_plein", "delta_cp",
+       "qualite", "best_move" (UCI du meilleur coup si différent du coup
+       joué, sinon None), "fen_avant"}.
+
+    Lève ValueError si un coup de moves_uci n'est pas légal sur la partie
+    reconstruite depuis la position de départ standard."""
+
+    def score_val(eval_info: dict) -> int:
+        """Valeur unique (mat ou cp) du point de vue du joueur au trait,
+        pour pouvoir comparer directement deux évaluations consécutives —
+        même convention que evaluate_move (engine_stockfish.py)."""
+        if eval_info["mate"] is not None:
+            return 100000 if eval_info["mate"] > 0 else -100000
+        if eval_info["cp"] is not None:
+            return eval_info["cp"]
+        return 0
+
+    board = chess.Board()
+
+    eval_courante = engine_manager.evaluate(board, depth=DEPTH_ANALYSE_PARTIE)
+    val_avant = score_val(eval_courante)
+    pv_avant = eval_courante.get("pv") or []
+    meilleur_coup_uci_avant = pv_avant[0].uci() if pv_avant else None
+
+    resultats = []
+    for uci in moves_uci:
+        move = chess.Move.from_uci(uci)
+        if move not in board.legal_moves:
+            raise ValueError(f"Coup illégal : {uci}")
+
+        coup_plein = board.fullmove_number
+        color = "white" if board.turn == chess.WHITE else "black"
+        fen_avant = board.fen()
+        san = board.san(move)
+
+        board.push(move)
+        eval_apres = engine_manager.evaluate(board, depth=DEPTH_ANALYSE_PARTIE)
+        val_apres = score_val(eval_apres)
+        pv_apres = eval_apres.get("pv") or []
+
+        # Perte vue du point de vue du joueur qui vient de jouer (val_avant),
+        # comparée à l'évaluation après son coup (val_apres, point de vue de
+        # l'adversaire désormais au trait, donc inversée) — même formule que
+        # evaluate_move. Plafonnée comme dans build_patterns_erreurs.py : au-
+        # delà, la magnitude exacte (parfois démesurée à cause du mapping
+        # mat->cp) n'apporte plus d'info utile.
+        delta_brut = max(0, val_avant - (-val_apres))
+        delta_cp = min(delta_brut, 1000)
+        qualite = classifier_coup(delta_cp)
+
+        best_move = (
+            meilleur_coup_uci_avant
+            if meilleur_coup_uci_avant and meilleur_coup_uci_avant != uci
+            else None
+        )
+
+        resultats.append({
+            "san": san,
+            "uci": uci,
+            "color": color,
+            "coup_plein": coup_plein,
+            "delta_cp": delta_cp,
+            "qualite": qualite,
+            "best_move": best_move,
+            "fen_avant": fen_avant,
+        })
+
+        val_avant = val_apres
+        meilleur_coup_uci_avant = pv_apres[0].uci() if pv_apres else None
+
+    return resultats
+
+
+@socketio.on("analyser_pgn")
+def on_analyser_pgn(data):
+    """Bouton "Analyser cette partie" (issue #41) : analyse Stockfish
+    synchrone de la partie actuellement chargée côté client (reviewMoves, cf.
+    board.js lancerAnalyse) — une seule partie à la fois, à la demande, pas
+    un traitement par lot (voir build_patterns_erreurs.py pour l'amorçage de
+    l'historique complet). Le client envoie la liste des coups UCI de la
+    partie en revue ; voir _analyse_full_game pour le détail de l'analyse."""
+    if not engine_manager:
+        emit("analyser_pgn_error", {"error": "stockfish_indisponible"})
+        return
+
+    moves_uci = (data or {}).get("moves") or []
+    if not moves_uci:
+        emit("analyser_pgn_error", {"error": "partie_vide"})
+        return
+
+    try:
+        resultats = _analyse_full_game(moves_uci)
+    except ValueError:
+        emit("analyser_pgn_error", {"error": "partie_invalide"})
+        return
+
+    emit("analyser_pgn_response", {"moves": resultats})
 
 
 @socketio.on("coach_comment_on_demand")

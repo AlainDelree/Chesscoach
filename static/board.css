@@ -132,6 +132,16 @@
 .game-over-banner--nulle    { background: #e3edf7; color: #1a2a3a; border-color: #a0b8d0; }
 .game-over-banner--mat      { background: #fff3cd; color: #7a5c00; border-color: #ffc107; }
 
+/* Bouton "Analyser cette partie" de la bannière (issue #41, point 4) —
+   poids/taille de police normaux pour se distinguer du message de résultat
+   (700/1.15rem) qui l'entoure. */
+.game-over-banner-analyse-btn {
+  margin-left: 10px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
 /* ── Flèches d'annotation (superposées au plateau) ── */
 #arrows-svg {
   position: absolute;

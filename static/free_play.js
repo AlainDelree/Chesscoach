@@ -45,9 +45,19 @@ function abandonFreeGame() {
 }
 
 function startFreeGame() {
+  startFreeGameFromFen();
+}
+
+// Variante de startFreeGame() démarrant depuis une position donnée plutôt
+// que la position de départ standard (issue #41, point 3 : "rejouer un coup
+// flagué avec Stockfish" du rapport d'analyse de partie — réutilise le mode
+// partie libre tel quel, sans construire de nouveau mode dédié, plutôt que
+// toujours repartir de la position initiale). `fen` omis = comportement
+// inchangé de startFreeGame().
+function startFreeGameFromFen(fen) {
   ensureModeSwitchClean("free");
   hideGameOverBanner();
-  freeGame           = new Chess();
+  freeGame           = fen ? new Chess(fen) : new Chess();
   freePlayActive     = true;
   freeSelectedSquare = null;
   freeLastMove        = null;
@@ -136,6 +146,28 @@ function onFreePlayBoardClick(e) {
   }
 }
 
+// PGN de la partie libre en cours, avec des en-têtes minimaux (issue #41,
+// point d'entrée "Analyser cette partie" depuis la bannière de fin de
+// partie) — freeGame n'a jamais d'en-têtes définis en temps normal (les deux
+// camps peuvent être joués par Alain), donc générique plutôt que de deviner
+// qui a joué quoi.
+function _freeGamePgnForAnalysis() {
+  if (!freeGame) return "";
+  freeGame.header("White", "Partie libre (Blancs)", "Black", "Partie libre (Noirs)");
+  return freeGame.pgn();
+}
+
+// "Demander l'avis du coach" en mode partie libre (issue #41, point 3 :
+// requis dans le contexte d'exploration d'un coup flagué du rapport
+// d'analyse, qui réutilise ce mode tel quel) — jusqu'ici jamais câblé
+// (MODE_CAPS.free.askCoach à null, controls.js), la partie libre n'ayant
+// pas de camp_alain propre (les deux camps peuvent être joués librement) :
+// askCoachOnDemand() accepte déjà un camp_alain vide (contexte générique).
+function askFreeCoach() {
+  if (!freePlayActive || !freeGame || freeWaitingEngine) return;
+  askCoachOnDemand(freeGame.fen(), null, null);
+}
+
 function requestStockfishMove() {
   if (!freePlayActive || !freeGame || freeWaitingEngine) return;
   if (freeGame.game_over()) return;
@@ -214,7 +246,7 @@ if (typeof socket !== "undefined") {
     if (data && data.game_over) {
       const statusEl = document.getElementById("free-play-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
-      showGameOverBanner(data.game_over_info);
+      showGameOverBanner(data.game_over_info, null, () => analyserPartieDepuisPgn(_freeGamePgnForAnalysis()));
       return;
     }
 

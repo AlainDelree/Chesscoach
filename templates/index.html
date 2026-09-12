@@ -233,6 +233,17 @@
             </label>
           </div>
           <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
+
+          <!-- ── Analyse post-partie complète (issue #41) ────────────────
+               Repère mécaniquement (delta_cp/qualite, pas d'explication
+               automatique du coach) les coups en perte d'évaluation de la
+               partie chargée ci-dessus ; cliquer un coup du rapport l'ouvre
+               en mode "partie libre" explorable (onglet Partie libre). -->
+          <div style="margin-top:10px; padding-top:8px; border-top:1px solid #dde6ee;">
+            <button id="game-analysis-btn" onclick="analyserPartieCourante()">Analyser cette partie</button>
+            <div id="game-analysis-status" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
+            <ul id="game-analysis-report" style="list-style:none; margin:6px 0 0; padding:0; max-height:260px; overflow-y:auto;"></ul>
+          </div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-free">
@@ -409,6 +420,7 @@
   <script src="{{ url_for('static', filename='board.js') }}"></script>
   <script src="{{ url_for('static', filename='pgn_library.js') }}"></script>
   <script src="{{ url_for('static', filename='free_play.js') }}"></script>
+  <script src="{{ url_for('static', filename='game_analysis.js') }}"></script>
   <script src="{{ url_for('static', filename='exercise.js') }}"></script>
   <script src="{{ url_for('static', filename='pedagogic.js') }}"></script>
   <script src="{{ url_for('static', filename='opening.js') }}"></script>

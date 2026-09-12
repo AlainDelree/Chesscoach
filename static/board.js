@@ -830,8 +830,14 @@ function resetBoardToNeutral() {
 // le résultat. `campAlain` ("blancs"/"noirs"), quand connu par l'appelant,
 // permet de distinguer victoire/défaite ; omis (démonstration, partie libre)
 // il retombe sur une couleur neutre "mat" plutôt que de deviner un camp.
+//
+// `onAnalyser` (issue #41, point d'entrée "Analyser cette partie" depuis une
+// partie pédagogique/libre qui vient de se terminer) : callback optionnel,
+// ajouté sous forme de bouton dans la bannière quand fourni par l'appelant
+// (pedagogic.js/free_play.js uniquement — pas opening.js/finales.js, hors
+// périmètre de l'issue #41).
 
-function showGameOverBanner(gameOverInfo, campAlain) {
+function showGameOverBanner(gameOverInfo, campAlain, onAnalyser) {
   const el = document.getElementById("game-over-banner");
   if (!el || !gameOverInfo) return;
   let categorie = "nulle";
@@ -841,7 +847,18 @@ function showGameOverBanner(gameOverInfo, campAlain) {
       : "mat";
   }
   el.className = "game-over-banner game-over-banner--" + categorie;
-  el.textContent = gameOverInfo.message;
+  el.innerHTML = "";
+  const msg = document.createElement("span");
+  msg.textContent = gameOverInfo.message;
+  el.appendChild(msg);
+  if (typeof onAnalyser === "function") {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "game-over-banner-analyse-btn";
+    btn.textContent = "Analyser cette partie";
+    btn.onclick = onAnalyser;
+    el.appendChild(btn);
+  }
   el.style.display = "block";
 }
 

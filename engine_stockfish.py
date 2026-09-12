@@ -62,6 +62,15 @@ PEDAGOGIQUE_THINK_TIME = 0.1
 # (avant/après coup) d'evaluate_move.
 DEPTH_EXERCICE_TEMPS_REEL = 18
 
+# Profondeur du bouton "Analyser cette partie" (issue #41, mode Bibliothèque/
+# Revue PGN) : analyse synchrone d'une partie entière (40-90 demi-coups),
+# donc plus rapide que DEPTH_EXERCICE_TEMPS_REEL (une seule position) pour
+# rester utilisable en pratique, mais nettement plus profonde que la
+# profondeur 10 du lot d'amorçage de build_patterns_erreurs.py (choix de
+# vitesse pour traiter 280 parties d'un coup, non pertinent ici pour une
+# seule partie à la demande). 16 = milieu de la fourchette 14-18 demandée.
+DEPTH_ANALYSE_PARTIE = 16
+
 
 def classifier_coup(delta_cp: int) -> str:
     """Classe un coup selon la perte en centipawns."""

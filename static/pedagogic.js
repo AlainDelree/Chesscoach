@@ -101,6 +101,17 @@ function updatePedagogicStatus() {
   statusEl.textContent = text;
 }
 
+// PGN de la partie pédagogique en cours, avec en-têtes (issue #41, point
+// d'entrée "Analyser cette partie" depuis la bannière de fin de partie) —
+// pedagogicGame n'a pas d'en-têtes par défaut (chess.js).
+function _pedagogicGamePgnForAnalysis() {
+  if (!pedagogicGame) return "";
+  const white = pedagogicCampAlain === "noirs" ? "Stockfish" : "Alain";
+  const black = pedagogicCampAlain === "noirs" ? "Alain" : "Stockfish";
+  pedagogicGame.header("White", white, "Black", black);
+  return pedagogicGame.pgn();
+}
+
 function pedagogicIsAlainTurn() {
   if (!pedagogicGame) return false;
   const trait = pedagogicGame.turn() === "w" ? "blancs" : "noirs";
@@ -197,7 +208,7 @@ if (typeof socket !== "undefined") {
       pedagogicGameOver = true;
       const statusEl = document.getElementById("pedagogic-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
-      showGameOverBanner(data.game_over_info, pedagogicCampAlain);
+      showGameOverBanner(data.game_over_info, pedagogicCampAlain, () => analyserPartieDepuisPgn(_pedagogicGamePgnForAnalysis()));
       return;
     }
     updatePedagogicStatus();
