@@ -611,7 +611,25 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
         # détaillée type "explique-moi la stratégie de la Défense française") :
         # 2048 laisse la marge nécessaire pour ce genre de conseil structuré,
         # tout en restant loin de dériver vers des réponses interminables.
-        "max_tokens": 2048,
+        # Porté à 4096 (issue #47) : au-delà de la marge pour le texte de
+        # réponse, ce budget doit aussi couvrir un éventuel raisonnement
+        # adaptatif sur claude-sonnet-5 (voir "thinking" ci-dessous) — 2048
+        # pouvait être entièrement consommé par la réflexion, laissant 0
+        # token pour la réponse elle-même.
+        "max_tokens": 4096,
+        # claude-sonnet-5 exécute un raisonnement adaptatif par défaut dès que
+        # ce paramètre est omis (contrairement à Haiku, qui ne pense jamais).
+        # Ce raisonnement consomme une partie de max_tokens avant même de
+        # commencer à écrire la réponse ; sur une question simple, il pouvait
+        # occuper tout le budget et laisser une réponse entièrement vide —
+        # un seul bloc "thinking" sans aucun bloc "text" (issue #47). Un
+        # commentaire de coach aux échecs n'a pas besoin d'exposer un
+        # raisonnement séparé de la réponse elle-même (Haiku, utilisé
+        # jusqu'à l'issue #44, ne raisonnait jamais et convenait déjà à cet
+        # usage) : on désactive donc explicitement la réflexion plutôt que de
+        # simplement lui laisser plus de place, ce qui élimine la classe de
+        # problème à la racine.
+        "thinking": {"type": "disabled"},
         "system": prompt_sys,
         "messages": messages,
     }).encode("utf-8")
@@ -634,12 +652,12 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
     # de vrai problème réseau.
     with urllib.request.urlopen(req, timeout=90) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    # La liste "content" peut contenir un bloc "thinking" avant le bloc
-    # "text" — claude-sonnet-5 exécute le raisonnement adaptatif par défaut
-    # dès que le paramètre "thinking" est omis de la requête (contrairement à
-    # Haiku, qui ne pense jamais). Supposer que content[0] est le texte
-    # provoquait un KeyError('text') dans ce cas (issue #46) : on cherche
-    # plutôt le premier bloc de type "text", quelle que soit sa position.
+    # La liste "content" peut en théorie contenir un bloc "thinking" avant le
+    # bloc "text", même si "thinking" est désormais explicitement désactivé
+    # ci-dessus (issue #47) — cette recherche reste une défense en profondeur
+    # plutôt qu'une hypothèse sur la position du bloc texte. Supposer que
+    # content[0] est le texte provoquait un KeyError('text') (issue #46) : on
+    # cherche donc le premier bloc de type "text", quelle que soit sa position.
     for bloc in data["content"]:
         if bloc.get("type") == "text":
             return bloc["text"]
