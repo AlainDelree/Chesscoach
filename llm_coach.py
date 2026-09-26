@@ -625,7 +625,14 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    # 15s suffisait pour un contexte léger, mais devenait insuffisant dès que
+    # le PGN complet d'une partie longue et la mémoire de progression complète
+    # sont transmis (Bibliothèque/Revue), surtout depuis le passage à
+    # claude-sonnet-5 (latence un peu supérieure à Haiku) — timeout "the read
+    # operation timed out" observé même sur une question triviale (issue #45).
+    # 90s laisse une marge large sans bloquer indéfiniment l'interface en cas
+    # de vrai problème réseau.
+    with urllib.request.urlopen(req, timeout=90) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return data["content"][0]["text"]
 
