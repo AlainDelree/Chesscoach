@@ -651,7 +651,7 @@ function _coachRenderBubble(role, text) {
   if (empty) empty.style.display = "none";
   const bubble = document.createElement("div");
   const isUser = role === "user";
-  bubble.style.cssText = `background:${isUser ? "#e8f0f8" : "#dcecdc"}; border-radius:8px; padding:8px 12px; align-self:${isUser ? "flex-end" : "flex-start"}; max-width:88%; font-size:0.85rem; color:#1a2a3a; white-space:pre-wrap;`;
+  bubble.style.cssText = `background:${isUser ? "#e8f0f8" : "#dcecdc"}; border-radius:8px; padding:8px 12px; align-self:${isUser ? "flex-end" : "flex-start"}; max-width:88%; font-size:1.05rem; line-height:1.45; color:#1a2a3a; white-space:pre-wrap;`;
   bubble.textContent = text;
   history.appendChild(bubble);
   history.scrollTop = history.scrollHeight;
