@@ -634,7 +634,16 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
     # de vrai problème réseau.
     with urllib.request.urlopen(req, timeout=90) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    return data["content"][0]["text"]
+    # La liste "content" peut contenir un bloc "thinking" avant le bloc
+    # "text" — claude-sonnet-5 exécute le raisonnement adaptatif par défaut
+    # dès que le paramètre "thinking" est omis de la requête (contrairement à
+    # Haiku, qui ne pense jamais). Supposer que content[0] est le texte
+    # provoquait un KeyError('text') dans ce cas (issue #46) : on cherche
+    # plutôt le premier bloc de type "text", quelle que soit sa position.
+    for bloc in data["content"]:
+        if bloc.get("type") == "text":
+            return bloc["text"]
+    raise ValueError(f"Aucun bloc de type 'text' dans la réponse Claude : {data.get('content')!r}")
 
 
 def get_opening_moves(opening_name: str, config):
