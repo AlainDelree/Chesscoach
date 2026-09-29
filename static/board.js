@@ -662,7 +662,23 @@ function _coachRenderBubble(role, text) {
   bubble.style.cssText = `background:${isUser ? "#e8f0f8" : "#dcecdc"}; border-radius:8px; padding:8px 12px; align-self:${isUser ? "flex-end" : "flex-start"}; max-width:88%; font-size:1.05rem; line-height:1.45; color:#1a2a3a; white-space:pre-wrap;`;
   bubble.textContent = text;
   history.appendChild(bubble);
-  history.scrollTop = history.scrollHeight;
+  if (isUser) {
+    // Message d'Alain : comportement inchangé, on descend tout en bas
+    // (voir son message envoyé).
+    history.scrollTop = history.scrollHeight;
+  } else {
+    // Réponse du coach : afficher le DÉBUT de la réponse en haut de la
+    // zone plutôt que sa fin (issue #53). getBoundingClientRect() plutôt
+    // que bubble.offsetTop : #coach-history n'a pas de position définie,
+    // donc ses enfants n'ont pas cette div comme offsetParent (le
+    // navigateur remonte jusqu'à <body>) — offsetTop serait alors faux ici.
+    // Si la réponse est courte, le navigateur borne scrollTop à la valeur
+    // max possible, ce qui revient à tout afficher sans espace vide — pas
+    // de cas particulier à gérer pour les réponses courtes.
+    const historyRect = history.getBoundingClientRect();
+    const bubbleRect = bubble.getBoundingClientRect();
+    history.scrollTop += bubbleRect.top - historyRect.top;
+  }
 }
 
 function coachClear() {
