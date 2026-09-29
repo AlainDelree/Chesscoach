@@ -80,12 +80,20 @@ query `max-width: 900px`), le texte bascule vers une forme courte
 compteur à zéro » (dans le détail, avec confirmation `confirm()` légère)
 réinitialise le fichier entier, y compris la date de départ.
 
-Quand l'API répond que le crédit est épuisé (HTTP 403, `error.type ==
-"billing_error"`), `_call_claude` lève `CreditInsuffisantError` plutôt que la
-`ValueError` générique ; tous les gestionnaires SocketIO renvoient alors
-`error: "credit_insuffisant"` et le client affiche un message clair (bulle
-dédiée dans le chat coach, ou message inline selon le mode) avec un lien vers
-la Console pour recharger, au lieu d'une erreur technique.
+Quand l'API répond que le crédit est épuisé, `_call_claude` lève
+`CreditInsuffisantError` plutôt que la `ValueError` générique ; tous les
+gestionnaires SocketIO renvoient alors `error: "credit_insuffisant"` et le
+client affiche un message clair (bulle dédiée dans le chat coach, ou message
+inline selon le mode) avec un lien vers la Console pour recharger, au lieu
+d'une erreur technique. Détection tolérante (issue #60) plutôt que basée sur
+un unique couple (code HTTP, type) : `error.type == "billing_error"` quel que
+soit le code HTTP, ou HTTP 402, ou HTTP 400 `invalid_request_error` dont le
+message mentionne le solde/les crédits (ex. « credit balance », « Plans &
+Billing »), insensible à la casse — la forme exacte renvoyée par l'API pour
+ce cas n'est pas garantie stable dans le temps et ne peut pas être vérifiée
+sans épuiser réellement un crédit. Les vraies erreurs de permission (403
+`permission_error`) et les vraies requêtes invalides (400 sans mention de
+crédit) restent distinguées et ne déclenchent pas ce message.
 
 Chaque appel loggé dans `data/logs/coach_calls.log` porte désormais aussi son
 propre champ `usage` (tokens de cet appel précis, ou `null` si l'appel n'a
