@@ -170,7 +170,14 @@ function demanderExplicationsCoach() {
     return;
   }
   if (coachStatus) coachStatus.textContent = "Le coach choisit les coups les plus décisifs...";
-  socket.emit("analyse_choisir_coups_decisifs", { moves: flagged });
+  // white/black (issue #56) : en-têtes PGN de la partie en revue (board.js
+  // parsePgn), pour que le serveur déduise le camp d'Alain (pseudo
+  // athanatos123 ou nom "Alain") — sans cette info, le coach ne sait pas qui
+  // est Alain parmi "blancs"/"noirs" et peut attribuer à tort un coup de
+  // l'adversaire à Alain.
+  socket.emit("analyse_choisir_coups_decisifs", {
+    moves: flagged, white: reviewWhite, black: reviewBlack,
+  });
 }
 
 // Étape 2 (issue #42 point 2) : bouton "Expliquer ce coup" à la demande,
@@ -190,6 +197,10 @@ function demanderExplicationCoup(m) {
     delta_cp: m.delta_cp,
     qualite: m.qualite,
     best_move: m.best_move,
+    // white/black (issue #56) : mêmes en-têtes PGN que demanderExplicationsCoach()
+    // ci-dessus, pour que le serveur déduise le camp d'Alain.
+    white: reviewWhite,
+    black: reviewBlack,
   });
 }
 

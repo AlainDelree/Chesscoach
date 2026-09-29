@@ -465,6 +465,25 @@ def _camp_label(color: str) -> str:
     return "blancs" if color == "white" else "noirs"
 
 
+def _camp_alain_pour_analyse(data: dict) -> tuple[str, bool]:
+    """Déduit le camp d'Alain pour l'analyse post-partie (issue #56), depuis
+    les en-têtes PGN White/Black transmis par le client (board.js parsePgn,
+    reviewWhite/reviewBlack) — voir game_facts.camp_alain_from_pgn_headers
+    pour la convention exacte (pseudo athanatos123 ou nom "Alain").
+
+    Retourne (camp_alain, camp_alain_inconnu) : camp_alain vaut "blancs"/
+    "noirs" ou "" si indéterminable ; camp_alain_inconnu est True seulement
+    si au moins un en-tête a été transmis mais qu'aucun des deux ne
+    correspond à Alain (partie entre deux tiers, ou mode "partie libre" où
+    les deux camps peuvent être joués par Alain) — distinct du cas où le
+    client n'a simplement transmis aucun en-tête."""
+    white = ((data or {}).get("white") or "").strip()
+    black = ((data or {}).get("black") or "").strip()
+    camp_alain = game_facts.camp_alain_from_pgn_headers(white, black)
+    camp_alain_inconnu = bool((white or black) and not camp_alain)
+    return camp_alain, camp_alain_inconnu
+
+
 def _meilleur_coup_san(move: dict) -> str:
     """Convertit le "best_move" UCI d'un élément du rapport mécanique
     (_analyse_full_game) en SAN, à partir de son "fen_avant" — best-effort,
@@ -523,12 +542,19 @@ def on_analyse_choisir_coups_decisifs(data):
     ici. Le coach choisit jusqu'à 5 coups qu'il juge réellement décisifs et
     fournit une explication en langage naturel pour chacun ; les coups non
     retenus restent disponibles pour "Expliquer ce coup" à la demande
-    (on_analyse_expliquer_coup ci-dessous), sans appel automatique."""
+    (on_analyse_expliquer_coup ci-dessous), sans appel automatique.
+
+    camp_alain (issue #56) : déduit des en-têtes PGN White/Black transmis
+    par le client (_camp_alain_pour_analyse) — sans cette information, le
+    coach n'a aucun moyen de savoir qui est Alain parmi "blancs"/"noirs" et
+    peut attribuer à tort un coup de l'adversaire à Alain (constaté en usage
+    réel)."""
     moves = (data or {}).get("moves") or []
     if not moves:
         emit("analyse_choix_coach_error", {"error": "aucun_coup_flague"})
         return
 
+    camp_alain, _ = _camp_alain_pour_analyse(data)
     prepared = _prepare_flagged_moves_for_coach(moves)
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
@@ -536,7 +562,7 @@ def on_analyse_choisir_coups_decisifs(data):
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
     }
-    choix, error = llm_coach.get_move_explanations(prepared, llm_config)
+    choix, error = llm_coach.get_move_explanations(prepared, camp_alain, llm_config)
     _emit_usage_update()
     if error:
         emit("analyse_choix_coach_error", {"error": error})
@@ -584,12 +610,21 @@ def on_analyse_expliquer_coup(data):
         })
         return
 
+    camp_alain, camp_alain_inconnu = _camp_alain_pour_analyse(move)
     context = {
         "fen": fen_avant,
         "move": san,
         "verdict_qualite": move.get("qualite"),
         "verdict_delta_cp": move.get("delta_cp"),
         "meilleur_coup": _meilleur_coup_san(move),
+        # camp_alain (issue #56) : déduit des en-têtes PGN White/Black
+        # transmis par le client (_camp_alain_pour_analyse) — sans cette
+        # info, le coach ne peut que déduire le camp du coup depuis le FEN
+        # (trait avant le coup) mais n'a aucun moyen de savoir SI ce camp est
+        # celui d'Alain, et peut attribuer à tort un coup de l'adversaire à
+        # Alain (constaté en usage réel).
+        "camp_alain": camp_alain,
+        "camp_alain_inconnu": camp_alain_inconnu,
         # Réutilise le garde-fou _EXERCISE_SYSTEM_ADDENDUM (issue #17/#26) :
         # verdict déjà tranché à expliquer (pas à rejuger), jamais de chiffre
         # brut de centipawns ni d'étiquette technique ("blunder"...) cité à

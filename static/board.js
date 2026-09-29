@@ -366,6 +366,12 @@ let reviewFens     = [];
 let reviewMoves    = [];
 let reviewIdx      = 0;
 let _isAnalysed    = false; // true une fois l'analyse Stockfish terminée
+// En-têtes PGN White/Black de la partie chargée en revue (issue #56) — pour
+// que game_analysis.js puisse déduire le camp d'Alain (pseudo athanatos123
+// ou nom "Alain", cf. game_facts.camp_alain_from_pgn_headers côté serveur)
+// sans redemander le PGN complet à chaque appel au coach.
+let reviewWhite    = "";
+let reviewBlack    = "";
 
 function reviewPrev() {
   if (reviewIdx > 0) { reviewIdx--; renderReview(); }
@@ -548,6 +554,8 @@ function parsePgn(pgn, onLoaded) {
     reviewFens  = fens;
     reviewMoves = moves;
     reviewIdx   = fens.length - 1;
+    reviewWhite = white;
+    reviewBlack = black;
     _isAnalysed = moves.some(m => m.qualite && m.qualite !== "bon");
 
     buildBoard();

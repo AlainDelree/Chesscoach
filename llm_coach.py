@@ -29,6 +29,8 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+import game_facts
+
 logger = logging.getLogger("chesscoach.llm_coach")
 
 
@@ -158,8 +160,9 @@ _GAME_FACTS_ADDENDUM = (
     "bloc \"Faits calculés mécaniquement\" — coups numérotés avec le camp "
     "exact de chacun (Alain / adversaire), bilan matériel après chaque coup, "
     "moments clés (chaque variation matérielle d'au moins 2 points, avec qui "
-    "capture quoi et si une reprise était possible) et la position actuelle "
-    "pièce par pièce avec les cases exactes. Ce bloc est déjà calculé "
+    "capture quoi et si une reprise était possible, et la fin de partie — "
+    "mat/pat/nulle/abandon — si la partie est terminée) et la position "
+    "actuelle pièce par pièce avec les cases exactes. Ce bloc est déjà calculé "
     "mécaniquement (pas par toi) : c'est ta base factuelle sur le "
     "déroulement de cette partie, à utiliser en complément du PGN fourni — "
     "ne reconstitue jamais la partie de mémoire à partir du seul texte du "
@@ -170,6 +173,33 @@ _GAME_FACTS_ADDENDUM = (
     "demande ce qui s'est passé dans la partie (\"que s'est-il passé ?\" ou "
     "équivalent), commence ta réponse par les moments clés listés dans ce "
     "bloc."
+)
+
+# Complément de system prompt pour l'explication à la demande d'un coup
+# flagué du rapport mécanique (issue #56, on_analyse_expliquer_coup/
+# get_coach_response, mode_origine == "analyse_partie") — même famille de bug
+# que le "chat coach : bloc de faits calculés" (issue #55) et que le module
+# d'explications narratives en lot (issue #42, _MOVE_SELECTION_SYSTEM_PROMPT
+# ci-dessous) : un coup unique explicité hors de tout bloc de faits calculés
+# (pas de PGN complet transmis ici, seulement le FEN avant le coup et son
+# camp_alain) reste exposé au même risque d'attribuer un coup adverse à
+# Alain ou d'inventer un nom d'ouverture — constat en usage réel sur "10.
+# (Noirs) Bf8" présenté comme joué par Alain, et sur une ouverture nommée
+# "Française" alors qu'aucun nom d'ouverture n'était fourni en contexte.
+_ANALYSE_PARTIE_ADDENDUM = (
+    "Explication d'un coup flagué de l'analyse post-partie (issue #56) : le "
+    "champ camp_alain du contexte (ou son absence explicite ci-dessus) est "
+    "la SEULE source fiable pour savoir quel camp est celui d'Alain — "
+    "déduis le camp qui a joué le coup depuis le FEN fourni (trait avant le "
+    "coup) et ne l'attribue à Alain que si ce camp correspond exactement à "
+    "camp_alain. Si le contexte indique que le camp d'Alain est "
+    "indéterminable, ne dis JAMAIS que ce coup est \"le sien\" ou celui de "
+    "\"l'adversaire\" : décris-le uniquement par son camp (Blancs/Noirs). Si "
+    "le coup est celui de l'adversaire, explique ce qu'il offre ou permet à "
+    "Alain plutôt que de le commenter comme si Alain l'avait joué. Ne nomme "
+    "une ouverture (par exemple \"Française\", \"Sicilienne\"...) que si son "
+    "nom t'est explicitement fourni dans le contexte ; sinon décris la "
+    "structure ou l'idée des coups joués sans lui donner de nom inventé."
 )
 
 _EXERCISE_SYSTEM_ADDENDUM = (
@@ -237,43 +267,68 @@ _OPENING_SYSTEM_PROMPT = (
 # anti-invention qu'ailleurs (issue #17/#22/#25), adaptée ici à un appel en
 # lot plutôt qu'à un coup unique avec PV.
 _MOVE_SELECTION_SYSTEM_PROMPT = (
-    "Tu es un coach d'échecs personnel. On te fournit la liste complète des "
-    "coups flagués (imprécision, erreur ou gaffe) d'une partie qu'Alain "
-    "vient de jouer, au format JSON — un objet par coup, avec : id (identifiant "
-    "numérique unique de ce coup dans la liste — à recopier tel quel dans ta "
-    "réponse, il ne te renseigne sur rien d'autre), camp (\"blancs\"/"
-    "\"noirs\"), coup_plein (numéro du coup plein), san et uci (le coup "
-    "réellement joué — ATTENTION, un même uci/san peut réapparaître "
-    "plusieurs fois dans la liste, par exemple lors d'échecs répétés par "
-    "va-et-vient d'une tour : c'est bien \"id\" qui identifie CE coup précis, "
-    "jamais uci ni san), meilleur_coup (le coup recommandé par Stockfish à "
-    "cette position, ou null si non disponible), qualite "
-    "(\"imprecision\"/\"erreur\"/\"blunder\"), delta_cp (perte en "
-    "centipawns par rapport au meilleur coup) et phase "
-    "(\"ouverture\"/\"milieu_de_partie\"/\"finale\"). Choisis, PARMI CETTE "
-    "LISTE UNIQUEMENT, jusqu'à 5 coups que tu juges réellement décisifs pour "
-    "l'issue ou l'apprentissage de la partie — pas nécessairement ceux à la "
-    "plus grosse perte en centipawns : un coup moins spectaculaire en "
-    "chiffre peut être plus instructif (par exemple un coup passif qui ne "
-    "participe pas à une attaque en cours, ou un échange favorable manqué). "
-    "Pour chaque coup choisi, rédige une explication courte et concrète en "
-    "langage naturel, comme un coach donnerait à l'oral (par exemple \"tu "
-    "as raté l'occasion d'un échange favorable\" ou \"ce coup est passif, "
-    "il ne participe pas à l'assaut du roque adverse\"), fondée UNIQUEMENT "
-    "sur les données fournies pour ce coup précis (camp, coup joué, "
-    "meilleur coup, phase, qualité, perte en centipawns) — n'invente jamais "
-    "de pièce, case, menace ou combinaison qui n'en serait pas déductible. "
-    "Ne cite jamais le chiffre brut de centipawns ni l'étiquette technique "
-    "(\"delta\", \"blunder\"...) dans l'explication : reformule toujours en "
-    "langage naturel. Réponds UNIQUEMENT avec un objet JSON, sans aucun "
-    "texte ni balise autour, au format exact {\"choix\": [{\"id\": 0, "
-    "\"explication\": \"...\"}, ...]} où chaque \"id\" correspond EXACTEMENT "
-    "à l'un des coups de la liste fournie (aucun id inventé, aucun autre "
-    "coup ne doit apparaître), en français."
+    "Tu es un coach d'échecs personnel. On te fournit un objet JSON décrivant "
+    "les coups flagués (imprécision, erreur ou gaffe) d'une partie qu'Alain "
+    "vient de jouer, avec deux champs de haut niveau : \"camp_alain\" "
+    "(\"blancs\"/\"noirs\", ou null si le camp d'Alain n'a pas pu être "
+    "déterminé pour cette partie) et \"coups\" (la liste des coups flagués). "
+    "Chaque élément de \"coups\" a : id (identifiant numérique unique de ce "
+    "coup dans la liste — à recopier tel quel dans ta réponse, il ne te "
+    "renseigne sur rien d'autre), camp (\"blancs\"/\"noirs\"), \"auteur\" "
+    "(déjà calculé mécaniquement à partir de camp et camp_alain — vaut par "
+    "exemple \"Blancs (Alain)\" ou \"Noirs (adversaire)\" si camp_alain est "
+    "connu, ou simplement \"Blancs\"/\"Noirs\" si camp_alain vaut null : "
+    "RECOPIE cette information telle quelle, ne déduis ni ne recalcule "
+    "JAMAIS toi-même qui a joué un coup à partir du seul champ camp), "
+    "coup_plein (numéro du coup plein), san et uci (le coup réellement joué "
+    "— ATTENTION, un même uci/san peut réapparaître plusieurs fois dans la "
+    "liste, par exemple lors d'échecs répétés par va-et-vient d'une tour : "
+    "c'est bien \"id\" qui identifie CE coup précis, jamais uci ni san), "
+    "meilleur_coup (le coup recommandé par Stockfish à cette position, ou "
+    "null si non disponible), qualite (\"imprecision\"/\"erreur\"/"
+    "\"blunder\"), delta_cp (perte en centipawns par rapport au meilleur "
+    "coup) et phase (\"ouverture\"/\"milieu_de_partie\"/\"finale\"). "
+    "\n\n"
+    "RÈGLE ABSOLUE sur l'auteur d'un coup (issue #56) : un coup dont "
+    "l'auteur ne contient pas \"Alain\" n'est JAMAIS un coup d'Alain — ne "
+    "dis jamais \"tu as joué\", \"ton coup\" ou équivalent pour un coup de "
+    "l'adversaire. Pour un tel coup, explique plutôt ce que cette erreur ou "
+    "ce choix de l'adversaire offre ou permet à Alain (une case, une pièce, "
+    "un plan), jamais comme si Alain l'avait joué lui-même. Si camp_alain "
+    "vaut null (indéterminable), ne prête AUCUN coup à Alain ni à "
+    "\"l'adversaire\" : décris chaque coup uniquement par son camp "
+    "(Blancs/Noirs). Ne nomme JAMAIS une ouverture précise (par exemple "
+    "\"Française\", \"Sicilienne\"...) à partir des seuls coups fournis : "
+    "cette information n'est jamais incluse dans les données ci-dessus, et "
+    "une ouverture devinée depuis les premiers coups a déjà été confondue "
+    "avec une autre ouverture réelle. Si un coup se situe en phase "
+    "\"ouverture\" et que tu veux le resituer, décris la structure ou "
+    "l'idée du coup sans lui donner de nom d'ouverture inventé."
+    "\n\n"
+    "Choisis, PARMI CETTE LISTE UNIQUEMENT, jusqu'à 5 coups que tu juges "
+    "réellement décisifs pour l'issue ou l'apprentissage de la partie — pas "
+    "nécessairement ceux à la plus grosse perte en centipawns : un coup "
+    "moins spectaculaire en chiffre peut être plus instructif (par exemple "
+    "un coup passif qui ne participe pas à une attaque en cours, ou un "
+    "échange favorable manqué). Pour chaque coup choisi, rédige une "
+    "explication courte et concrète en langage naturel, comme un coach "
+    "donnerait à l'oral (par exemple \"tu as raté l'occasion d'un échange "
+    "favorable\" ou \"ce coup est passif, il ne participe pas à l'assaut du "
+    "roque adverse\"), fondée UNIQUEMENT sur les données fournies pour ce "
+    "coup précis (auteur, coup joué, meilleur coup, phase, qualité, perte "
+    "en centipawns) — n'invente jamais de pièce, case, menace ou "
+    "combinaison qui n'en serait pas déductible. Ne cite jamais le chiffre "
+    "brut de centipawns ni l'étiquette technique (\"delta\", \"blunder\"...) "
+    "dans l'explication : reformule toujours en langage naturel. Réponds "
+    "UNIQUEMENT avec un objet JSON, sans aucun texte ni balise autour, au "
+    "format exact {\"choix\": [{\"id\": 0, \"explication\": \"...\"}, ...]} "
+    "où chaque \"id\" correspond EXACTEMENT à l'un des coups de la liste "
+    "fournie (aucun id inventé, aucun autre coup ne doit apparaître), en "
+    "français."
 )
 
 
-def get_move_explanations(flagged_moves, config):
+def get_move_explanations(flagged_moves, camp_alain, config):
     """Sélectionne jusqu'à 5 coups décisifs parmi les coups flagués d'une
     partie et fournit une explication en langage naturel pour chacun (issue
     #42, module d'explications narratives du rapport d'analyse post-partie
@@ -292,6 +347,17 @@ def get_move_explanations(flagged_moves, config):
                       constaté en vérification réelle), donc l'uci seul ne
                       suffit pas à réassocier sans ambiguïté le choix du
                       coach à son coup d'origine.
+      camp_alain    : "blancs"/"noirs", ou "" si indéterminable pour cette
+                      partie (issue #56 — ex. mode "partie libre" où les deux
+                      camps peuvent être joués par Alain, ou partie importée
+                      dont aucun en-tête White/Black ne correspond à Alain).
+                      Utilisé ici pour calculer un champ "auteur" par coup
+                      (via game_facts.camp_label, réutilisé tel quel plutôt
+                      que redupliqué) : sans cette information explicite, le
+                      coach n'a aucun moyen de savoir qui est Alain parmi
+                      "blancs"/"noirs" et peut attribuer à tort un coup de
+                      l'adversaire à Alain (constaté en usage réel, "10.
+                      (Noirs) Bf8" présenté comme joué par Alain).
       config        : dict avec au moins "llm_api_key" et, optionnellement,
                       "llm_model" (même convention que get_opening_moves)
 
@@ -310,8 +376,18 @@ def get_move_explanations(flagged_moves, config):
     if not flagged_moves:
         return None, "aucun_coup_flague"
 
+    camp_alain = (camp_alain or "").strip()
+    if camp_alain not in ("blancs", "noirs"):
+        camp_alain = ""
+
     model = (config or {}).get("llm_model", "")
-    data_text = json.dumps(flagged_moves, ensure_ascii=False, indent=2)
+    coups_avec_auteur = []
+    for m in flagged_moves:
+        camp = (m.get("camp") or "").strip()
+        auteur = game_facts.camp_label(camp == "blancs", camp_alain) if camp in ("blancs", "noirs") else ""
+        coups_avec_auteur.append({**m, "auteur": auteur})
+    data_obj = {"camp_alain": camp_alain or None, "coups": coups_avec_auteur}
+    data_text = json.dumps(data_obj, ensure_ascii=False, indent=2)
     prompt_user = f"Coups flagués de la partie (JSON) :\n{data_text}"
 
     usage_path = (config or {}).get("usage_path")
@@ -509,6 +585,13 @@ def _build_context_text(context) -> str:
     # trait de la FEN, ce qui l'a déjà induit en erreur (ex. exercice où
     # Alain a les Noirs, commentaire parlant à tort de "votre roi blanc").
     camp_alain = (context.get("camp_alain") or "").strip()
+    # Camp d'Alain explicitement indéterminable (issue #56) : distinct de
+    # l'absence simple de camp_alain (modes qui ne transmettent pas ce champ
+    # du tout, ex. exercice sur position isolée) — ici la déduction a été
+    # tentée (en-têtes PGN White/Black) et a échoué, ce qui doit être dit
+    # explicitement au coach plutôt que de le laisser deviner un camp d'après
+    # le seul FEN (cause du bug source : coup adverse attribué à Alain).
+    camp_alain_inconnu = bool(context.get("camp_alain_inconnu"))
     # Mode "Exercice" (issue #7) : comparaison coup proposé / coup réellement
     # joué / meilleur coup Stockfish, plutôt qu'un chat libre sur une partie.
     coup_propose  = (context.get("coup_propose") or "").strip()
@@ -589,6 +672,14 @@ def _build_context_text(context) -> str:
     if camp_alain in ("blancs", "noirs"):
         camp_txt = "Blancs" if camp_alain == "blancs" else "Noirs"
         lines.append(f"Alain (le joueur que tu coaches) joue les {camp_txt} dans cette partie.")
+    elif camp_alain_inconnu:
+        lines.append(
+            "Camp joué par Alain dans cette partie : indéterminable à partir "
+            "des données disponibles (en-têtes PGN ne correspondant ni au "
+            "pseudo d'Alain ni au nom \"Alain\"). N'attribue donc AUCUN coup "
+            "à Alain ni à \"l'adversaire\" : décris chaque coup uniquement "
+            "par son camp (Blancs/Noirs)."
+        )
     if fen:
         lines.append(f"Position actuelle (FEN) : {fen}")
     if move:
@@ -1029,6 +1120,13 @@ def get_coach_response(messages, context, coach_memory, config):
         # ne transmet ni mode_exercice ni verdict Stockfish, ce garde-fou doit
         # donc pouvoir s'ajouter seul.
         prompt_sys = f"{prompt_sys}\n\n{_DEMONSTRATION_ADDENDUM}"
+    if (context or {}).get("mode_origine") == "analyse_partie":
+        # Indépendant des branches ci-dessus (issue #56) : l'explication à la
+        # demande d'un coup flagué (on_analyse_expliquer_coup) transmet aussi
+        # mode_exercice=True (réutilisation du garde-fou verdict Stockfish
+        # existant, issue #17/#26) — ce complément s'ajoute donc en plus,
+        # jamais à la place.
+        prompt_sys = f"{prompt_sys}\n\n{_ANALYSE_PARTIE_ADDENDUM}"
     if (context or {}).get("faits_calcules"):
         # Indépendant des branches ci-dessus (issue #55) : le bloc de faits
         # calculés peut coexister avec n'importe lequel des autres modes
