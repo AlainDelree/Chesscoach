@@ -549,7 +549,7 @@ def _meilleur_coup_san(move: dict) -> str:
         return ""
 
 
-def _prepare_flagged_moves_for_coach(moves: list) -> list:
+def _prepare_flagged_moves_for_coach(moves: list, camp_alain: str = "") -> list:
     """Convertit les coups flagués du rapport mécanique (issue #41, tels que
     renvoyés au client par on_analyser_pgn) au format attendu par
     llm_coach.get_move_explanations (issue #42) : mêmes champs que ceux
@@ -564,10 +564,23 @@ def _prepare_flagged_moves_for_coach(moves: list) -> list:
     partie (ex. échecs répétés Rh4+/Rg4+ par shuttle de tour), constaté en
     vérification réelle sur une partie de la bibliothèque — indexer par uci
     seul aurait fait apparaître la même explication sur plusieurs coups
-    distincts."""
+    distincts.
+
+    "reponse_suivante" (issue #62) : la réponse réellement jouée ensuite
+    dans la partie et sa conséquence matérielle immédiate, calculée
+    mécaniquement (game_facts.describe_reponse_suivante) depuis "uci_suivant"
+    (le coup suivant en UCI, transmis par le client depuis son rapport
+    mécanique complet — cf. static/game_analysis.js) — None si absent, si le
+    coup flagué est le dernier de la partie, ou si la réponse n'est pas une
+    capture. Sans cette donnée, le coach devait deviner la réfutation réelle
+    d'un coup flagué au lieu de la recevoir (constat réel : explication de
+    8.Qf4?? sans jamais mentionner que 8...Nxf4 capture la dame)."""
     prepared = []
     for m in moves or []:
         meilleur_coup = _meilleur_coup_san(m)
+        reponse_suivante = game_facts.describe_reponse_suivante(
+            (m or {}).get("fen_avant"), (m or {}).get("san"), (m or {}).get("uci_suivant"), camp_alain,
+        )
         prepared.append({
             "id": (m or {}).get("idx"),
             "uci": (m or {}).get("uci"),
@@ -578,6 +591,7 @@ def _prepare_flagged_moves_for_coach(moves: list) -> list:
             "qualite": (m or {}).get("qualite"),
             "phase": (m or {}).get("phase"),
             "meilleur_coup": meilleur_coup or None,
+            "reponse_suivante": reponse_suivante,
         })
     return prepared
 
@@ -605,7 +619,7 @@ def on_analyse_choisir_coups_decisifs(data):
         return
 
     camp_alain, _ = _camp_alain_pour_analyse(data)
-    prepared = _prepare_flagged_moves_for_coach(moves)
+    prepared = _prepare_flagged_moves_for_coach(moves, camp_alain)
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
@@ -668,6 +682,15 @@ def on_analyse_expliquer_coup(data):
         "verdict_qualite": move.get("qualite"),
         "verdict_delta_cp": move.get("delta_cp"),
         "meilleur_coup": _meilleur_coup_san(move),
+        # reponse_suivante (issue #62) : la réponse réellement jouée ensuite
+        # dans la partie et sa conséquence matérielle immédiate, calculée
+        # mécaniquement depuis "uci_suivant" (transmis par le client depuis
+        # son rapport mécanique complet — cf. static/game_analysis.js) —
+        # même donnée que _prepare_flagged_moves_for_coach pour l'appel en
+        # lot, ici pour l'explication à la demande d'un coup unique.
+        "reponse_suivante": game_facts.describe_reponse_suivante(
+            fen_avant, san, move.get("uci_suivant"), camp_alain,
+        ),
         # camp_alain (issue #56) : déduit des en-têtes PGN White/Black
         # transmis par le client (_camp_alain_pour_analyse) — sans cette
         # info, le coach ne peut que déduire le camp du coup depuis le FEN
@@ -793,18 +816,24 @@ def on_coach_comment_on_demand(data):
 
 
 # Budget de temps de la vérification Stockfish ciblée du chat coach (issue
-# #57, point 2) : appelée en direct dans le fil d'une réponse du coach
-# (coach_ask), donc volontairement bornée en TEMPS plutôt qu'en profondeur —
-# une profondeur fixe ne borne pas le temps de calcul sur une position
-# complexe, alors que Stockfish respecte lui-même un temps de recherche
-# donné (movetime), sans qu'un thread de timeout externe soit nécessaire.
-# Deux positions au plus (les deux derniers coups d'Alain avant le moment
-# clé), un appel evaluate_move (avant + après coup) chacune ⇒ jusqu'à 4
-# appels moteur à ce temps ; STOCKFISH_CHECK_BUDGET_TOTAL est une garde
-# globale en plus, pour ne jamais dépasser ce budget même si une position
-# individuelle traîne.
+# #57 point 2, étendu par l'issue #62) : appelée en direct dans le fil d'une
+# réponse du coach (coach_ask), donc volontairement bornée en TEMPS plutôt
+# qu'en profondeur — une profondeur fixe ne borne pas le temps de calcul sur
+# une position complexe, alors que Stockfish respecte lui-même un temps de
+# recherche donné (movetime), sans qu'un thread de timeout externe soit
+# nécessaire. Jusqu'à 4 positions désormais (deux moments — le plus grave et
+# le premier significatif s'il est distinct — deux derniers coups d'Alain
+# chacun, dédupliqués par game_facts.find_stockfish_check_targets), un appel
+# evaluate_move (avant + après coup) chacune ⇒ jusqu'à 8 appels moteur à ce
+# temps dans le pire cas ; STOCKFISH_CHECK_BUDGET_TOTAL est une garde globale
+# en plus, pour ne jamais dépasser ce budget même si une position
+# individuelle traîne — rehaussé de 4.0s à 6.0s (issue #62) pour laisser une
+# chance réelle aux positions supplémentaires sans pour autant bloquer la
+# réponse du coach ; les cibles étant ordonnées moment le plus grave
+# d'abord (cf. find_stockfish_check_targets), ce sont toujours elles qui
+# sont vérifiées en priorité si le budget est dépassé avant la fin.
 STOCKFISH_CHECK_TIME_PAR_POSITION = 0.7
-STOCKFISH_CHECK_BUDGET_TOTAL = 4.0
+STOCKFISH_CHECK_BUDGET_TOTAL = 6.0
 
 # Cache mémoire process (issue #57, point 2 : "réutiliser les résultats déjà
 # disponibles" pour ne pas relancer Stockfish à chaque tour du chat sur la
@@ -883,14 +912,19 @@ def _stockfish_eval_cible(cible: dict) -> dict | None:
 
 
 def _stockfish_check_key_moment(pgn: str, camp_alain: str, cached_flags: list | None) -> list:
-    """Vérification Stockfish ciblée (issue #57, point 2) : identifie d'abord
-    mécaniquement, sans aucun appel Stockfish (game_facts.find_stockfish_check_targets),
-    les deux derniers coups d'Alain avant le premier moment où il perd au
-    moins 2 points nets ou se fait mater, puis les fait évaluer par
-    Stockfish — en réutilisant un résultat déjà disponible cette session
-    (bouton "Analyser cette partie") quand la position correspond exactement
-    (_cached_stockfish_eval), sinon via un appel borné en temps
-    (_stockfish_eval_cible). Toujours best-effort et budgété globalement
+    """Vérification Stockfish ciblée (issue #57 point 2, étendue par l'issue
+    #62) : identifie d'abord mécaniquement, sans aucun appel Stockfish
+    (game_facts.find_stockfish_check_targets), les deux derniers coups
+    d'Alain avant chacun des deux moments désignés (le plus grave de toute
+    la partie, et le premier moment significatif s'il est distinct —
+    dédupliqués), puis les fait évaluer par Stockfish — en réutilisant un
+    résultat déjà disponible cette session (bouton "Analyser cette partie")
+    quand la position correspond exactement (_cached_stockfish_eval), sinon
+    via un appel borné en temps (_stockfish_eval_cible). Les cibles restent
+    ordonnées moment le plus grave d'abord (cf. find_stockfish_check_targets)
+    : la boucle ci-dessous les traite dans cet ordre, donc le moment le plus
+    grave est toujours vérifié en priorité si le budget est dépassé avant la
+    fin. Toujours best-effort et budgété globalement
     (STOCKFISH_CHECK_BUDGET_TOTAL) : Stockfish indisponible, ou trop lent sur
     une position, ne fait jamais échouer la réponse du coach — les lignes
     correspondantes sont simplement omises du bloc de faits."""
