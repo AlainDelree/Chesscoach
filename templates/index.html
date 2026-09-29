@@ -40,6 +40,46 @@
     }
     header .cout-api-link:hover { text-decoration: underline; }
 
+    /* Sélecteur de modèle Claude actif (issue #61) : deux boutons contigus
+       façon "segmented control", discret dans l'en-tête près du compteur de
+       tokens. ID/classe dédiés (spécificité CSS) pour échapper à la règle
+       générale "button { padding: 10px 14px; min-height: 44px; }" du bloc
+       mobile ci-dessous (issue #50), qui rendrait ces boutons bien trop
+       larges pour l'en-tête sur GSM. */
+    #llm-model-selector {
+      display: flex;
+      align-items: center;
+      border: 1px solid #3a5570;
+      border-radius: 4px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    #llm-model-selector .llm-model-btn {
+      background: none;
+      border: none;
+      padding: 3px 8px;
+      margin: 0;
+      min-height: 0;
+      color: #9fb3c8;
+      font-size: 0.72rem;
+      font-family: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #llm-model-selector .llm-model-btn + .llm-model-btn { border-left: 1px solid #3a5570; }
+    #llm-model-selector .llm-model-btn:hover:not(:disabled) { color: #cfe0f0; }
+    #llm-model-selector .llm-model-btn.active {
+      background: #3a5570;
+      color: #fff;
+      font-weight: 600;
+    }
+    #llm-model-selector .llm-model-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .llm-model-compact { display: none; }
+    @media (max-width: 900px) {
+      .llm-model-full { display: none; }
+      .llm-model-compact { display: inline; }
+    }
+
     /* Compteur de tokens discret (issue #54) — pas de notion de prix, juste
        le compte brut de tokens (entrée/sortie/cache), près du lien "Coût
        API" existant. Positionnement relatif pour ancrer le détail par
@@ -257,7 +297,20 @@
 <body>
   <header>
     <h1>ChessCoach — plateau &amp; revue de partie</h1>
-    <div style="display:flex; align-items:center; gap:12px;">
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <!-- Sélecteur de modèle Claude actif (issue #61) : Haiku (test) /
+           Sonnet (sérieux), rendu initial côté serveur à partir de
+           config.LLM_MODEL (index()), interaction gérée par llm_model.js.
+           Le choix change immédiatement tous les appels suivants, sans
+           redémarrage ni interruption de la partie ou du chat en cours. -->
+      <div id="llm-model-selector" title="Modèle Claude actif">
+        {% for model_id, label in llm_model_choices.items() %}
+        <button type="button" class="llm-model-btn{{ ' active' if model_id == llm_model_actif else '' }}"
+                data-model="{{ model_id }}" data-label="{{ label }}">
+          <span class="llm-model-full">{{ label }}</span><span class="llm-model-compact">{{ label.split(' ')[0] }}</span>
+        </button>
+        {% endfor %}
+      </div>
       <!-- Compteur de tokens discret (issue #54) : rendu initial fait côté
            serveur à partir de usage_summary (index()), mis à jour ensuite en
            direct par usage_tokens.js à chaque appel au coach. Aucun prix ni
@@ -606,6 +659,7 @@
   <script src="{{ url_for('static', filename='vendor/chess.js/chess.min.js') }}"></script>
   <script src="{{ url_for('static', filename='board.js') }}"></script>
   <script src="{{ url_for('static', filename='usage_tokens.js') }}"></script>
+  <script src="{{ url_for('static', filename='llm_model.js') }}"></script>
   <script src="{{ url_for('static', filename='pgn_library.js') }}"></script>
   <script src="{{ url_for('static', filename='free_play.js') }}"></script>
   <script src="{{ url_for('static', filename='game_analysis.js') }}"></script>

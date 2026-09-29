@@ -156,12 +156,61 @@ def on_usage_reset(_data=None):
     _emit_usage_update()
 
 
+@socketio.on("set_llm_model")
+def on_set_llm_model(data):
+    """Change le modèle Claude actif depuis le sélecteur de l'en-tête (issue
+    #61) : effet immédiat sur tous les appels suivants (config.LLM_MODEL est
+    relu à chaque appel par les handlers ci-dessous, jamais figé au
+    démarrage), persisté dans un fichier local hors du .env
+    (config.set_llm_model), sans redémarrage ni effet sur la partie ou le
+    chat en cours. model_id invalide (autre chose que les deux choix connus)
+    → no-op signalé au client, pas de changement silencieux."""
+    model_id = (data or {}).get("model", "")
+    if not config.set_llm_model(model_id):
+        emit("llm_model_error", {"error": "modele_invalide", "model": model_id})
+        return
+    emit("llm_model_changed", {
+        "model": model_id,
+        "label": config.LLM_MODEL_CHOICES.get(model_id, model_id),
+    })
+
+
+def _handle_llm_model_indisponible_si_besoin(error: str) -> None:
+    """Réagit à un refus de modèle par l'API Claude (issue #61, HTTP 404
+    "not_found_error" remonté par llm_coach en "modele_indisponible") : comme
+    il n'existe que deux choix possibles (config.LLM_MODEL_CHOICES), revenir
+    à "l'autre" est sans ambiguïté le choix précédent. Persiste ce retour en
+    arrière (config.set_llm_model) et prévient le client courant pour que le
+    sélecteur de l'en-tête et le chat reflètent immédiatement le changement,
+    plutôt que de laisser le sélecteur afficher un modèle qui ne répond plus.
+    No-op pour toute autre valeur d'erreur."""
+    if error != "modele_indisponible":
+        return
+    modele_refuse = config.LLM_MODEL
+    nouveau_modele = (
+        config.LLM_MODEL_SONNET if modele_refuse == config.LLM_MODEL_HAIKU
+        else config.LLM_MODEL_HAIKU
+    )
+    config.set_llm_model(nouveau_modele)
+    emit("llm_model_indisponible", {
+        "modele_refuse": modele_refuse,
+        "model": nouveau_modele,
+        "label": config.LLM_MODEL_CHOICES.get(nouveau_modele, nouveau_modele),
+    })
+
+
 @app.route("/")
 def index():
     return render_template(
         "index.html",
         objectifs_courants=coach_memory.get("objectifs_courants", []),
         usage_summary=llm_coach.get_usage_summary(config.USAGE_TOKENS_PATH),
+        # Sélecteur de modèle de l'en-tête (issue #61) : rendu initial fait
+        # côté serveur à partir du modèle actif (config.LLM_MODEL, déjà résolu
+        # au démarrage depuis le fichier persisté ou, à défaut, CHESSCOACH_LLM_MODEL),
+        # comme le compteur de tokens ci-dessus.
+        llm_model_actif=config.LLM_MODEL,
+        llm_model_choices=config.LLM_MODEL_CHOICES,
     )
 
 
@@ -566,6 +615,7 @@ def on_analyse_choisir_coups_decisifs(data):
     choix, error = llm_coach.get_move_explanations(prepared, camp_alain, llm_config)
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("analyse_choix_coach_error", {"error": error})
         return
 
@@ -650,6 +700,7 @@ def on_analyse_expliquer_coup(data):
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("analyse_expliquer_coup_error", {"error": error, "uci": move.get("uci"), "idx": move.get("idx")})
     else:
         emit("analyse_expliquer_coup_response", {
@@ -735,6 +786,7 @@ def on_coach_comment_on_demand(data):
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("coach_on_demand_error", {"error": error})
     else:
         emit("coach_on_demand_response", {"text": response, "meilleur_coup": meilleur_coup_san})
@@ -938,6 +990,7 @@ def on_coach_ask(data):
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("coach_error", {"error": error})
     else:
         emit("coach_response", {"text": response})
@@ -963,6 +1016,7 @@ def on_training_program_build(_data=None):
     )
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("training_program_error", {"error": error})
         return
 
@@ -1157,6 +1211,7 @@ def on_exercise_answer(data):
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("exercise_error", {"error": error})
     else:
         emit("exercise_comment", {
@@ -1320,6 +1375,7 @@ def on_pedagogic_move(data):
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("pedagogic_error", {"error": error})
     else:
         emit("pedagogic_comment", {
@@ -1391,6 +1447,7 @@ def on_opening_start(data):
     moves_san, error = llm_coach.get_opening_moves(opening_name, llm_config)
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("opening_error", {"error": error})
         return
 
@@ -1611,6 +1668,7 @@ def on_opening_move(data):
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("opening_error", {"error": error})
     else:
         emit("opening_comment", {
@@ -2084,6 +2142,7 @@ def on_finale_move(data):
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
+        _handle_llm_model_indisponible_si_besoin(error)
         emit("finale_error", {"error": error})
     else:
         emit("finale_comment", {
