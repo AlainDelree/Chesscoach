@@ -198,19 +198,28 @@ _GAME_FACTS_ADDENDUM = (
     "matérielle (brute ou nette) différent de celui écrit dans ce bloc, "
     "même par arrondi ou approximation."
     "\n\n"
-    "Vérification Stockfish ciblée (issue #57) : si le bloc contient une "
-    "section \"Vérification Stockfish ciblée\", c'est ta SEULE source pour "
-    "le meilleur coup Stockfish et la ligne principale sur les positions "
-    "concernées — ne propose et ne nomme JAMAIS un \"meilleur coup\" ou une "
-    "variante alternative sur une position de la partie si elle n'apparaît "
-    "pas explicitement dans cette section (ou ailleurs dans le bloc/PGN) ; "
-    "si cette section est absente, ou ne couvre pas le coup dont Alain te "
-    "parle (Stockfish indisponible ou trop lent au moment du calcul), dis "
-    "clairement que tu ne sais pas ce qui aurait été mieux plutôt que "
-    "d'improviser une suite. Ne cite jamais le chiffre brut de centipawns "
-    "de \"perte estimée\" (même logique que le mode \"exercice\") : "
+    "Vérification Stockfish ciblée (issue #57, étendue par l'issue #62) : si "
+    "le bloc contient une section \"Vérification Stockfish ciblée\", c'est ta "
+    "SEULE source pour le meilleur coup Stockfish et la ligne principale sur "
+    "les positions concernées — ne propose et ne nomme JAMAIS un \"meilleur "
+    "coup\" ou une variante alternative sur une position de la partie si "
+    "elle n'apparaît pas explicitement dans cette section (ou ailleurs dans "
+    "le bloc/PGN) ; si cette section est absente, ou ne couvre pas le coup "
+    "dont Alain te parle (Stockfish indisponible ou trop lent au moment du "
+    "calcul), dis clairement que tu ne sais pas ce qui aurait été mieux "
+    "plutôt que d'improviser une suite. Ne cite jamais le chiffre brut de "
+    "centipawns de \"perte estimée\" (même logique que le mode \"exercice\") : "
     "reformule toujours cette perte en langage naturel (\"cela coûte "
-    "beaucoup de matériel\", \"c'est une petite imprécision\"...)."
+    "beaucoup de matériel\", \"c'est une petite imprécision\"...). Cette "
+    "section peut contenir jusqu'à deux sous-parties, chacune explicitement "
+    "étiquetée : \"Moment le plus grave\" (la perte nette la plus importante "
+    "subie par Alain dans toute la partie, ou un mat — si Alain demande "
+    "quel a été LE tournant ou le moment décisif de la partie, désigne "
+    "toujours celui-ci, jamais un autre) et \"Premier moment significatif\" "
+    "(le premier moment de la partie où il a déjà perdu du terrain, "
+    "présenté comme une cause plus précoce mais PAS comme un second "
+    "tournant — ne le qualifie jamais de \"vrai tournant\" s'il est distinct "
+    "du moment le plus grave ci-dessus, dont la perte est plus importante)."
 )
 
 # Complément de system prompt pour l'explication à la demande d'un coup
@@ -238,6 +247,26 @@ _ANALYSE_PARTIE_ADDENDUM = (
     "une ouverture (par exemple \"Française\", \"Sicilienne\"...) que si son "
     "nom t'est explicitement fourni dans le contexte ; sinon décris la "
     "structure ou l'idée des coups joués sans lui donner de nom inventé."
+    "\n\n"
+    "Réfutation calculée du coup (issue #62) : quand le contexte fournit une "
+    "\"Réfutation calculée mécaniquement de ce coup\" (la réponse réellement "
+    "jouée ensuite dans la partie et sa conséquence matérielle), c'est la "
+    "VRAIE raison pour laquelle ce coup est flagué — explique-la en premier, "
+    "avant toute autre remarque. Ne propose JAMAIS une raison stratégique "
+    "différente ou concurrente de cette réfutation calculée (par exemple ne "
+    "dis pas \"le roque était préférable pour la sécurité du roi\" comme "
+    "raison principale si la réfutation indique qu'une pièce est capturée "
+    "sans reprise possible) : tu peux ajouter une remarque stratégique "
+    "complémentaire, mais seulement en plus de cette réfutation, jamais à sa "
+    "place. Si ce champ est absent, décris l'impact du coup à partir des "
+    "autres données fournies (verdict, meilleur coup), sans inventer de "
+    "capture ou de menace qui n'y figure pas."
+    "\n\n"
+    "Ce contexte ne porte que sur UN coup isolé, sans visibilité sur le "
+    "reste de la partie : ne le qualifie donc JAMAIS de \"vrai tournant de "
+    "la partie\", \"le moment décisif\" ou équivalent — tu ne peux pas savoir "
+    "d'ici s'il existe ailleurs dans la partie une perte plus importante "
+    "pour Alain. Décris uniquement l'impact de ce coup précis."
 )
 
 _EXERCISE_SYSTEM_ADDENDUM = (
@@ -329,7 +358,12 @@ _MOVE_SELECTION_SYSTEM_PROMPT = (
     "meilleur_coup (le coup recommandé par Stockfish à cette position, ou "
     "null si non disponible), qualite (\"imprecision\"/\"erreur\"/"
     "\"blunder\"), delta_cp (perte en centipawns par rapport au meilleur "
-    "coup) et phase (\"ouverture\"/\"milieu_de_partie\"/\"finale\"). "
+    "coup), phase (\"ouverture\"/\"milieu_de_partie\"/\"finale\") et "
+    "reponse_suivante (issue #62, calculée mécaniquement : la réponse "
+    "réellement jouée ensuite dans la partie et sa conséquence matérielle "
+    "immédiate — capture, perte nette, reprise possible ou non — ou null si "
+    "ce coup est le dernier de la partie ou si la réponse suivante n'est pas "
+    "une capture). "
     "\n\n"
     "RÈGLE ABSOLUE sur l'auteur d'un coup (issue #56) : un coup dont "
     "l'auteur ne contient pas \"Alain\" n'est JAMAIS un coup d'Alain — ne "
@@ -361,7 +395,26 @@ _MOVE_SELECTION_SYSTEM_PROMPT = (
     "en centipawns) — n'invente jamais de pièce, case, menace ou "
     "combinaison qui n'en serait pas déductible. Ne cite jamais le chiffre "
     "brut de centipawns ni l'étiquette technique (\"delta\", \"blunder\"...) "
-    "dans l'explication : reformule toujours en langage naturel. Réponds "
+    "dans l'explication : reformule toujours en langage naturel."
+    "\n\n"
+    "Réfutation calculée (issue #62) : quand reponse_suivante n'est pas null "
+    "pour un coup choisi, explique CETTE conséquence calculée EN PREMIER "
+    "dans ton explication (c'est la vraie raison, pas une supposition) — ne "
+    "propose JAMAIS une raison stratégique différente ou concurrente de "
+    "cette réfutation (par exemple ne dis pas \"le roque était préférable "
+    "pour la sécurité du roi\" comme raison principale si reponse_suivante "
+    "indique qu'une pièce est capturée sans reprise possible) : tu peux "
+    "ajouter une remarque stratégique complémentaire, mais seulement en plus "
+    "de cette réfutation, jamais à sa place."
+    "\n\n"
+    "Le \"vrai tournant\" de la partie (issue #62) : n'utilise l'expression "
+    "\"le vrai tournant de la partie\", \"le moment décisif\" ou équivalent "
+    "que pour le coup de CETTE liste dont la perte (delta_cp, ou la perte "
+    "nette indiquée par reponse_suivante si elle est plus parlante) est la "
+    "plus importante de tous les coups fournis ci-dessus — jamais pour un "
+    "autre coup, même si sa qualite vaut \"blunder\" : pour tout coup dont la "
+    "perte est nettement inférieure à celle du pire coup de la liste, décris "
+    "son impact sans cette formulation. Réponds "
     "UNIQUEMENT avec un objet JSON, sans aucun texte ni balise autour, au "
     "format exact {\"choix\": [{\"id\": 0, \"explication\": \"...\"}, ...]} "
     "où chaque \"id\" correspond EXACTEMENT à l'un des coups de la liste "
@@ -381,14 +434,18 @@ def get_move_explanations(flagged_moves, camp_alain, config):
     Paramètres :
       flagged_moves : liste de dicts, un par coup flagué de la partie
                       ({"id", "uci", "san", "camp", "coup_plein", "delta_cp",
-                      "qualite", "phase", "meilleur_coup"}) — construite par
-                      l'appelant (app.py) à partir du rapport mécanique de
-                      l'issue #41. "id" doit être unique par coup : un même
-                      uci/san peut réapparaître plusieurs fois dans une
-                      partie (ex. échecs répétés par va-et-vient d'une tour,
-                      constaté en vérification réelle), donc l'uci seul ne
-                      suffit pas à réassocier sans ambiguïté le choix du
-                      coach à son coup d'origine.
+                      "qualite", "phase", "meilleur_coup",
+                      "reponse_suivante"}) — construite par l'appelant
+                      (app.py) à partir du rapport mécanique de l'issue #41.
+                      "id" doit être unique par coup : un même uci/san peut
+                      réapparaître plusieurs fois dans une partie (ex. échecs
+                      répétés par va-et-vient d'une tour, constaté en
+                      vérification réelle), donc l'uci seul ne suffit pas à
+                      réassocier sans ambiguïté le choix du coach à son coup
+                      d'origine. "reponse_suivante" (issue #62, calculée
+                      mécaniquement par game_facts.describe_reponse_suivante)
+                      : la réponse réellement jouée ensuite dans la partie et
+                      sa conséquence matérielle, ou None.
       camp_alain    : "blancs"/"noirs", ou "" si indéterminable pour cette
                       partie (issue #56 — ex. mode "partie libre" où les deux
                       camps peuvent être joués par Alain, ou partie importée
@@ -661,6 +718,14 @@ def _build_context_text(context) -> str:
     # _EXERCISE_SYSTEM_ADDENDUM).
     verdict_qualite  = (context.get("verdict_qualite") or "").strip()
     verdict_delta_cp = context.get("verdict_delta_cp")
+    # Réfutation réelle d'un coup flagué (issue #62) : la réponse réellement
+    # jouée ensuite dans la partie et sa conséquence matérielle immédiate,
+    # calculée mécaniquement par app.py (game_facts.describe_reponse_suivante)
+    # — sans ce champ, l'explication d'un coup comme 8.Qf4?? (perd la dame
+    # sans reprise) ne mentionnait que des raisons stratégiques génériques
+    # ("le roque était préférable"), jamais la vraie raison (8...Nxf4 capture
+    # la dame) : le modèle devait la deviner au lieu de la recevoir.
+    reponse_suivante = (context.get("reponse_suivante") or "").strip()
     # Ligne (PV) réellement calculée par Stockfish pour le coup proposé et
     # pour le meilleur coup (issue #20), en SAN, depuis la même analyse à
     # depth=18 que verdict_qualite/meilleur_coup ci-dessus (cf. app.py,
@@ -793,6 +858,12 @@ def _build_context_text(context) -> str:
             f"\"{verdict_qualite}\"{detail_cp}. Ce verdict est définitif : "
             "explique pourquoi il est justifié, ne le confirme ni ne le "
             "contredis par ton propre jugement."
+        )
+    if reponse_suivante:
+        lines.append(
+            f"Réfutation calculée mécaniquement de ce coup (issue #62), à "
+            f"expliquer EN PREMIER, avant toute autre remarque stratégique : "
+            f"{reponse_suivante}"
         )
     if reprise_recente:
         lines.append(

@@ -1,5 +1,5 @@
 /*
- * game_analysis.js — ChessCoach (issues #41/#42/#59)
+ * game_analysis.js — ChessCoach (issues #41/#42/#59/#62)
  *
  * Bouton "Analyser cette partie" du panneau Bibliothèque/Revue PGN : lance
  * une analyse Stockfish synchrone (un aller-retour SocketIO, "analyser_pgn"
@@ -34,6 +34,13 @@
  * affichées directement à côté du coup dans le rapport. Les coups flagués
  * non retenus gardent un bouton "Expliquer ce coup" à la demande
  * ("analyse_expliquer_coup", un appel par clic, pas d'appel automatique).
+ *
+ * Réfutation calculée (issue #62) : chaque coup transmis au serveur pour
+ * une explication (en lot ou à la demande) porte aussi "uci_suivant", le
+ * coup suivant réellement joué dans la partie (uci du demi-coup d'après
+ * dans _gameAnalysisResults) — le serveur en déduit mécaniquement la
+ * conséquence matérielle réelle de ce coup flagué (capture, perte nette,
+ * reprise possible), pour que le coach l'explique au lieu de la deviner.
  */
 
 let _gameAnalysisBusy = false;
@@ -102,7 +109,11 @@ function renderGameAnalysisReport() {
   list.innerHTML = "";
 
   const flagged = _gameAnalysisResults
-    .map((m, i) => ({ ...m, _idx: i }))
+    // uci_suivant (issue #62) : le coup suivant réellement joué dans la
+    // partie (uci du demi-coup d'après dans _gameAnalysisResults, null s'il
+    // n'y en a pas) — transmis au serveur pour calculer mécaniquement la
+    // réfutation réelle d'un coup flagué (game_facts.describe_reponse_suivante).
+    .map((m, i) => ({ ...m, _idx: i, uci_suivant: (_gameAnalysisResults[i + 1] || {}).uci || null }))
     .filter(m => m.qualite && m.qualite !== "bon")
     .sort((a, b) => (b.delta_cp || 0) - (a.delta_cp || 0));
 
@@ -168,7 +179,8 @@ function renderGameAnalysisReport() {
 function demanderExplicationsCoach() {
   const coachStatus = document.getElementById("game-analysis-coach-status");
   const flagged = _gameAnalysisResults
-    .map((m, i) => ({ ...m, idx: i }))
+    // uci_suivant (issue #62) : voir renderGameAnalysisReport ci-dessus.
+    .map((m, i) => ({ ...m, idx: i, uci_suivant: (_gameAnalysisResults[i + 1] || {}).uci || null }))
     .filter(m => m.qualite && m.qualite !== "bon");
   if (!flagged.length) {
     if (coachStatus) coachStatus.textContent = "";
@@ -202,6 +214,8 @@ function demanderExplicationCoup(m) {
     delta_cp: m.delta_cp,
     qualite: m.qualite,
     best_move: m.best_move,
+    // uci_suivant (issue #62) : voir renderGameAnalysisReport ci-dessus.
+    uci_suivant: m.uci_suivant,
     // white/black (issue #56) : mêmes en-têtes PGN que demanderExplicationsCoach()
     // ci-dessus, pour que le serveur déduise le camp d'Alain.
     white: reviewWhite,

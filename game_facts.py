@@ -55,6 +55,27 @@ Alain (Blancs) :
     appel Stockfish direct (cf. en-tête ci-dessus) : il ne fait que désigner
     QUELLES positions mériteraient une vérification, jamais le calcul
     lui-même.
+
+Ajouté par l'issue #62, constat sur la même partie pédagogique réelle
+(Alain Blancs) : le "premier moment significatif" (6...Nxd5/7.Qxd2, perte
+nette de 2 points) n'était pas le tournant réel de la partie — 8.Qf4?? perd
+ensuite la dame sans aucune reprise (9 points), et le chat comme l'analyse
+manuelle ne s'accordaient pas sur lequel des deux était "le vrai tournant" :
+  - find_stockfish_check_targets cible désormais AUSSI le moment de plus
+    grande perte nette de la partie (ou le mat), pas seulement le premier
+    moment qui franchit le seuil — jusqu'à deux moments distincts, le plus
+    grave toujours en premier (donc toujours vérifié en priorité si le
+    budget de temps de l'appelant est dépassé avant la fin), chaque cible
+    étiquetée "plus_grave"/"premier_significatif", en dédupliquant les
+    positions communes aux deux moments ;
+  - describe_reponse_suivante : pour l'explication d'un coup flagué
+    (get_move_explanations/get_coach_response, llm_coach.py), calcule
+    mécaniquement la réponse réellement jouée ensuite dans la partie et sa
+    conséquence matérielle immédiate (capture, solde net après reprise
+    éventuelle) — sans cette donnée, l'explication de 8.Qf4?? se limitait à
+    "le roque était préférable pour la sécurité du roi", sans jamais
+    mentionner que 8...Nxf4 capture la dame sans reprise possible : le
+    modèle devait deviner la réfutation réelle plutôt que la recevoir.
 """
 
 import io
@@ -270,25 +291,107 @@ def _decrit_fin_de_partie(numero: str, san: str, est_blanc_qui_joue: bool, camp_
     return None
 
 
+def describe_reponse_suivante(fen_avant: str, san_coup: str, uci_reponse, camp_alain: str) -> str | None:
+    """Calcule mécaniquement (python-chess, jamais Stockfish, issue #62) la
+    réponse réellement jouée ensuite dans la partie après un coup flagué, et
+    sa conséquence matérielle immédiate si elle en a une — pour que
+    l'explication d'un coup flagué (get_move_explanations/get_coach_response,
+    llm_coach.py) reçoive la réfutation réelle de la partie plutôt que de
+    devoir la deviner (constat réel : l'explication de 8.Qf4?? disait
+    seulement que "le roque était préférable pour la sécurité du roi", sans
+    jamais mentionner que 8...Nxf4 capture la dame sans reprise possible).
+
+    fen_avant : position AVANT le coup flagué. san_coup : ce coup flagué, en
+    notation SAN. uci_reponse : le coup suivant réellement joué dans la
+    partie, en UCI (transmis par l'appelant depuis le rapport mécanique
+    complet de la partie, PAS recalculé ici) — falsy si le coup flagué est
+    le dernier de la partie.
+
+    Retourne None si uci_reponse est absent, si san_coup/uci_reponse ne sont
+    pas légaux sur les positions attendues, ou si cette réponse n'est pas
+    une capture (pas de conséquence matérielle immédiate à signaler ici, les
+    menaces positionnelles restent à l'appréciation du coach) — jamais une
+    supposition."""
+    fen_avant = (fen_avant or "").strip()
+    san_coup = (san_coup or "").strip()
+    if not fen_avant or not san_coup or not uci_reponse:
+        return None
+    try:
+        board = chess.Board(fen_avant)
+        coup = board.parse_san(san_coup)
+        board.push(coup)
+        move_reponse = chess.Move.from_uci(uci_reponse)
+        if move_reponse not in board.legal_moves or not board.is_capture(move_reponse):
+            return None
+
+        est_blanc_reponse = board.turn == chess.WHITE
+        w_avant, b_avant = _materiel(board)
+        case_arrivee = move_reponse.to_square
+        piece_capturee = board.piece_at(case_arrivee)
+        if piece_capturee is None and board.is_en_passant(move_reponse):
+            piece_capturee = chess.Piece(chess.PAWN, not est_blanc_reponse)
+        if piece_capturee is None:
+            return None
+        san_reponse = board.san(move_reponse)
+
+        board.push(move_reponse)
+        w_apres, b_apres = _materiel(board)
+        variation = abs(_variation_materielle(w_avant, b_avant, w_apres, b_apres))
+        solde_net = _solde_net_apres_capture(board, case_arrivee, variation)
+        nom_piece = _NOM_PIECE.get(piece_capturee.piece_type, "une pièce")
+        label_qui_joue = camp_label(est_blanc_reponse, camp_alain)
+        label_perdant = camp_label(not est_blanc_reponse, camp_alain)
+        if solde_net is not None:
+            return (
+                f"réponse réellement jouée ensuite dans la partie : {san_reponse} "
+                f"({label_qui_joue}) capture {nom_piece} de {label_perdant} ; reprise possible "
+                f"ensuite pour {label_perdant}, solde net {solde_net:+d} points pour "
+                f"{label_perdant} — pas une perte sèche de {variation} points."
+            )
+        return (
+            f"réponse réellement jouée ensuite dans la partie : {san_reponse} "
+            f"({label_qui_joue}) capture {nom_piece} de {label_perdant}, perte nette de "
+            f"{variation} points pour {label_perdant}, aucune reprise possible."
+        )
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] describe_reponse_suivante a échoué : {e}")
+        return None
+
+
 def find_stockfish_check_targets(pgn_text: str, camp_alain: str) -> list:
     """Identifie, SANS appeler Stockfish (ce module n'en fait jamais l'appel
-    direct, voir en-tête), les positions à vérifier par Stockfish pour le
-    premier moment où Alain perd au moins _SEUIL_MOMENT_CLE points nets
-    (après reprise mécanique éventuelle, cf. _solde_net_apres_capture) ou se
-    fait mater (issue #57, point 2) — le premier de la partie, jamais le plus
-    spectaculaire plus tard : c'est la cause racine la plus utile
-    pédagogiquement, et la seule qui reste sans ambiguïté quand plusieurs
-    moments qualifient.
+    direct, voir en-tête), les positions à vérifier par Stockfish pour
+    jusqu'à DEUX moments de la partie (issue #62) :
+      - "plus_grave" : le moment où Alain subit la plus grande perte nette
+        (après reprise mécanique éventuelle, cf. _solde_net_apres_capture),
+        ou un mat (toujours considéré comme le plus grave possible, quelle
+        que soit la perte matérielle) — le vrai tournant pédagogique, même
+        s'il survient après un premier accroc moins grave ;
+      - "premier_significatif" : le premier moment de la partie où Alain
+        perd déjà au moins _SEUIL_MOMENT_CLE points nets ou se fait mater —
+        la cause racine la plus précoce, utile même quand elle n'est pas la
+        plus grave. Omis du résultat s'il coïncide avec le moment le plus
+        grave (rien à dédupliquer dans ce cas).
+    Seuls les moments qui franchissent déjà _SEUIL_MOMENT_CLE (ou un mat)
+    sont candidats aux deux labels : "plus_grave" n'est jamais un accroc
+    mineur resté sous le seuil.
 
-    Retourne jusqu'à 2 positions, dans l'ordre chronologique : le dernier
-    coup d'Alain avant ce moment (celui qui l'a permis), et celui d'avant —
-    jamais le coup du moment clé lui-même, qui est nécessairement celui de
-    l'adversaire (une perte de matériel pour Alain ou un mat contre lui ne
-    peut être infligé que par un coup adverse). Chaque élément :
-    {"fen_avant": str, "san": str, "numero": str, "coup_plein": int,
-    "camp": "blancs"/"noirs"} — fen_avant est la position AVANT ce coup
-    d'Alain, à transmettre telle quelle à Stockfish par l'appelant (app.py,
-    qui détient engine_manager).
+    Pour chaque moment retenu, les deux derniers coups d'Alain qui le
+    précèdent (celui qui l'a permis, et celui d'avant) — jamais le coup du
+    moment lui-même, qui est nécessairement celui de l'adversaire (une perte
+    de matériel pour Alain ou un mat contre lui ne peut être infligé que par
+    un coup adverse). Le moment le plus grave est toujours listé en premier
+    (pour que l'appelant le vérifie en priorité si son budget de temps est
+    dépassé avant la fin, cf. app.py _stockfish_check_key_moment) ; les
+    positions déjà couvertes par le moment le plus grave ne sont jamais
+    répétées pour le premier moment significatif.
+
+    Retourne une liste d'au plus 4 éléments (2 par moment, avant
+    déduplication) : {"fen_avant": str, "san": str, "numero": str,
+    "coup_plein": int, "camp": "blancs"/"noirs", "moment":
+    "plus_grave"/"premier_significatif"} — fen_avant est la position AVANT
+    ce coup d'Alain, à transmettre telle quelle à Stockfish par l'appelant
+    (app.py, qui détient engine_manager).
 
     Repli silencieux ([]) si le PGN est illisible, camp_alain n'est pas
     connu, ou aucun moment de cette gravité n'est trouvé dans la partie."""
@@ -308,7 +411,9 @@ def find_stockfish_check_targets(pgn_text: str, camp_alain: str) -> list:
     est_blanc_alain = camp_alain == "blancs"
     historique = []
     w_avant, b_avant = _materiel(board)
-    moment_index = None
+    premier_index = None
+    plus_grave_index = None
+    plus_grave_perte = None
 
     try:
         for i, move in enumerate(game.mainline_moves()):
@@ -335,36 +440,52 @@ def find_stockfish_check_targets(pgn_text: str, camp_alain: str) -> list:
             })
             w_apres, b_apres = _materiel(board)
 
-            if moment_index is None and est_blanc != est_blanc_alain:
+            if est_blanc != est_blanc_alain:
                 # Le coup qui inflige la perte/le mat est nécessairement
                 # celui de l'adversaire (est_blanc != est_blanc_alain) : un
                 # coup d'Alain lui-même ne peut pas le faire perdre du
                 # matériel net ni le mater à son propre trait.
+                perte = None
                 if board.is_checkmate():
-                    moment_index = i
+                    perte = float("inf")
                 elif piece_capturee is not None:
                     variation = abs(_variation_materielle(w_avant, b_avant, w_apres, b_apres))
                     solde_net = _solde_net_apres_capture(board, case_arrivee, variation)
-                    perte_nette_alain = -solde_net if solde_net is not None else variation
-                    if perte_nette_alain >= _SEUIL_MOMENT_CLE:
-                        moment_index = i
+                    perte = -solde_net if solde_net is not None else variation
+                if perte is not None and perte >= _SEUIL_MOMENT_CLE:
+                    if premier_index is None:
+                        premier_index = i
+                    if plus_grave_perte is None or perte > plus_grave_perte:
+                        plus_grave_perte = perte
+                        plus_grave_index = i
 
             w_avant, b_avant = w_apres, b_apres
     except Exception as e:
         logger.warning(f"[GAME_FACTS] find_stockfish_check_targets : rejeu interrompu : {e}")
         return []
 
-    if moment_index is None:
+    if plus_grave_index is None:
         return []
 
-    coups_alain = [h for h in historique[:moment_index + 1] if h["est_blanc"] == est_blanc_alain]
-    return [
-        {
-            "fen_avant": c["fen_avant"], "san": c["san"], "numero": c["numero"],
-            "coup_plein": c["coup_plein"], "camp": camp_alain,
-        }
-        for c in coups_alain[-2:]
-    ]
+    def _cibles_pour(moment_index: int, label: str) -> list:
+        coups_alain = [h for h in historique[:moment_index + 1] if h["est_blanc"] == est_blanc_alain]
+        return [
+            {
+                "fen_avant": c["fen_avant"], "san": c["san"], "numero": c["numero"],
+                "coup_plein": c["coup_plein"], "camp": camp_alain, "moment": label,
+            }
+            for c in coups_alain[-2:]
+        ]
+
+    resultats = _cibles_pour(plus_grave_index, "plus_grave")
+    if premier_index is not None and premier_index != plus_grave_index:
+        deja_vues = {c["fen_avant"] for c in resultats}
+        for c in _cibles_pour(premier_index, "premier_significatif"):
+            if c["fen_avant"] not in deja_vues:
+                resultats.append(c)
+                deja_vues.add(c["fen_avant"])
+
+    return resultats
 
 
 def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | None = None,
@@ -381,10 +502,11 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
          matériel restant, mention explicite si un camp n'a plus de dame ;
       4. si fourni, les coups flagués par une analyse mécanique Stockfish
          déjà effectuée cette session (bouton "Analyser cette partie") ;
-      5. si fourni (issue #57, point 2), la vérification Stockfish ciblée sur
-         les deux coups d'Alain qui précèdent le moment clé le plus
-         significatif contre lui (voir find_stockfish_check_targets) —
-         calculée par l'appelant (app.py), jamais par ce module.
+      5. si fourni (issue #57/#62), la vérification Stockfish ciblée sur les
+         deux coups d'Alain qui précèdent chacun des deux moments (le plus
+         grave, et le premier significatif s'il est différent) désignés par
+         find_stockfish_check_targets — calculée par l'appelant (app.py),
+         jamais par ce module.
 
     Repli silencieux ("") si le PGN est vide/illisible ou si camp_alain n'est
     pas "blancs"/"noirs" : le contexte reste utilisable sans ce bloc plutôt
@@ -518,14 +640,15 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
             )
 
     if stockfish_check:
-        lignes_sf = []
+        par_moment = {"plus_grave": [], "premier_significatif": []}
         for c in stockfish_check:
             if not isinstance(c, dict):
                 continue
             numero  = c.get("numero")
             san     = (c.get("san") or "").strip()
             camp    = (c.get("camp") or "").strip()
-            if not san or numero is None:
+            moment  = (c.get("moment") or "").strip()
+            if not san or numero is None or moment not in par_moment:
                 continue
             camp_txt = camp_label(camp == "blancs", camp_alain) if camp in ("blancs", "noirs") else ""
             segs = [f"coup joué {san}{(' (' + camp_txt + ')') if camp_txt else ''}"]
@@ -538,15 +661,28 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
             ligne_principale = (c.get("ligne_principale") or "").strip()
             if ligne_principale:
                 segs.append(f"ligne principale {ligne_principale}")
-            lignes_sf.append(f"Coup {numero} {san} : " + " ; ".join(segs))
-        if lignes_sf:
+            par_moment[moment].append(f"Coup {numero} {san} : " + " ; ".join(segs))
+
+        blocs = []
+        if par_moment["plus_grave"]:
+            blocs.append(
+                "Moment le plus grave (perte nette la plus importante subie par Alain, ou mat "
+                "subi, dans toute cette partie — LE tournant si Alain demande lequel) :\n"
+                + "\n".join(par_moment["plus_grave"])
+            )
+        if par_moment["premier_significatif"]:
+            blocs.append(
+                "Premier moment significatif (le premier de la partie où Alain a perdu au "
+                f"moins {_SEUIL_MOMENT_CLE} points nets ou s'est fait mater — distinct du "
+                "moment le plus grave ci-dessus, pas un second tournant) :\n"
+                + "\n".join(par_moment["premier_significatif"])
+            )
+        if blocs:
             parties.append(
-                "Vérification Stockfish ciblée (issue #57), calcul court et borné, sur les "
-                "deux derniers coups d'Alain qui précèdent le moment clé le plus significatif "
-                "contre lui dans cette partie (perte nette d'au moins "
-                f"{_SEUIL_MOMENT_CLE} points ou mat subi) — absente si Stockfish était "
-                "indisponible ou trop lent au moment du calcul, sans que cela soit une erreur :"
-                "\n" + "\n".join(lignes_sf)
+                "Vérification Stockfish ciblée (issue #62), calcul court et borné, sur les "
+                "deux derniers coups d'Alain qui précèdent chacun des moments ci-dessous — "
+                "absente si Stockfish était indisponible ou trop lent au moment du calcul, "
+                "sans que cela soit une erreur :\n\n" + "\n\n".join(blocs)
             )
 
     return "\n\n".join(parties)
