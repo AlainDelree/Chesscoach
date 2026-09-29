@@ -153,6 +153,25 @@ _DEMONSTRATION_ADDENDUM = (
 # chaleureux et pédagogique — l'ancrage sur Stockfish doit rendre le coach
 # plus fiable, pas plus froid. Le garde-fou anti-invention (issue #25/#26)
 # lui-même est mutualisé avec les autres modes via _ANTI_INVENTION_ADDENDUM.
+_GAME_FACTS_ADDENDUM = (
+    "Faits calculés sur cette partie (issue #55) : le contexte contient un "
+    "bloc \"Faits calculés mécaniquement\" — coups numérotés avec le camp "
+    "exact de chacun (Alain / adversaire), bilan matériel après chaque coup, "
+    "moments clés (chaque variation matérielle d'au moins 2 points, avec qui "
+    "capture quoi et si une reprise était possible) et la position actuelle "
+    "pièce par pièce avec les cases exactes. Ce bloc est déjà calculé "
+    "mécaniquement (pas par toi) : c'est ta base factuelle sur le "
+    "déroulement de cette partie, à utiliser en complément du PGN fourni — "
+    "ne reconstitue jamais la partie de mémoire à partir du seul texte du "
+    "PGN. N'attribue JAMAIS un coup, une capture ou une pièce au mauvais "
+    "camp, et ne cite JAMAIS un coup, une capture, une reprise ou une pièce "
+    "qui n'apparaît pas explicitement dans ce bloc ou dans le PGN. En cas de "
+    "doute réel, dis que tu n'es pas sûr plutôt que d'improviser. Si Alain "
+    "demande ce qui s'est passé dans la partie (\"que s'est-il passé ?\" ou "
+    "équivalent), commence ta réponse par les moments clés listés dans ce "
+    "bloc."
+)
+
 _EXERCISE_SYSTEM_ADDENDUM = (
     "Mode \"exercice\" en cours : Alain s'entraîne sur une position tirée "
     "d'une de ses erreurs passées. Quand un verdict Stockfish est fourni "
@@ -559,6 +578,13 @@ def _build_context_text(context) -> str:
     # avant ce correctif).
     partie_terminee = bool(context.get("partie_terminee"))
     resultat_partie = (context.get("resultat_partie") or "").strip()
+    # Bloc de faits calculés mécaniquement côté serveur avec python-chess
+    # (issue #55, cf. game_facts.py/app.py _enrich_context_with_game_facts) :
+    # coups numérotés/camp explicite/bilan matériel, moments clés, position
+    # actuelle pièce par pièce — pour ne plus faire relire le PGN en texte
+    # au modèle, source directe de coups attribués au mauvais camp ou
+    # d'échanges inventés (voir _GAME_FACTS_ADDENDUM plus haut).
+    faits_calcules = (context.get("faits_calcules") or "").strip()
     lines = []
     if camp_alain in ("blancs", "noirs"):
         camp_txt = "Blancs" if camp_alain == "blancs" else "Noirs"
@@ -677,6 +703,8 @@ def _build_context_text(context) -> str:
             "qui vient de se passer, réponds à partir du PGN complet "
             "ci-dessous, ne dis jamais qu'aucun coup n'a été joué.".format(detail=detail)
         )
+    if faits_calcules:
+        lines.append(faits_calcules)
     if pgn:
         lines.append(f"PGN de la partie :\n{pgn}")
     return "\n".join(lines)
@@ -1001,6 +1029,12 @@ def get_coach_response(messages, context, coach_memory, config):
         # ne transmet ni mode_exercice ni verdict Stockfish, ce garde-fou doit
         # donc pouvoir s'ajouter seul.
         prompt_sys = f"{prompt_sys}\n\n{_DEMONSTRATION_ADDENDUM}"
+    if (context or {}).get("faits_calcules"):
+        # Indépendant des branches ci-dessus (issue #55) : le bloc de faits
+        # calculés peut coexister avec n'importe lequel des autres modes
+        # (ex. pédagogique avec verdict Stockfish sur le coup courant, ET
+        # faits calculés sur la partie en cours).
+        prompt_sys = f"{prompt_sys}\n\n{_GAME_FACTS_ADDENDUM}"
 
     memory_text = _build_memory_text(coach_memory)
     if memory_text:

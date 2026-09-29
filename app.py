@@ -20,6 +20,7 @@ from flask_socketio import SocketIO, emit
 
 import config
 import finales
+import game_facts
 import llm_coach
 import opening_book
 from engine_stockfish import (
@@ -703,6 +704,44 @@ def on_coach_comment_on_demand(data):
         emit("coach_on_demand_response", {"text": response, "meilleur_coup": meilleur_coup_san})
 
 
+def _enrich_context_with_game_facts(context: dict) -> dict:
+    """Ajoute le bloc de faits calculés mécaniquement avec python-chess
+    (issue #55, game_facts.py) au contexte du chat libre, pour les modes
+    interactifs qui transmettent un PGN et un camp_alain — partie libre,
+    pédagogique, ouverture, finales (cf. board.js coachBuildContext, qui ne
+    transmet camp_alain que pour ces modes-là, pas pour la revue de la
+    bibliothèque PGN, volontairement hors périmètre de l'issue #55).
+
+    Exclut explicitement le mode exercice (déjà ancré sur un verdict
+    Stockfish, pas de PGN transmis dans ce cas de toute façon) et une
+    démonstration Stockfish-contre-Stockfish (issue #29) : aucun camp n'y
+    est réellement "Alain", étiqueter les coups comme les siens irait à
+    l'encontre de _DEMONSTRATION_ADDENDUM (llm_coach.py).
+
+    Best-effort : une erreur de calcul ne doit jamais faire échouer la
+    réponse du coach, le contexte est alors renvoyé inchangé.
+    """
+    context = context or {}
+    pgn = (context.get("pgn") or "").strip()
+    camp_alain = (context.get("camp_alain") or "").strip()
+    if not pgn or camp_alain not in ("blancs", "noirs"):
+        return context
+    if context.get("mode_exercice") or context.get("mode_demonstration"):
+        return context
+    try:
+        faits = game_facts.build_game_facts_text(
+            pgn, camp_alain, flagged_moves=context.get("analyse_mecanique_flags")
+        )
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] Construction du contexte échouée (issue #55) : {e}")
+        return context
+    if not faits:
+        return context
+    enrichi = dict(context)
+    enrichi["faits_calcules"] = faits
+    return enrichi
+
+
 @socketio.on("coach_ask")
 def on_coach_ask(data):
     """Relaie un tour de conversation au coach LLM (llm_coach.py).
@@ -712,7 +751,7 @@ def on_coach_ask(data):
     "coach_response"/"coach_error" lisent data.text / data.error).
     """
     messages = data.get("messages", [])
-    context = data.get("context", {})
+    context = _enrich_context_with_game_facts(data.get("context", {}))
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,

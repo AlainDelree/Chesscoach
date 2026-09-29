@@ -582,6 +582,33 @@ const _MODE_ORIGINE_LABELS = {
   exercise: "exercice",
 };
 
+// Rapproche le rapport mécanique de la dernière analyse "Analyser cette
+// partie" (_gameAnalysisResults, game_analysis.js — reste en mémoire tant
+// que la page n'est pas rechargée, quel que soit l'onglet actif depuis) de
+// la partie réellement en cours dans le mode interactif actif, coup à coup
+// (même longueur, mêmes SAN dans le même ordre) : une correspondance
+// partielle ou une partie différente ne doit jamais être transmise comme si
+// elle décrivait la partie en cours (issue #55 point 4). Retourne [] si
+// aucune analyse en mémoire ou si elle ne correspond pas à cette partie.
+function _coachAnalysisFlaggedMoves() {
+  if (typeof _gameAnalysisResults === "undefined" || !_gameAnalysisResults.length) return [];
+  if (typeof getActiveModeMoves !== "function") return [];
+  const liveMoves = getActiveModeMoves();
+  if (!liveMoves || liveMoves.length !== _gameAnalysisResults.length) return [];
+  for (let i = 0; i < liveMoves.length; i++) {
+    if (liveMoves[i].san !== _gameAnalysisResults[i].san) return [];
+  }
+  return _gameAnalysisResults
+    .filter(m => m.qualite && m.qualite !== "bon")
+    .map(m => ({
+      coup_plein: m.coup_plein,
+      san: m.san,
+      camp: m.color === "white" ? "blancs" : "noirs",
+      delta_cp: m.delta_cp,
+      qualite: m.qualite,
+    }));
+}
+
 function coachBuildContext() {
   // Chat libre pendant un mode interactif en cours (issue #15 point 3) : le
   // coach doit connaître la position réelle du mode actif (activeMode, cf.
@@ -604,6 +631,15 @@ function coachBuildContext() {
         camp_alain: state.campAlain || "",
         mode_origine: modeOrigine,
       };
+      // Coups flagués par une analyse mécanique Stockfish déjà effectuée
+      // cette session (bouton "Analyser cette partie", issue #55 point 4) :
+      // transmis au bloc de faits calculés côté serveur (game_facts.py) s'ils
+      // correspondent bien à LA partie en cours (mêmes coups, même ordre) —
+      // jamais ceux d'une autre partie analysée plus tôt dans la session.
+      if (avecHistorique) {
+        const flagges = _coachAnalysisFlaggedMoves();
+        if (flagges && flagges.length) ctx.analyse_mecanique_flags = flagges;
+      }
       // Partie terminée par abandon (issue #52) : sans ce signal explicite,
       // le chat libre sollicité juste après ne sait pas que la partie est
       // finie — voir _build_context_text (llm_coach.py).
