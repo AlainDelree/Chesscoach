@@ -2,6 +2,14 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
+  <!-- Issue #50 : sans cette balise, un mobile rend la page comme un
+       "layout viewport" de 980px puis la réduit à l'échelle — d'où un
+       plateau minuscule nécessitant un zoom pour être utilisable.
+       maximum-scale=1 évite un zoom accidentel pendant les taps successifs
+       du déplacement tactile (case de départ puis case d'arrivée) ; le
+       zoom volontaire (pinch) reste possible tant qu'un doigt à la fois est
+       utilisé pour jouer, seul le double-tap-zoom est neutralisé. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <title>ChessCoach</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='board.css') }}">
   <style>
@@ -107,6 +115,65 @@
       flex-shrink: 0;
     }
     .coach-drawer { display: flex; }
+
+    /* ── Mise en page écran étroit (issue #50, <900px) ────────────────────
+       Colonne unique : plateau en haut (pleine largeur), chat du coach
+       juste en dessous, puis barre de contrôle du mode actif et contenu des
+       onglets ; historique des coups en dernier (secondaire sur GSM). Rien
+       ici n'est actif au-dessus de 900px : le layout desktop d'origine
+       (colonnes #historique/#board/#mode-tabs/#coach côte à côte) est
+       inchangé. */
+    @media (max-width: 900px) {
+      :root { --bd-size: min(70vh, 560px, calc(100vw - 92px)); }
+
+      #app { flex-direction: column; flex-wrap: nowrap; padding: 8px; gap: 10px; }
+
+      #board-column,
+      #coach-column,
+      #mode-tabs-column,
+      #historique-column {
+        width: 100%;
+        max-width: 100%;
+      }
+      #board-column   { order: 1; }
+      #coach-column   { order: 2; }
+      #mode-tabs-column { order: 3; }
+      #historique-column { order: 4; }
+
+      /* Sans quoi la rangée de boutons Précédent/Suivant/Retourner/Meilleur
+         coup/Extraire le FEN dépasse la largeur de l'écran et provoque un
+         défilement horizontal de toute la page. */
+      #review-controls { flex-wrap: wrap; }
+
+      /* Chat borné pour garder plateau + chat visibles ensemble sans trop
+         défiler la page (souhait d'Alain), au lieu de calc(100vh - 60px). */
+      .coach-drawer { max-height: 55vh; }
+
+      /* Barre d'onglets de mode : défilement horizontal plutôt
+         qu'un retour à la ligne qui la rendrait trop haute. */
+      .mode-tab-bar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 10px;
+      }
+      .mode-tab-btn {
+        flex-shrink: 0;
+        padding: 10px 12px;
+        min-height: 44px;
+        font-size: 0.85rem;
+      }
+
+      /* Cibles tactiles agrandies + 16px minimum sur les champs de saisie
+         pour éviter le zoom automatique au focus (iOS Safari). */
+      button, select, input[type="text"], input[type="file"], textarea {
+        font-size: 16px;
+      }
+      button {
+        padding: 10px 14px;
+        min-height: 44px;
+      }
+    }
   </style>
 </head>
 <body>
