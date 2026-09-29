@@ -8,6 +8,7 @@ sans lancer le moteur — l'analyse elle-même est l'objet d'une issue séparée
 """
 
 import atexit
+import ipaddress
 import json
 import logging
 import random
@@ -37,6 +38,50 @@ app = Flask(__name__)
 socketio = SocketIO(app)
 
 register_pgn_library_handlers(socketio)
+
+# Accès distant via Tailscale (issue #49) : l'appli est strictement
+# personnelle (parties, mémoire du coach, clé API) et n'a aucun mot de
+# passe. Elle écoute sur toutes les interfaces (pour être joignable depuis
+# le réseau Tailscale d'Alain), mais ce middleware WSGI, posé devant tout
+# — routes Flask et handshake Socket.IO compris, puisque
+# flask_socketio remplace déjà app.wsgi_app par son propre middleware
+# ci-dessus — n'accepte que la boucle locale et la plage Tailscale
+# 100.64.0.0/10, et refuse explicitement tout le reste (LAN, wifi public).
+_TAILSCALE_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+_ADRESSES_LOCALES = {"127.0.0.1", "::1"}
+
+
+def _adresse_autorisee(remote_addr: str) -> bool:
+    if remote_addr in _ADRESSES_LOCALES:
+        return True
+    try:
+        ip = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    return ip in _TAILSCALE_NETWORK
+
+
+class _FiltreAccesDistant:
+    def __init__(self, wsgi_app):
+        self._wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        remote_addr = environ.get("REMOTE_ADDR", "")
+        if not _adresse_autorisee(remote_addr):
+            logger.warning(
+                f"Accès refusé depuis {remote_addr} "
+                "(hors localhost / réseau Tailscale)"
+            )
+            start_response(
+                "403 Forbidden",
+                [("Content-Type", "text/plain; charset=utf-8")],
+            )
+            return [b"Acces refuse : ce serveur n'est joignable que "
+                    b"depuis la machine locale ou le reseau Tailscale."]
+        return self._wsgi_app(environ, start_response)
+
+
+app.wsgi_app = _FiltreAccesDistant(app.wsgi_app)
 
 coach_memory = llm_coach.load_coach_memory(config.COACH_MEMORY_PATH)
 
@@ -1783,4 +1828,10 @@ def on_finale_move(data):
 if __name__ == "__main__":
     # allow_unsafe_werkzeug : serveur de développement uniquement (pas de
     # déploiement en production prévu pour ce squelette).
-    socketio.run(app, debug=True, allow_unsafe_werkzeug=True)
+    # host="0.0.0.0" (issue #49) : écoute sur toutes les interfaces, y
+    # compris tailscale0, pour être joignable depuis le GSM via le réseau
+    # Tailscale — _FiltreAccesDistant ci-dessus reste la vraie barrière de
+    # sécurité (localhost + 100.64.0.0/10 uniquement), ce n'est pas une
+    # écoute ouverte sans filtre.
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True,
+                 allow_unsafe_werkzeug=True)

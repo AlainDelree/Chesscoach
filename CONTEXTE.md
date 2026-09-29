@@ -63,6 +63,21 @@ session, pas les parties complètes), objectifs_courants.
 3. index.html neuf, propre à ChessCoach (l'original AlChess était trop
    imbriqué dans le flux de partie pédagogique pour être réutilisé tel quel).
 
+## Accès distant via Tailscale (issue #49)
+L'appli écoute sur toutes les interfaces (`0.0.0.0:5000`) mais un middleware
+WSGI (`_FiltreAccesDistant` dans app.py) n'accepte que la boucle locale
+(127.0.0.1/::1) et le réseau Tailscale (100.64.0.0/10) ; toute autre origine
+(LAN, wifi public) reçoit un 403 explicite. Le port 5000 et le mécanisme de
+filtrage sont inchangés côté ThinkPad : l'alias `coach` continue d'ouvrir le
+navigateur en local comme avant.
+
+Pour ouvrir l'appli depuis le GSM (Tailscale actif des deux côtés) :
+`http://100.92.48.81:5000` (adresse Tailscale du ThinkPad thinkpadcarbon7).
+Le chat temps réel (Socket.IO) fonctionne aussi par cette adresse : la
+vérification d'origine intégrée à Socket.IO compare l'Origin du navigateur
+au Host de la requête, donc elle s'aligne automatiquement sur l'adresse
+utilisée (locale ou Tailscale) sans configuration supplémentaire.
+
 ## Conventions spécifiques à ce projet
 - Toute modification de code passe par une issue Bridge_Agent
   (PROJET | chesscoach), même petite.
