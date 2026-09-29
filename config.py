@@ -5,6 +5,7 @@ La clé API Claude n'est jamais codée en dur, uniquement lue depuis
 l'environnement.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -47,7 +48,62 @@ BOOK_PATH = DATA_DIR / "books" / "gm2001.bin"
 SYZYGY_PATH = ENGINES_DIR / "syzygy"
 
 LLM_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-LLM_MODEL = os.environ.get("CHESSCOACH_LLM_MODEL", "claude-haiku-4-5")
+
+# Les deux modèles Claude choisissables depuis l'interface (issue #61) —
+# identifiants canoniques définis ici en un seul endroit, réutilisés par
+# app.py (sélecteur de l'en-tête) et par le fallback en cas de refus de
+# l'API. Haiku pour les tests économiques, Sonnet pour le jeu sérieux.
+LLM_MODEL_HAIKU = "claude-haiku-4-5"
+LLM_MODEL_SONNET = "claude-sonnet-5"
+LLM_MODEL_CHOICES = {
+    LLM_MODEL_HAIKU: "Haiku (test)",
+    LLM_MODEL_SONNET: "Sonnet (sérieux)",
+}
+
+# Choix de modèle persisté entre deux lancements (issue #61) — fichier séparé
+# du .env, jamais modifié par l'appli : {"model": <id>}. Sous DATA_DIR, donc
+# gitignoré comme le reste des données personnelles.
+LLM_MODEL_CHOICE_PATH = DATA_DIR / "llm_model_choice.json"
+
+
+def _charger_choix_modele_llm() -> str:
+    """Détermine le modèle actif au démarrage (issue #61) : LLM_MODEL_CHOICE_PATH
+    prime s'il contient un choix valide (persistance entre deux lancements).
+    À défaut (premier lancement, fichier absent ou invalide), reprend
+    CHESSCOACH_LLM_MODEL si sa valeur correspond à l'un des deux choix
+    connus, sinon Sonnet par défaut (jeu sérieux plutôt que test)."""
+    try:
+        brut = json.loads(LLM_MODEL_CHOICE_PATH.read_text(encoding="utf-8"))
+        choix = brut.get("model")
+        if choix in LLM_MODEL_CHOICES:
+            return choix
+    except (OSError, ValueError, AttributeError):
+        pass
+    env_model = os.environ.get("CHESSCOACH_LLM_MODEL", "")
+    return env_model if env_model in LLM_MODEL_CHOICES else LLM_MODEL_SONNET
+
+
+LLM_MODEL = _charger_choix_modele_llm()
+
+
+def set_llm_model(model_id: str) -> bool:
+    """Change le modèle actif (issue #61) : effet immédiat sur tous les appels
+    suivants — app.py relit l'attribut config.LLM_MODEL à chaque appel, jamais
+    une copie figée au démarrage — et persistance dans LLM_MODEL_CHOICE_PATH.
+    Le .env n'est jamais modifié. Retourne False sans aucun effet si model_id
+    n'est pas l'un des deux choix valides."""
+    global LLM_MODEL
+    if model_id not in LLM_MODEL_CHOICES:
+        return False
+    LLM_MODEL = model_id
+    try:
+        LLM_MODEL_CHOICE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LLM_MODEL_CHOICE_PATH.write_text(
+            json.dumps({"model": model_id}, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return True
 
 # Mode debug Flask/Werkzeug (débogueur interactif + rechargement automatique
 # du code) — désactivé par défaut (issue #51) car le débogueur expose une

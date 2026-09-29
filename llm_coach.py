@@ -41,6 +41,15 @@ class CreditInsuffisantError(Exception):
     plutôt qu'une erreur technique générique."""
     pass
 
+
+class ModeleIndisponibleError(Exception):
+    """Levée quand l'API Claude refuse l'identifiant de modèle demandé (issue
+    #61, erreur HTTP 404 de type "not_found_error" — modèle inconnu, retiré
+    ou momentanément indisponible côté Anthropic) — distinguée des autres
+    erreurs HTTP pour que l'appelant revienne au choix précédent et affiche
+    un message clair dans le chat plutôt qu'une erreur technique générique."""
+    pass
+
 _SYSTEM_PROMPT = (
     "Tu es un coach d'échecs personnel. Tu aides un joueur à analyser une "
     "partie qu'il vient de jouer, en te basant sur la position, le coup "
@@ -427,6 +436,9 @@ def get_move_explanations(flagged_moves, camp_alain, config):
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) : crédit épuisé : {e}")
         return None, "credit_insuffisant"
+    except ModeleIndisponibleError as e:
+        logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) : modèle indisponible : {e}")
+        return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) échoué : {e}")
         return None, str(e)
@@ -833,7 +845,7 @@ def _build_context_text(context) -> str:
 
 
 def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str,
-                     reponse: str = None, erreur: str = None, usage: dict = None) -> None:
+                     model: str = None, reponse: str = None, erreur: str = None, usage: dict = None) -> None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -857,6 +869,13 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     précis, ou None si indisponible — ex. `credit_insuffisant`, aucun appel
     API n'a abouti) vient compléter le diagnostic ligne à ligne, en plus du
     compteur cumulé (usage_tokens.json).
+
+    Étendu par l'issue #61 : `model` (le paramètre "llm_model" transmis à cet
+    appel, alias éventuel compris) est désormais inscrit explicitement dans
+    chaque entrée, y compris en cas d'erreur où `usage.model` (résolu par
+    l'API) est absent — un changement de modèle en cours de session reste
+    ainsi traçable ligne à ligne, même sur un appel qui a échoué avant toute
+    réponse (ex. modele_indisponible).
     """
     if not log_path:
         return
@@ -866,6 +885,7 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
         entry = {
             "horodatage": datetime.now().isoformat(),
             "mode_origine": mode_origine,
+            "model": model,
             "system_prompt": system_prompt,
             "context": context or {},
             "messages": messages,
@@ -959,6 +979,14 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
             raise CreditInsuffisantError(
                 (err_data.get("error") or {}).get("message", "Crédit épuisé")
             ) from e
+        # Modèle refusé par l'API (issue #61) : identifiant inconnu, retiré ou
+        # momentanément indisponible côté Anthropic — distingué des autres
+        # erreurs HTTP pour que l'appelant revienne au choix précédent plutôt
+        # que d'afficher une erreur technique brute.
+        if e.code == 404 and err_type == "not_found_error":
+            raise ModeleIndisponibleError(
+                (err_data.get("error") or {}).get("message", f"Modèle indisponible : {model}")
+            ) from e
         raise
     # Tokens consommés par cet appel (issue #54) — déjà présents dans la
     # réponse normale de l'API, pas d'appel supplémentaire nécessaire. Le
@@ -1016,6 +1044,9 @@ def get_opening_moves(opening_name: str, config):
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (ouverture) : crédit épuisé : {e}")
         return None, "credit_insuffisant"
+    except ModeleIndisponibleError as e:
+        logger.warning(f"[LLM_COACH] Appel Claude (ouverture) : modèle indisponible : {e}")
+        return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (ouverture) échoué : {e}")
         return None, str(e)
@@ -1081,6 +1112,9 @@ def get_training_program(patterns_erreurs, repertoire_ouvertures, config):
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) : crédit épuisé : {e}")
         return None, "credit_insuffisant"
+    except ModeleIndisponibleError as e:
+        logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) : modèle indisponible : {e}")
+        return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) échoué : {e}")
         return None, str(e)
@@ -1192,11 +1226,15 @@ def get_coach_response(messages, context, coach_memory, config):
         response = _call_claude(prompt_sys, clean_messages, api_key, model, usage_path)
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude : crédit épuisé : {e}")
-        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, erreur="credit_insuffisant")
+        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="credit_insuffisant")
         return None, "credit_insuffisant"
+    except ModeleIndisponibleError as e:
+        logger.warning(f"[LLM_COACH] Appel Claude : modèle indisponible : {e}")
+        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="modele_indisponible")
+        return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude échoué : {e}")
-        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, erreur=str(e))
+        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur=str(e))
         return None, str(e)
 
     response = (response or "").strip()
@@ -1205,5 +1243,5 @@ def get_coach_response(messages, context, coach_memory, config):
     # d'usage à travers toute la chaîne de retour juste pour le logging
     # (issue #54, champ d'usage ajouté à coach_calls.log).
     usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
-    _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, reponse=response, usage=usage_appel)
+    _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, reponse=response, usage=usage_appel)
     return response, None
