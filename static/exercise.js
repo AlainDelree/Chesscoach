@@ -337,6 +337,11 @@ if (typeof socket !== "undefined") {
   socket.on("exercise_error", (data) => {
     const statusEl = document.getElementById("exercise-status");
     const err = data && data.error;
+    if (err === "credit_insuffisant") {
+      if (typeof _coachRenderCreditInsuffisant === "function") _coachRenderCreditInsuffisant();
+      console.warn("[exercice]", "credit_insuffisant", data);
+      return;
+    }
     const msg = (err === "aucune_erreur_disponible")
       ? "Aucune position d'exercice disponible (lancer build_patterns_erreurs.py)."
       : (err === "no_api_key")

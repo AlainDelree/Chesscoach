@@ -21,6 +21,12 @@ ERREURS_DETECTEES_PATH = DATA_DIR / "erreurs_detectees.json"
 # gitignoré comme le reste des données ; pas de rotation à ce stade.
 COACH_CALLS_LOG_PATH = DATA_DIR / "logs" / "coach_calls.log"
 
+# Compteur cumulé de tokens consommés par l'API Claude (issue #54) — pas de
+# notion de prix ni de table de coût par modèle, seulement les tokens bruts
+# renvoyés par chaque réponse de l'API, cumulés par modèle depuis une date de
+# départ. Sous DATA_DIR, donc gitignoré comme le reste des données.
+USAGE_TOKENS_PATH = DATA_DIR / "usage_tokens.json"
+
 # Bibliothèque de positions-types de finales (issue #13) — fichier de
 # données modifiable depuis l'interface (bouton "Enregistrer comme finale"
 # du mode "Partie libre"), plus une liste figée dans le code (finales.py).

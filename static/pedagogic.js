@@ -233,6 +233,11 @@ if (typeof socket !== "undefined") {
   socket.on("pedagogic_error", (data) => {
     pedagogicWaiting = false;
     const err = data && data.error;
+    if (err === "credit_insuffisant") {
+      if (typeof _coachRenderCreditInsuffisant === "function") _coachRenderCreditInsuffisant();
+      console.warn("[partie pédagogique]", "credit_insuffisant", data);
+      return;
+    }
     const msg = (err === "stockfish_indisponible")
       ? "Stockfish indisponible sur ce système."
       : (err === "no_api_key")

@@ -549,6 +549,11 @@ if (typeof socket !== "undefined") {
   socket.on("finale_error", (data) => {
     finaleWaiting = false;
     const err = data && data.error;
+    if (err === "credit_insuffisant") {
+      if (typeof _coachRenderCreditInsuffisant === "function") _coachRenderCreditInsuffisant();
+      console.warn("[travail de finales]", "credit_insuffisant", data);
+      return;
+    }
     const msg = (err === "stockfish_indisponible")
       ? "Stockfish indisponible sur ce système."
       : (err === "finale_inconnue")

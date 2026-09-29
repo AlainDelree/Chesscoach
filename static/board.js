@@ -681,6 +681,37 @@ function _coachRenderBubble(role, text) {
   }
 }
 
+// Même lien que le "Coût API" de l'en-tête (issue #54) — la Console est
+// aussi l'endroit où Alain recharge son crédit, pas seulement où il le
+// consulte.
+const CONSOLE_API_URL = "https://platform.claude.com/cost";
+
+// Message dédié pour l'erreur "crédit épuisé" (issue #54) : un texte clair
+// dans le chat du coach plutôt qu'une erreur technique générique, avec un
+// lien direct vers la Console pour recharger. Rendu à part de
+// _coachRenderBubble (texte brut) car il faut un lien cliquable — seul cas
+// du chat coach ayant besoin de plus que du texte simple.
+function _coachRenderCreditInsuffisant() {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  const empty = document.getElementById("coach-empty");
+  if (empty) empty.style.display = "none";
+  const bubble = document.createElement("div");
+  bubble.style.cssText = "background:#f8d7da; border-radius:8px; padding:8px 12px; align-self:flex-start; max-width:88%; font-size:1.05rem; line-height:1.45; color:#5a1a1a;";
+  const p = document.createElement("div");
+  p.textContent = "Le crédit de l'API Claude est épuisé — le coach ne peut plus répondre pour le moment.";
+  bubble.appendChild(p);
+  const a = document.createElement("a");
+  a.href = CONSOLE_API_URL;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.style.cssText = "color:#5a1a1a; text-decoration:underline; display:inline-block; margin-top:4px;";
+  a.textContent = "Recharger sur la Console";
+  bubble.appendChild(a);
+  history.appendChild(bubble);
+  history.scrollTop = history.scrollHeight;
+}
+
 function coachClear() {
   _coachHistory = [];
   const history = document.getElementById("coach-history");
@@ -727,10 +758,15 @@ if (typeof socket !== "undefined") {
   });
 
   socket.on("coach_error", (data) => {
-    const msg = (data && data.error === "no_api_key")
-      ? "Clé API Claude manquante — configurez-la dans les paramètres."
-      : "Le coach n'a pas pu répondre, réessayez.";
-    console.warn("[coach]", msg, data);
+    const err = data && data.error;
+    if (err === "credit_insuffisant") {
+      _coachRenderCreditInsuffisant();
+    } else {
+      const msg = (err === "no_api_key")
+        ? "Clé API Claude manquante — configurez-la dans les paramètres."
+        : "Le coach n'a pas pu répondre, réessayez.";
+      console.warn("[coach]", msg, data);
+    }
     _coachDone();
   });
 }
@@ -781,7 +817,9 @@ if (typeof socket !== "undefined") {
     const btn = document.getElementById("training-program-btn");
     if (btn) btn.disabled = false;
     const err = data && data.error;
-    const msg = (err === "no_api_key")
+    const msg = (err === "credit_insuffisant")
+      ? "Crédit de l'API Claude épuisé — rechargez sur la Console (lien \"Coût API\" en haut de la page)."
+      : (err === "no_api_key")
       ? "Clé API Claude manquante — configurez-la dans les paramètres."
       : (err === "donnees_insuffisantes")
       ? "Pas encore assez de données (erreurs/ouvertures) pour établir un programme."
@@ -822,6 +860,10 @@ if (typeof socket !== "undefined") {
   socket.on("coach_on_demand_error", (data) => {
     setCoachOnDemandButtonsDisabled(false);
     const err = data && data.error;
+    if (err === "credit_insuffisant") {
+      _coachRenderCreditInsuffisant();
+      return;
+    }
     const msg = (err === "partie_terminee")
       ? "La partie est terminée."
       : (err === "stockfish_indisponible")

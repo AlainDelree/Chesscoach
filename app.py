@@ -125,9 +125,42 @@ if engine_manager:
     atexit.register(engine_manager.quit)
 
 
+def _emit_usage_update() -> None:
+    """Pousse au client courant le compteur de tokens à jour (issue #54),
+    juste après chaque appel au coach LLM — succès ou échec confondus (un
+    échec avant tout envoi à l'API, ex. no_api_key, ne change rien au
+    compteur, mais réémettre reste inoffensif et évite d'oublier un point
+    d'appel). Best-effort : ne doit jamais faire échouer la réponse au coach."""
+    try:
+        emit("usage_data", llm_coach.get_usage_summary(config.USAGE_TOKENS_PATH))
+    except Exception as e:
+        logger.warning(f"Émission usage_data échouée : {e}")
+
+
+@socketio.on("usage_get")
+def on_usage_get(_data=None):
+    """Demande explicite du compteur de tokens (issue #54) — utilisé par
+    l'en-tête au chargement de la page, en complément du rendu initial côté
+    serveur (cf. index() ci-dessous)."""
+    _emit_usage_update()
+
+
+@socketio.on("usage_reset")
+def on_usage_reset(_data=None):
+    """Remise à zéro du compteur de tokens (issue #54, bouton discret de
+    l'en-tête) — la confirmation légère est gérée côté client avant l'envoi
+    de cet événement."""
+    llm_coach.reset_usage(config.USAGE_TOKENS_PATH)
+    _emit_usage_update()
+
+
 @app.route("/")
 def index():
-    return render_template("index.html", objectifs_courants=coach_memory.get("objectifs_courants", []))
+    return render_template(
+        "index.html",
+        objectifs_courants=coach_memory.get("objectifs_courants", []),
+        usage_summary=llm_coach.get_usage_summary(config.USAGE_TOKENS_PATH),
+    )
 
 
 def _game_over_info(board: chess.Board) -> dict | None:
@@ -500,8 +533,10 @@ def on_analyse_choisir_coups_decisifs(data):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
     choix, error = llm_coach.get_move_explanations(prepared, llm_config)
+    _emit_usage_update()
     if error:
         emit("analyse_choix_coach_error", {"error": error})
         return
@@ -572,9 +607,11 @@ def on_analyse_expliquer_coup(data):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    _emit_usage_update()
     if error:
         emit("analyse_expliquer_coup_error", {"error": error, "uci": move.get("uci"), "idx": move.get("idx")})
     else:
@@ -655,9 +692,11 @@ def on_coach_comment_on_demand(data):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    _emit_usage_update()
     if error:
         emit("coach_on_demand_error", {"error": error})
     else:
@@ -678,9 +717,11 @@ def on_coach_ask(data):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    _emit_usage_update()
     if error:
         emit("coach_error", {"error": error})
     else:
@@ -698,12 +739,14 @@ def on_training_program_build(_data=None):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
     objectifs, error = llm_coach.get_training_program(
         coach_memory.get("patterns_erreurs", {}),
         coach_memory.get("repertoire_ouvertures", {}),
         llm_config,
     )
+    _emit_usage_update()
     if error:
         emit("training_program_error", {"error": error})
         return
@@ -893,9 +936,11 @@ def on_exercise_answer(data):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    _emit_usage_update()
     if error:
         emit("exercise_error", {"error": error})
     else:
@@ -1054,9 +1099,11 @@ def on_pedagogic_move(data):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    _emit_usage_update()
     if error:
         emit("pedagogic_error", {"error": error})
     else:
@@ -1124,8 +1171,10 @@ def on_opening_start(data):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
     moves_san, error = llm_coach.get_opening_moves(opening_name, llm_config)
+    _emit_usage_update()
     if error:
         emit("opening_error", {"error": error})
         return
@@ -1341,9 +1390,11 @@ def on_opening_move(data):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    _emit_usage_update()
     if error:
         emit("opening_error", {"error": error})
     else:
@@ -1812,9 +1863,11 @@ def on_finale_move(data):
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
     }
 
     response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    _emit_usage_update()
     if error:
         emit("finale_error", {"error": error})
     else:

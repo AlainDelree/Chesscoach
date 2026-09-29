@@ -31,6 +31,14 @@ from pathlib import Path
 
 logger = logging.getLogger("chesscoach.llm_coach")
 
+
+class CreditInsuffisantError(Exception):
+    """Levée quand l'API Claude répond que le crédit est épuisé (issue #54,
+    erreur HTTP 403 de type "billing_error") — distinguée des autres erreurs
+    HTTP pour que l'appelant puisse afficher un message clair dans le chat
+    plutôt qu'une erreur technique générique."""
+    pass
+
 _SYSTEM_PROMPT = (
     "Tu es un coach d'échecs personnel. Tu aides un joueur à analyser une "
     "partie qu'il vient de jouer, en te basant sur la position, le coup "
@@ -287,8 +295,12 @@ def get_move_explanations(flagged_moves, config):
     data_text = json.dumps(flagged_moves, ensure_ascii=False, indent=2)
     prompt_user = f"Coups flagués de la partie (JSON) :\n{data_text}"
 
+    usage_path = (config or {}).get("usage_path")
     try:
-        raw = _call_claude(_MOVE_SELECTION_SYSTEM_PROMPT, prompt_user, api_key, model)
+        raw = _call_claude(_MOVE_SELECTION_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path)
+    except CreditInsuffisantError as e:
+        logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) : crédit épuisé : {e}")
+        return None, "credit_insuffisant"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) échoué : {e}")
         return None, str(e)
@@ -353,6 +365,104 @@ def save_coach_memory(path, memory: dict) -> None:
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(memory, f, ensure_ascii=False, indent=2)
     tmp_path.replace(path)
+
+
+# ── Compteur cumulé de tokens (issue #54) ───────────────────────────────────
+# Fichier de données local (usage_tokens.json, sous DATA_DIR — non suivi par
+# git comme coach_memory.json et le reste de data/) qui cumule les tokens
+# d'entrée/sortie/cache consommés par l'API Claude, par modèle utilisé,
+# depuis une date de départ. Volontairement sans aucune notion de prix ni de
+# table de coût par modèle (décision explicite d'Alain) : seul le compte de
+# tokens bruts est cumulé, à charge pour lui de le rapprocher du solde de la
+# Console pour évaluer le coût réel d'une intervention.
+
+_USAGE_CHAMPS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+)
+
+
+def _usage_vide() -> dict:
+    return {"date_debut": datetime.now().isoformat(), "dernier_appel": None, "par_modele": {}}
+
+
+def load_usage(path) -> dict:
+    """Charge le fichier de compteur de tokens. Retourne une structure vide
+    (avec une date de départ fraîche) si le fichier est absent ou illisible —
+    même tolérance que load_coach_memory."""
+    path = Path(path)
+    if not path.exists():
+        return _usage_vide()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or "par_modele" not in data:
+            return _usage_vide()
+        return data
+    except Exception as e:
+        logger.warning(f"[LLM_COACH] Compteur de tokens illisible ({path}) : {e}")
+        return _usage_vide()
+
+
+def _save_usage(path, usage: dict) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(usage, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(path)
+
+
+def _record_usage(usage_path, model: str, usage_appel: dict) -> None:
+    """Cumule les tokens d'un appel réussi dans le fichier de compteur
+    (issue #54). Best-effort : une erreur d'écriture ne doit jamais faire
+    échouer la réponse du coach, même logique que _log_coach_call."""
+    if not usage_path:
+        return
+    try:
+        data = load_usage(usage_path)
+        modele = model or "inconnu"
+        compteur = data["par_modele"].setdefault(
+            modele, {champ: 0 for champ in _USAGE_CHAMPS} | {"appels": 0}
+        )
+        for champ in _USAGE_CHAMPS:
+            compteur[champ] = compteur.get(champ, 0) + int(usage_appel.get(champ) or 0)
+        compteur["appels"] = compteur.get("appels", 0) + 1
+        data["dernier_appel"] = {
+            "model": modele,
+            "horodatage": datetime.now().isoformat(),
+            **{champ: int(usage_appel.get(champ) or 0) for champ in _USAGE_CHAMPS},
+        }
+        _save_usage(usage_path, data)
+    except Exception as e:
+        logger.warning(f"[LLM_COACH] Écriture du compteur de tokens échouée : {e}")
+
+
+def get_usage_summary(usage_path) -> dict:
+    """Retourne la structure affichable côté client : date de départ, dernier
+    appel, détail par modèle et totaux tous modèles confondus (calculés à la
+    volée, jamais stockés séparément pour éviter toute désynchronisation)."""
+    data = load_usage(usage_path)
+    totaux = {champ: 0 for champ in _USAGE_CHAMPS}
+    for compteur in data.get("par_modele", {}).values():
+        for champ in _USAGE_CHAMPS:
+            totaux[champ] += compteur.get(champ, 0)
+    return {
+        "date_debut": data.get("date_debut"),
+        "dernier_appel": data.get("dernier_appel"),
+        "par_modele": data.get("par_modele", {}),
+        "total": totaux,
+    }
+
+
+def reset_usage(usage_path) -> dict:
+    """Remet à zéro le compteur de tokens, y compris la date de départ
+    (issue #54, bouton de remise à zéro de l'en-tête)."""
+    data = _usage_vide()
+    _save_usage(usage_path, data)
+    return get_usage_summary(usage_path)
 
 
 def _build_memory_text(memory: dict) -> str:
@@ -573,7 +683,7 @@ def _build_context_text(context) -> str:
 
 
 def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str,
-                     reponse: str = None, erreur: str = None) -> None:
+                     reponse: str = None, erreur: str = None, usage: dict = None) -> None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -592,6 +702,11 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     None), écrits dans la même entrée que la requête plutôt que dans une
     entrée séparée, pour garder la corrélation requête/réponse triviale à
     relire.
+
+    Étendu par l'issue #54 : `usage` (tokens input/output/cache de cet appel
+    précis, ou None si indisponible — ex. `credit_insuffisant`, aucun appel
+    API n'a abouti) vient compléter le diagnostic ligne à ligne, en plus du
+    compteur cumulé (usage_tokens.json).
     """
     if not log_path:
         return
@@ -606,6 +721,7 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
             "messages": messages,
             "reponse": reponse,
             "erreur": erreur,
+            "usage": usage,
         }
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -613,9 +729,17 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
         logger.warning(f"[LLM_COACH] Écriture du log coach_calls échouée : {e}")
 
 
-def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
+def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path=None) -> str:
     """messages : liste de {"role": "user"|"assistant", "content": str}, ou une
-    simple chaîne (raccourci équivalent à [{"role": "user", "content": messages}])."""
+    simple chaîne (raccourci équivalent à [{"role": "user", "content": messages}]).
+
+    Retourne le texte de la réponse (comme avant l'issue #54). Lève
+    CreditInsuffisantError si l'API répond que le crédit est épuisé (HTTP 403,
+    error.type == "billing_error"), pour que l'appelant affiche un message
+    clair au lieu de la ValueError générique. Relève aussi les tokens
+    consommés (usage.input_tokens/output_tokens/cache_*) depuis la réponse et
+    les cumule dans usage_path si fourni — aucun appel API supplémentaire,
+    ces informations sont déjà présentes dans la réponse normale (issue #54)."""
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
     body = json.dumps({
@@ -666,8 +790,40 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str) -> str:
     # operation timed out" observé même sur une question triviale (issue #45).
     # 90s laisse une marge large sans bloquer indéfiniment l'interface en cas
     # de vrai problème réseau.
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # Solde de crédit épuisé (issue #54) : l'API répond alors en HTTP 403
+        # avec error.type == "billing_error" (distinct de "permission_error",
+        # qui partage le même code HTTP mais désigne une clé sans les droits
+        # nécessaires). Le corps de la réponse doit être lu ici : une fois
+        # l'exception propagée, e.read() ne serait plus disponible.
+        corps = e.read().decode("utf-8", errors="replace")
+        try:
+            err_data = json.loads(corps)
+        except (ValueError, TypeError):
+            err_data = {}
+        err_type = (err_data.get("error") or {}).get("type", "")
+        if e.code == 403 and err_type == "billing_error":
+            raise CreditInsuffisantError(
+                (err_data.get("error") or {}).get("message", "Crédit épuisé")
+            ) from e
+        raise
+    # Tokens consommés par cet appel (issue #54) — déjà présents dans la
+    # réponse normale de l'API, pas d'appel supplémentaire nécessaire. Le
+    # modèle réellement utilisé (data["model"]) est repris plutôt que le
+    # paramètre "model" d'entrée : celui-ci peut être vide (défaut appliqué
+    # côté API) ou un alias, alors que la réponse renvoie l'ID résolu.
+    usage_brut = data.get("usage") or {}
+    modele_reel = data.get("model") or model or "claude-haiku-4-5"
+    usage_appel = {
+        "input_tokens": usage_brut.get("input_tokens") or 0,
+        "output_tokens": usage_brut.get("output_tokens") or 0,
+        "cache_creation_input_tokens": usage_brut.get("cache_creation_input_tokens") or 0,
+        "cache_read_input_tokens": usage_brut.get("cache_read_input_tokens") or 0,
+    }
+    _record_usage(usage_path, modele_reel, usage_appel)
     # La liste "content" peut en théorie contenir un bloc "thinking" avant le
     # bloc "text", même si "thinking" est désormais explicitement désactivé
     # ci-dessus (issue #47) — cette recherche reste une défense en profondeur
@@ -703,9 +859,13 @@ def get_opening_moves(opening_name: str, config):
         return None, "no_api_key"
 
     model = (config or {}).get("llm_model", "")
+    usage_path = (config or {}).get("usage_path")
 
     try:
-        raw = _call_claude(_OPENING_SYSTEM_PROMPT, opening_name, api_key, model)
+        raw = _call_claude(_OPENING_SYSTEM_PROMPT, opening_name, api_key, model, usage_path)
+    except CreditInsuffisantError as e:
+        logger.warning(f"[LLM_COACH] Appel Claude (ouverture) : crédit épuisé : {e}")
+        return None, "credit_insuffisant"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (ouverture) échoué : {e}")
         return None, str(e)
@@ -764,9 +924,13 @@ def get_training_program(patterns_erreurs, repertoire_ouvertures, config):
         "repertoire_ouvertures": repertoire_ouvertures or {},
     }, ensure_ascii=False, indent=2)
     prompt_user = f"Données du joueur (JSON) :\n{data_text}"
+    usage_path = (config or {}).get("usage_path")
 
     try:
-        raw = _call_claude(_TRAINING_PROGRAM_SYSTEM_PROMPT, prompt_user, api_key, model)
+        raw = _call_claude(_TRAINING_PROGRAM_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path)
+    except CreditInsuffisantError as e:
+        logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) : crédit épuisé : {e}")
+        return None, "credit_insuffisant"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) échoué : {e}")
         return None, str(e)
@@ -854,6 +1018,7 @@ def get_coach_response(messages, context, coach_memory, config):
         "exercice" if (context or {}).get("mode_exercice") else "chat_libre"
     )
     log_path = (config or {}).get("coach_log_path")
+    usage_path = (config or {}).get("usage_path")
 
     # Appel loggé une seule fois, après coup (issue #44) : plus tôt, seule la
     # requête était journalisée (avant même l'appel API) — la réponse réelle
@@ -861,12 +1026,21 @@ def get_coach_response(messages, context, coach_memory, config):
     # se fier à un copier-coller manuel d'Alain pour diagnostiquer une
     # affirmation erronée.
     try:
-        response = _call_claude(prompt_sys, clean_messages, api_key, model)
+        response = _call_claude(prompt_sys, clean_messages, api_key, model, usage_path)
+    except CreditInsuffisantError as e:
+        logger.warning(f"[LLM_COACH] Appel Claude : crédit épuisé : {e}")
+        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, erreur="credit_insuffisant")
+        return None, "credit_insuffisant"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude échoué : {e}")
         _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, erreur=str(e))
         return None, str(e)
 
     response = (response or "").strip()
-    _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, reponse=response)
+    # dernier_appel vient d'être écrit par _call_claude (via _record_usage)
+    # pour ce même appel : le relire ici évite de faire remonter le tuple
+    # d'usage à travers toute la chaîne de retour juste pour le logging
+    # (issue #54, champ d'usage ajouté à coach_calls.log).
+    usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
+    _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, reponse=response, usage=usage_appel)
     return response, None

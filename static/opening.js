@@ -291,6 +291,11 @@ if (typeof socket !== "undefined") {
   socket.on("opening_error", (data) => {
     openingWaiting = false;
     const err = data && data.error;
+    if (err === "credit_insuffisant") {
+      if (typeof _coachRenderCreditInsuffisant === "function") _coachRenderCreditInsuffisant();
+      console.warn("[travail d'ouverture]", "credit_insuffisant", data);
+      return;
+    }
     const msg = (err === "stockfish_indisponible")
       ? "Stockfish indisponible sur ce système."
       : (err === "livre_indisponible")

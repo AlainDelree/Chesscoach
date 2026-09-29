@@ -281,7 +281,11 @@ if (typeof socket !== "undefined") {
 
   socket.on("analyse_choix_coach_error", (data) => {
     const coachStatus = document.getElementById("game-analysis-coach-status");
-    if (coachStatus) coachStatus.textContent = "Sélection du coach indisponible.";
+    const err = data && data.error;
+    const msg = (err === "credit_insuffisant")
+      ? "Crédit de l'API Claude épuisé — rechargez sur la Console (lien \"Coût API\" en haut de la page)."
+      : "Sélection du coach indisponible.";
+    if (coachStatus) coachStatus.textContent = msg;
     console.warn("[analyse de partie] sélection du coach échouée", data);
   });
 
@@ -296,7 +300,12 @@ if (typeof socket !== "undefined") {
 
   socket.on("analyse_expliquer_coup_error", (data) => {
     const idx = data && data.idx;
-    if (idx !== undefined && idx !== null) delete _coachExplicationEnCours[idx];
+    if (idx !== undefined && idx !== null) {
+      delete _coachExplicationEnCours[idx];
+      if (data && data.error === "credit_insuffisant") {
+        _coachExplicationsParIdx[idx] = "Crédit de l'API Claude épuisé — rechargez sur la Console (lien \"Coût API\" en haut de la page).";
+      }
+    }
     console.warn("[analyse de partie] explication à la demande échouée", data);
     renderGameAnalysisReport();
   });

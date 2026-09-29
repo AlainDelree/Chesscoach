@@ -39,6 +39,66 @@
       white-space: nowrap;
     }
     header .cout-api-link:hover { text-decoration: underline; }
+
+    /* Compteur de tokens discret (issue #54) — pas de notion de prix, juste
+       le compte brut de tokens (entrée/sortie/cache), près du lien "Coût
+       API" existant. Positionnement relatif pour ancrer le détail par
+       modèle (#usage-detail), affiché au survol (desktop) ou au clic/tap
+       (tactile) plutôt qu'un simple title="" natif, qui ne fonctionne pas
+       au toucher et ne permet pas de mise en forme. */
+    #usage-tokens-widget {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    #usage-toggle-btn {
+      background: none;
+      border: none;
+      padding: 0;
+      margin: 0;
+      color: #9fb3c8;
+      font-size: 0.72rem;
+      font-family: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #usage-toggle-btn:hover { color: #cfe0f0; text-decoration: underline; }
+    .usage-compact { display: none; }
+    #usage-detail {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 6px;
+      background: #fff;
+      color: #1a2a3a;
+      border: 1px solid #a0b8d0;
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      z-index: 20;
+    }
+    #usage-tokens-widget:hover #usage-detail,
+    #usage-tokens-widget.usage-detail-open #usage-detail {
+      display: block;
+    }
+    #usage-detail table { border-collapse: collapse; }
+    #usage-detail td { padding: 1px 6px 1px 0; }
+    #usage-detail .usage-reset-btn {
+      margin-top: 6px;
+      font-size: 0.74rem;
+      padding: 3px 8px;
+      cursor: pointer;
+    }
+    @media (max-width: 900px) {
+      .usage-full { display: none; }
+      .usage-compact { display: inline; }
+      #usage-detail { right: auto; left: 0; }
+    }
+
     #app {
       display: flex;
       gap: 16px;
@@ -179,7 +239,20 @@
 <body>
   <header>
     <h1>ChessCoach — plateau &amp; revue de partie</h1>
-    <a class="cout-api-link" href="https://platform.claude.com/cost" target="_blank" rel="noopener noreferrer">Coût API</a>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <!-- Compteur de tokens discret (issue #54) : rendu initial fait côté
+           serveur à partir de usage_summary (index()), mis à jour ensuite en
+           direct par usage_tokens.js à chaque appel au coach. Aucun prix ni
+           équivalent en argent — seulement des tokens bruts. -->
+      <div id="usage-tokens-widget">
+        <button type="button" id="usage-toggle-btn" title="Détail par modèle (clic ou survol)">—</button>
+        <div id="usage-detail">
+          <div id="usage-detail-body">—</div>
+          <button type="button" class="usage-reset-btn" id="usage-reset-btn">Remettre le compteur à zéro</button>
+        </div>
+      </div>
+      <a class="cout-api-link" href="https://platform.claude.com/cost" target="_blank" rel="noopener noreferrer">Coût API</a>
+    </div>
   </header>
 
   <div id="app">
@@ -487,9 +560,14 @@
   <script src="{{ url_for('static', filename='vendor/socket.io/socket.io.min.js') }}"></script>
   <script>
     const socket = io();
+    // Rendu initial du compteur de tokens fait côté serveur (issue #54) —
+    // évite un flash "—" avant la première connexion Socket.IO. Le tojson de
+    // Flask échappe correctement pour un contexte <script>.
+    const USAGE_SUMMARY_INITIAL = {{ usage_summary | tojson }};
   </script>
   <script src="{{ url_for('static', filename='vendor/chess.js/chess.min.js') }}"></script>
   <script src="{{ url_for('static', filename='board.js') }}"></script>
+  <script src="{{ url_for('static', filename='usage_tokens.js') }}"></script>
   <script src="{{ url_for('static', filename='pgn_library.js') }}"></script>
   <script src="{{ url_for('static', filename='free_play.js') }}"></script>
   <script src="{{ url_for('static', filename='game_analysis.js') }}"></script>
