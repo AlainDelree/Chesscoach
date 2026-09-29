@@ -20,7 +20,8 @@ let openingCampAlain  = "blancs";
 let openingSelected   = null;  // case algébrique sélectionnée ou null
 let openingWaiting    = false; // coup en cours de traitement côté serveur
 let openingInBook     = false; // la partie est encore dans le livre Polyglot
-let openingGameOver   = false; // fin de partie détectée côté serveur (issue #11)
+let openingGameOver   = false; // fin de partie détectée côté serveur (issue #11) ou abandon (issue #52)
+let openingAbandonne  = false; // fin de partie spécifiquement par "Abandonner" (issue #52, cf. coachBuildContext)
 let openingFenAvantCoup     = null;  // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 let openingInBookAvantCoup  = false; // valeur de openingInBook avant ce même coup
 
@@ -60,21 +61,39 @@ function openingCommenterChaqueCoup() {
   return !!(cb && cb.checked);
 }
 
+// PGN de la partie d'ouverture en cours, avec en-têtes (issue #52, "Analyser
+// cette partie" après abandon — mêmes principes que
+// _pedagogicGamePgnForAnalysis dans pedagogic.js).
+function _openingGamePgnForAnalysis() {
+  if (!openingGame) return "";
+  const white = openingCampAlain === "noirs" ? "Adversaire" : "Alain";
+  const black = openingCampAlain === "noirs" ? "Alain" : "Adversaire";
+  openingGame.header("White", white, "Black", black);
+  return openingGame.pgn();
+}
+
+// Issue #52 : "Abandonner" ne remet plus le plateau à zéro — la partie
+// atteinte reste affichée (plateau, historique, bannière de défaite comme
+// pour un mat), coups suivants bloqués via openingGameOver (déjà lu par
+// onOpeningBoardClick). Le plateau ne redevient vierge qu'au démarrage
+// explicite d'une nouvelle partie ou à un changement de mode.
 function abandonOpeningGame() {
-  if (!openingActive) return;
+  if (!openingActive || openingGameOver) return;
   socket.emit("opening_abandon", {});
-  openingActive    = false;
-  openingGame      = null;
+  openingGameOver  = true;
+  openingAbandonne = true;
   openingWaiting   = false;
   openingSelected  = null;
-  openingInBook    = false;
-  openingGameOver  = false;
   openingFenAvantCoup    = null;
   openingInBookAvantCoup = false;
-  resetBoardToNeutral();
-  setActiveMode(null);
   const statusEl = document.getElementById("opening-status");
-  if (statusEl) statusEl.textContent = "Partie abandonnée.";
+  if (statusEl) statusEl.textContent = "Partie abandonnée — défaite.";
+  const opposant = openingCampAlain === "noirs" ? "blancs" : "noirs";
+  showGameOverBanner(
+    { gagnant: opposant, message: "Partie abandonnée par Alain — défaite." },
+    openingCampAlain,
+    () => analyserPartieDepuisPgn(_openingGamePgnForAnalysis())
+  );
 }
 
 function reprendreOpeningCoup() {
@@ -112,6 +131,7 @@ function startOpeningGame(camp) {
   openingCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   openingWaiting   = true;
   openingGameOver  = false;
+  openingAbandonne = false;
   openingFenAvantCoup    = null;
   openingInBookAvantCoup = false;
   const statusEl = document.getElementById("opening-status");
@@ -211,6 +231,7 @@ if (typeof socket !== "undefined") {
     openingWaiting   = false;
     openingSelected  = null;
     openingGameOver  = false;
+    openingAbandonne = false;
     openingCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     openingInBook    = !!data.in_book;
     setActiveMode("opening");

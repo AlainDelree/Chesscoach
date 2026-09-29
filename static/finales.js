@@ -36,7 +36,8 @@ let finaleActive     = false;
 let finaleCampAlain  = "blancs";
 let finaleSelected   = null;  // case algébrique sélectionnée ou null
 let finaleWaiting    = false; // coup en cours de traitement côté serveur
-let finaleGameOver   = false; // fin de partie détectée côté serveur (issue #11)
+let finaleGameOver   = false; // fin de partie détectée côté serveur (issue #11) ou abandon (issue #52)
+let finaleAbandonne  = false; // fin de partie spécifiquement par "Abandonner" (issue #52, cf. coachBuildContext)
 let finaleList       = [];    // bibliothèque reçue du serveur (finale_list_response)
 let finaleFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 let finaleDemoActive  = false; // démonstration en cours (issue #28) : Stockfish joue les deux camps
@@ -48,28 +49,43 @@ function finaleCommenterChaqueCoup() {
   return !!(cb && cb.checked);
 }
 
+// PGN de la partie de finale en cours, avec en-têtes (issue #52, "Analyser
+// cette partie" après abandon — mêmes principes que
+// _pedagogicGamePgnForAnalysis dans pedagogic.js).
+function _finaleGamePgnForAnalysis() {
+  if (!finaleGame) return "";
+  const white = finaleCampAlain === "noirs" ? "Adversaire" : "Alain";
+  const black = finaleCampAlain === "noirs" ? "Alain" : "Adversaire";
+  finaleGame.header("White", white, "Black", black);
+  return finaleGame.pgn();
+}
+
+// Issue #52 : "Abandonner" ne remet plus le plateau à zéro — la partie (ou
+// démonstration en cours, arrêtée le cas échéant) reste affichée avec sa
+// bannière de défaite comme pour un mat, coups suivants bloqués via
+// finaleGameOver (déjà lu par onFinaleBoardClick). Le plateau ne redevient
+// vierge qu'au chargement explicite d'une autre finale ou à un changement de
+// mode — le menu déroulant et la description restent donc affichés tels
+// quels, contrairement à l'ancien comportement qui les vidait.
 function abandonFinaleGame() {
-  if (!finaleActive) return;
+  if (!finaleActive || finaleGameOver) return;
   socket.emit("finale_abandon", {});
-  finaleActive    = false;
-  finaleGame      = null;
+  finaleGameOver  = true;
+  finaleAbandonne = true;
   finaleWaiting   = false;
   finaleSelected  = null;
-  finaleGameOver  = false;
   finaleFenAvantCoup = null;
   finaleDemoActive = false;
-  finaleDemoCoupsJoues = 0;
-  finaleKingRestrictedSquares = [];
   updateFinaleDemoNextButton();
   updateFinaleDemoToggleButton();
-  resetBoardToNeutral();
-  setActiveMode(null);
   const statusEl = document.getElementById("finale-status");
-  if (statusEl) statusEl.textContent = "Partie abandonnée.";
-  const descEl = document.getElementById("finale-description");
-  if (descEl) descEl.textContent = "";
-  const selectEl = document.getElementById("finale-select");
-  if (selectEl) selectEl.value = "";
+  if (statusEl) statusEl.textContent = "Partie abandonnée — défaite.";
+  const opposant = finaleCampAlain === "noirs" ? "blancs" : "noirs";
+  showGameOverBanner(
+    { gagnant: opposant, message: "Partie abandonnée par Alain — défaite." },
+    finaleCampAlain,
+    () => analyserPartieDepuisPgn(_finaleGamePgnForAnalysis())
+  );
 }
 
 function updateFinaleDemoNextButton() {
@@ -184,6 +200,7 @@ function loadSelectedFinale(id) {
   hideGameOverBanner();
   finaleWaiting  = true;
   finaleGameOver = false;
+  finaleAbandonne = false;
   finaleFenAvantCoup = null;
   finaleDemoActive = false;
   updateFinaleDemoNextButton();
@@ -211,6 +228,7 @@ function startFinaleDemo() {
   hideGameOverBanner();
   finaleWaiting  = true;
   finaleGameOver = false;
+  finaleAbandonne = false;
   finaleFenAvantCoup = null;
   finaleDemoActive = true;
   finaleDemoCoupsJoues = 0;
@@ -365,6 +383,7 @@ if (typeof socket !== "undefined") {
     finaleActive    = true;
     finaleSelected  = null;
     finaleGameOver  = false;
+    finaleAbandonne = false;
     finaleDemoActive = false;
     finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     finaleKingRestrictedSquares = data.king_restricted_squares || [];
@@ -407,6 +426,7 @@ if (typeof socket !== "undefined") {
     finaleActive    = true;
     finaleSelected  = null;
     finaleGameOver  = false;
+    finaleAbandonne = false;
     finaleDemoActive = true;
     finaleDemoCoupsJoues = 0;
     finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";

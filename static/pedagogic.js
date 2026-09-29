@@ -21,7 +21,8 @@ let pedagogicActive     = false;
 let pedagogicCampAlain  = "blancs";
 let pedagogicSelected   = null;  // case algébrique sélectionnée ou null
 let pedagogicWaiting    = false; // coup en cours de traitement côté serveur
-let pedagogicGameOver   = false; // fin de partie détectée côté serveur (issue #11)
+let pedagogicGameOver   = false; // fin de partie détectée côté serveur (issue #11) ou abandon (issue #52)
+let pedagogicAbandonne  = false; // fin de partie spécifiquement par "Abandonner" (issue #52, cf. coachBuildContext)
 let pedagogicFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 
 function pedagogicCommenterChaqueCoup() {
@@ -35,25 +36,34 @@ function startPedagogicGame(camp) {
   pedagogicCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   pedagogicWaiting   = true;
   pedagogicGameOver  = false;
+  pedagogicAbandonne = false;
   pedagogicFenAvantCoup = null;
   const statusEl = document.getElementById("pedagogic-status");
   if (statusEl) statusEl.textContent = "Démarrage de la partie...";
   socket.emit("pedagogic_start", { camp: pedagogicCampAlain });
 }
 
+// Issue #52 : "Abandonner" ne remet plus le plateau à zéro — la partie
+// atteinte reste affichée (plateau, historique, bannière de défaite comme
+// pour un mat), coups suivants bloqués via pedagogicGameOver (déjà lu par
+// onPedagogicBoardClick). Le plateau ne redevient vierge qu'au démarrage
+// explicite d'une nouvelle partie ou à un changement de mode.
 function abandonPedagogicGame() {
-  if (!pedagogicActive) return;
+  if (!pedagogicActive || pedagogicGameOver) return;
   socket.emit("pedagogic_abandon", {});
-  pedagogicActive    = false;
-  pedagogicGame      = null;
+  pedagogicGameOver  = true;
+  pedagogicAbandonne = true;
   pedagogicWaiting   = false;
   pedagogicSelected  = null;
-  pedagogicGameOver  = false;
   pedagogicFenAvantCoup = null;
-  resetBoardToNeutral();
-  setActiveMode(null);
   const statusEl = document.getElementById("pedagogic-status");
-  if (statusEl) statusEl.textContent = "Partie abandonnée.";
+  if (statusEl) statusEl.textContent = "Partie abandonnée — défaite.";
+  const opposant = pedagogicCampAlain === "noirs" ? "blancs" : "noirs";
+  showGameOverBanner(
+    { gagnant: opposant, message: "Partie abandonnée par Alain — défaite." },
+    pedagogicCampAlain,
+    () => analyserPartieDepuisPgn(_pedagogicGamePgnForAnalysis())
+  );
 }
 
 function reprendrePedagogicCoup() {
@@ -173,6 +183,7 @@ if (typeof socket !== "undefined") {
     pedagogicWaiting   = false;
     pedagogicSelected  = null;
     pedagogicGameOver  = false;
+    pedagogicAbandonne = false;
     pedagogicCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     setActiveMode("pedagogic");
 

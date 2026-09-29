@@ -167,6 +167,21 @@ function _activeModeCampAlain() {
   }
 }
 
+// Partie terminée par un clic sur "Abandonner" (issue #52) plutôt que par
+// mat/pat/nulle — utilisé par activeModeGameState() ci-dessous pour signaler
+// explicitement ce cas au chat libre du coach (coachBuildContext, board.js).
+// Contrairement à _activeModeCampAlain ci-dessus, la partie libre a bien un
+// état d'abandon propre (freeAbandonne) même si elle n'a pas de camp_alain.
+function _activeModeAbandoned() {
+  switch (activeMode) {
+    case "free":      return !!freeAbandonne;
+    case "pedagogic": return !!pedagogicAbandonne;
+    case "opening":   return !!openingAbandonne;
+    case "finale":    return !!finaleAbandonne;
+    default:          return false;
+  }
+}
+
 function activeModeGameState() {
   const game = _activeModeGameInstance();
   if (!game) return null;
@@ -180,6 +195,7 @@ function activeModeGameState() {
     campAlain: _activeModeCampAlain(),
     pgn: game.pgn(),
     move: history.length ? history[history.length - 1] : "",
+    abandonne: _activeModeAbandoned(),
   };
 }
 

@@ -441,6 +441,14 @@ def _build_context_text(context) -> str:
     # réellement jouée par Alain (voir _DEMONSTRATION_ADDENDUM).
     mode_demonstration = bool(context.get("mode_demonstration"))
     demo_coups_joues = context.get("demo_coups_joues")
+    # Partie terminée par abandon (issue #52) : sans ce champ explicite, le
+    # chat libre sollicité juste après un clic sur "Abandonner" ne recevait
+    # que le PGN/FEN de la partie, sans savoir qu'elle est terminée ni
+    # pourquoi — le coach répondait alors comme si la partie continuait,
+    # voire niait qu'un coup ait été joué (plateau remis à zéro côté client
+    # avant ce correctif).
+    partie_terminee = bool(context.get("partie_terminee"))
+    resultat_partie = (context.get("resultat_partie") or "").strip()
     lines = []
     if camp_alain in ("blancs", "noirs"):
         camp_txt = "Blancs" if camp_alain == "blancs" else "Noirs"
@@ -550,6 +558,14 @@ def _build_context_text(context) -> str:
         lines.append(
             "Mode démonstration : Stockfish joue seul les deux camps sur "
             f"cette position, Alain n'a joué AUCUN coup{detail_coups}."
+        )
+    if partie_terminee:
+        detail = f" ({resultat_partie})" if resultat_partie else ""
+        lines.append(
+            "Cette partie est terminée{detail} — Alain ne jouera plus aucun "
+            "coup dans cette partie précise. S'il pose une question sur ce "
+            "qui vient de se passer, réponds à partir du PGN complet "
+            "ci-dessous, ne dis jamais qu'aucun coup n'a été joué.".format(detail=detail)
         )
     if pgn:
         lines.append(f"PGN de la partie :\n{pgn}")

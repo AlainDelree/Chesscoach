@@ -19,6 +19,8 @@ let freeSelectedSquare = null;  // case algébrique sélectionnée ("e2") ou nul
 let freeLastMove       = null;  // { from, to } (cases algébriques) du dernier coup joué
 let freeAutoStockfish  = false;
 let freeWaitingEngine  = false; // évite les double-clics pendant l'attente de Stockfish
+let freeGameOver       = false; // partie terminée (mat ou abandon, issue #52) : coups bloqués
+let freeAbandonne      = false; // terminée spécifiquement par "Abandonner" (issue #52, cf. coachBuildContext)
 
 function freeSquareIdToAlgebraic(id) {
   const [file, rank] = id.split("-").map(Number);
@@ -31,17 +33,26 @@ function freeAlgebraicToSquareId(square) {
   return `${file}-${rank}`;
 }
 
+// Issue #52 : "Abandonner" ne remet plus le plateau à zéro — la partie
+// atteinte reste affichée (plateau, historique, bannière de fin comme pour
+// un mat/pat/nulle), coups suivants bloqués via freeGameOver, pour que le
+// chat libre puisse continuer à en discuter (coachBuildContext lit
+// activeModeGameState(), qui reste alimenté par freeGame tant qu'il n'est
+// pas réinitialisé). Le plateau ne redevient vierge qu'au démarrage explicite
+// d'une nouvelle partie (startFreeGameFromFen) ou à un changement de mode
+// (ensureModeSwitchClean, qui appelle cette même fonction puis le panneau du
+// nouveau mode réinitialise son propre affichage).
 function abandonFreeGame() {
-  if (!freePlayActive) return;
-  freePlayActive     = false;
-  freeGame           = null;
+  if (!freePlayActive || freeGameOver) return;
+  freeGameOver       = true;
+  freeAbandonne      = true;
   freeSelectedSquare = null;
-  freeLastMove       = null;
   freeWaitingEngine  = false;
-  resetBoardToNeutral();
-  setActiveMode(null);
+  const boardEl = document.getElementById("board");
+  if (boardEl) boardEl.onclick = null;
   const statusEl = document.getElementById("free-play-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
+  showGameOverBanner({ gagnant: null, message: "Partie abandonnée." }, null, () => analyserPartieDepuisPgn(_freeGamePgnForAnalysis()));
 }
 
 function startFreeGame() {
@@ -62,6 +73,8 @@ function startFreeGameFromFen(fen) {
   freeSelectedSquare = null;
   freeLastMove        = null;
   freeWaitingEngine  = false;
+  freeGameOver       = false;
+  freeAbandonne      = false;
 
   const autoCb = document.getElementById("free-auto-stockfish");
   freeAutoStockfish = !!(autoCb && autoCb.checked);
@@ -103,7 +116,7 @@ function updateFreePlayStatus() {
 }
 
 function onFreePlayBoardClick(e) {
-  if (!freePlayActive || !freeGame || freeWaitingEngine) return;
+  if (!freePlayActive || !freeGame || freeWaitingEngine || freeGameOver) return;
   const sqEl = e.target.closest(".square");
   if (!sqEl) return;
   const square = freeSquareIdToAlgebraic(sqEl.id.replace("sq-", ""));
@@ -164,7 +177,7 @@ function _freeGamePgnForAnalysis() {
 // pas de camp_alain propre (les deux camps peuvent être joués librement) :
 // askCoachOnDemand() accepte déjà un camp_alain vide (contexte générique).
 function askFreeCoach() {
-  if (!freePlayActive || !freeGame || freeWaitingEngine) return;
+  if (!freePlayActive || !freeGame || freeWaitingEngine || freeGameOver) return;
   askCoachOnDemand(freeGame.fen(), null, null);
 }
 
@@ -244,6 +257,7 @@ if (typeof socket !== "undefined") {
     }
 
     if (data && data.game_over) {
+      freeGameOver = true;
       const statusEl = document.getElementById("free-play-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       showGameOverBanner(data.game_over_info, null, () => analyserPartieDepuisPgn(_freeGamePgnForAnalysis()));

@@ -590,12 +590,13 @@ function coachBuildContext() {
     const state = activeModeGameState();
     if (state && state.fen) {
       const modeOrigine = _MODE_ORIGINE_LABELS[activeMode] || "chat_libre";
-      // Historique des coups (pgn/move, issue #33) : pertinent pour les
-      // parties pédagogique/ouverture/finale (une vraie partie en cours),
-      // pas pour le mode exercice qui porte sur une position isolée par
-      // nature (hors périmètre issue #33, cf. exerciseChatContextExtra qui
-      // fournit déjà son propre contexte dédié).
-      const avecHistorique = activeMode === "pedagogic" || activeMode === "opening" || activeMode === "finale";
+      // Historique des coups (pgn/move, issue #33, étendu à "free" par
+      // l'issue #52) : pertinent pour les parties libre/pédagogique/
+      // ouverture/finale (une vraie partie en cours), pas pour le mode
+      // exercice qui porte sur une position isolée par nature (hors
+      // périmètre issue #33, cf. exerciseChatContextExtra qui fournit déjà
+      // son propre contexte dédié).
+      const avecHistorique = activeMode === "pedagogic" || activeMode === "opening" || activeMode === "finale" || activeMode === "free";
       const ctx = {
         fen: state.fen,
         move: avecHistorique ? (state.move || "") : "",
@@ -603,6 +604,13 @@ function coachBuildContext() {
         camp_alain: state.campAlain || "",
         mode_origine: modeOrigine,
       };
+      // Partie terminée par abandon (issue #52) : sans ce signal explicite,
+      // le chat libre sollicité juste après ne sait pas que la partie est
+      // finie — voir _build_context_text (llm_coach.py).
+      if (state.abandonne) {
+        ctx.partie_terminee = true;
+        ctx.resultat_partie = "Alain a abandonné cette partie.";
+      }
       // Mode exercice (issue #17) : sans ce complément, le chat libre ne
       // connaît que la position/le camp, pas le coup proposé ni le verdict
       // Stockfish déjà rendu par le coach pour cette tentative.
