@@ -96,7 +96,25 @@
     @media (max-width: 900px) {
       .usage-full { display: none; }
       .usage-compact { display: inline; }
-      #usage-detail { right: auto; left: 0; }
+      /* position: fixed plutôt qu'absolute (issue #54) : ancré au widget,
+         le panneau de détail dépassait l'écran sur mobile dès que le widget
+         se trouve près du bord droit de l'en-tête (constaté avec Playwright
+         à 390px — le panneau débordait de ~100px hors viewport). En fixed
+         avec des marges liées au viewport, il reste toujours contenu, quelle
+         que soit la position du widget qui l'ancre. */
+      #usage-detail {
+        position: fixed;
+        /* top posé dynamiquement par usage_tokens.js à l'ouverture, sous le
+           bouton qui l'ancre (sa position verticale dans l'en-tête varie
+           selon que le titre tient sur une ou plusieurs lignes) */
+        left: 8px;
+        right: 8px;
+        margin-top: 0;
+        white-space: normal;
+        max-width: none;
+      }
+      #usage-detail table { width: 100%; }
+      #usage-detail td { white-space: normal; word-break: break-word; }
     }
 
     #app {

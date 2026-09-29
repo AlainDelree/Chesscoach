@@ -90,12 +90,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const widget = document.getElementById("usage-tokens-widget");
   const toggleBtn = document.getElementById("usage-toggle-btn");
+  const detail = document.getElementById("usage-detail");
+  const mobileQuery = window.matchMedia("(max-width: 900px)");
   if (widget && toggleBtn) {
     // Le survol (CSS :hover) affiche déjà le détail sur desktop — le clic/tap
     // bascule un état persistant pour le tactile, où il n'y a pas de survol.
     toggleBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      const opening = !widget.classList.contains("usage-detail-open");
       widget.classList.toggle("usage-detail-open");
+      // Sur mobile, #usage-detail passe en position:fixed (CSS) pour ne
+      // jamais déborder du viewport en largeur, quelle que soit la position
+      // du widget dans l'en-tête (celui-ci peut se trouver n'importe où
+      // selon le nombre de lignes du titre) — mais position:fixed ne peut
+      // pas hériter d'un ancrage "top: 100% du parent" comme le fait
+      // position:absolute sur desktop, d'où ce calcul explicite ici.
+      if (opening && detail && mobileQuery.matches) {
+        const rect = toggleBtn.getBoundingClientRect();
+        detail.style.top = Math.round(rect.bottom + 6) + "px";
+      } else if (detail) {
+        detail.style.top = "";
+      }
     });
     document.addEventListener("click", (e) => {
       if (!widget.contains(e.target)) widget.classList.remove("usage-detail-open");
