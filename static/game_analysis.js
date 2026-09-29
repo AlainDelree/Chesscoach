@@ -1,5 +1,5 @@
 /*
- * game_analysis.js — ChessCoach (issues #41/#42)
+ * game_analysis.js — ChessCoach (issues #41/#42/#59)
  *
  * Bouton "Analyser cette partie" du panneau Bibliothèque/Revue PGN : lance
  * une analyse Stockfish synchrone (un aller-retour SocketIO, "analyser_pgn"
@@ -17,9 +17,14 @@
  * l'explorer librement — "Coup Stockfish" et "Demander l'avis du coach" y
  * restent disponibles, sans construire de nouveau mode dédié.
  *
- * Point d'entrée depuis la fin d'une partie pédagogique/libre :
- * analyserPartieDepuisPgn(), appelée par le bouton de la bannière de fin de
- * partie (board.js showGameOverBanner, câblé dans pedagogic.js/free_play.js).
+ * Point d'entrée depuis la fin d'une partie pédagogique/libre/ouverture/
+ * finale : analyserPartieDepuisPgn(), appelée par le bouton de la bannière de
+ * fin de partie (board.js showGameOverBanner, câblé dans pedagogic.js/
+ * free_play.js/opening.js/finales.js). Contrairement au bouton de l'onglet
+ * (un clic = un lancement), ce point d'entrée lance l'analyse automatiquement
+ * dès la partie chargée en revue, sans second clic — ou réaffiche le rapport
+ * déjà en mémoire si cette même partie vient d'être analysée cette session
+ * (issue #59, cf. _lancerAnalyseAutoDepuisBanniere plus bas).
  *
  * Explications narratives du coach (issue #42) : une fois le rapport
  * mécanique généré, un seul appel dédié ("analyse_choisir_coups_decisifs")
@@ -219,18 +224,71 @@ function explorerCoupFlagge(idx) {
   }
 }
 
-// Point 4 : point d'entrée depuis la fin d'une partie pédagogique/libre —
-// bascule vers l'onglet Bibliothèque/Revue avec la partie qui vient de se
-// dérouler déjà chargée (parsePgn, board.js), puis suit le même chemin que
-// le bouton "Analyser cette partie" du point 1 (l'analyse elle-même reste un
-// geste volontaire, pas automatique).
+// Point 4 : point d'entrée depuis la fin d'une partie pédagogique/libre/
+// ouverture/finale — bascule vers l'onglet Bibliothèque/Revue avec la partie
+// qui vient de se dérouler déjà chargée (parsePgn, board.js), puis lance
+// l'analyse automatiquement (issue #59 : un seul clic depuis la bannière de
+// fin de partie, plutôt que de contraindre l'utilisateur à recliquer sur le
+// bouton de l'onglet, en particulier sur GSM où il est placé sous la liste
+// des parties importées, cf. _lancerAnalyseAutoDepuisBanniere ci-dessous).
 function analyserPartieDepuisPgn(pgnText) {
   if (!pgnText) return;
   switchModeTab("library");
   parsePgn(pgnText, (info) => {
     const label = document.getElementById("pgn-lib-loaded-label");
     if (label) label.textContent = `Chargée : ${info.white} vs ${info.black} — partie tout juste terminée.`;
+    _lancerAnalyseAutoDepuisBanniere();
   });
+}
+
+// true entre le lancement d'une analyse déclenchée depuis la bannière de fin
+// de partie et l'arrivée de son résultat (ou de son erreur) — sert
+// uniquement à décider s'il faut faire défiler la zone d'analyse en vue une
+// fois le rapport rendu (issue #59). Ne s'applique jamais à un clic manuel
+// sur le bouton de l'onglet Bibliothèque/Revue (analyserPartieCourante seule,
+// sans passer par ici), qui garde son comportement actuel sans défilement
+// automatique.
+let _gameAnalysisScrollApresResultat = false;
+
+function _scrollVersPanneauAnalyse() {
+  const panel = document.getElementById("game-analysis-panel");
+  if (panel && typeof panel.scrollIntoView === "function") {
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+// Lancement automatique de l'analyse depuis la bannière de fin de partie
+// (issue #59) : si la partie qui vient d'être chargée correspond coup à coup
+// (mêmes SAN, même ordre) au rapport déjà en mémoire (_gameAnalysisResults —
+// une analyse "Analyser cette partie" menée plus tôt dans la session, quel
+// que soit l'onglet actif depuis), réaffiche directement ce rapport sans
+// relancer Stockfish ; sinon lance une analyse normale (analyserPartieCourante,
+// qui affiche déjà l'état "en cours" et désactive le bouton pour empêcher un
+// double lancement). Fait défiler la zone d'analyse en vue dans les deux cas
+// — surtout utile en affichage mobile, où elle est placée sous la longue
+// liste de parties importées.
+function _lancerAnalyseAutoDepuisBanniere() {
+  if (_gameAnalysisResults.length && _gameAnalysisResults.length === reviewMoves.length
+      && reviewMoves.every((m, i) => m.san === _gameAnalysisResults[i].san)) {
+    reviewMoves.forEach((m, i) => {
+      const r = _gameAnalysisResults[i];
+      m.qualite   = r.qualite;
+      m.delta_cp  = r.delta_cp;
+      m.best_move = r.best_move;
+    });
+    _isAnalysed = true;
+    renderGameAnalysisReport();
+    renderReview();
+    const status = document.getElementById("game-analysis-status");
+    if (status) {
+      status.textContent = `Analyse déjà disponible (${_gameAnalysisResults.length} coups) — réalisée plus tôt dans la session.`;
+    }
+    _scrollVersPanneauAnalyse();
+    return;
+  }
+  _gameAnalysisScrollApresResultat = true;
+  analyserPartieCourante();
+  _scrollVersPanneauAnalyse();
 }
 
 if (typeof socket !== "undefined") {
@@ -241,6 +299,7 @@ if (typeof socket !== "undefined") {
     const status = document.getElementById("game-analysis-status");
     if (!data || !data.moves) {
       if (status) status.textContent = "L'analyse a échoué.";
+      if (_gameAnalysisScrollApresResultat) { _gameAnalysisScrollApresResultat = false; _scrollVersPanneauAnalyse(); }
       return;
     }
     // Fusionne qualite/delta_cp/best_move dans reviewMoves (même ordre que
@@ -260,6 +319,11 @@ if (typeof socket !== "undefined") {
     renderReview();
     if (status) status.textContent = `Analyse terminée (${data.moves.length} coups examinés).`;
     demanderExplicationsCoach();
+    // Analyse lancée depuis la bannière de fin de partie (issue #59) : le
+    // rapport vient de grandir (liste des coups flagués), on refait défiler
+    // pour le ramener en vue une fois qu'il a vraiment quelque chose à
+    // montrer, plutôt que de se fier au seul défilement fait au lancement.
+    if (_gameAnalysisScrollApresResultat) { _gameAnalysisScrollApresResultat = false; _scrollVersPanneauAnalyse(); }
   });
 
   socket.on("analyser_pgn_error", (data) => {
@@ -273,6 +337,7 @@ if (typeof socket !== "undefined") {
       : "L'analyse a échoué.";
     if (status) status.textContent = msg;
     console.warn("[analyse de partie]", msg, data);
+    if (_gameAnalysisScrollApresResultat) { _gameAnalysisScrollApresResultat = false; _scrollVersPanneauAnalyse(); }
   });
 
   // Étape 1 (issue #42 point 1) : sélection des coups décisifs par le coach,
