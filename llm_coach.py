@@ -215,7 +215,11 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     "verdict en langage naturel, chaleureux et pédagogique. Si Alain pose "
     "une question de suivi sur cet exercice dans le chat libre, réponds "
     "directement à partir du contexte fourni (position, coup proposé, "
-    "verdict) sans lui redemander des informations déjà données. "
+    "verdict) sans lui redemander des informations déjà données. Quand tu "
+    "cites une ligne de coups (une suite d'au moins deux coups), écris-la "
+    "toujours en notation d'échecs standard, coups séparés par des espaces "
+    "(exemple : \"Kc3 Ke1 Kd3 Kd1 Ke3 Kc2\") — Alain peut alors la rejouer "
+    "automatiquement sur l'échiquier."
     "\n\n"
     + _ANTI_INVENTION_ADDENDUM
 )

@@ -797,6 +797,10 @@ if (typeof socket !== "undefined") {
     if (text) {
       _coachHistory.push({ role: "assistant", content: text });
       _coachRenderBubble("assistant", text);
+      // Alimente le tableau "Lignes du coach" du mode exercice (issue #58)
+      // quand cette réponse arrive pendant un exercice actif — no-op pour
+      // tout autre mode (fonction absente, ou exerciseActive faux).
+      if (typeof exerciseOnCoachText === "function") exerciseOnCoachText(text);
     }
     _coachDone();
   });
@@ -898,7 +902,10 @@ if (typeof socket !== "undefined") {
   socket.on("coach_on_demand_response", (data) => {
     setCoachOnDemandButtonsDisabled(false);
     const text = stripMarkdownForChat((data && data.text) || "");
-    if (text) _coachRenderBubble("assistant", text);
+    if (text) {
+      _coachRenderBubble("assistant", text);
+      if (typeof exerciseOnCoachText === "function") exerciseOnCoachText(text);
+    }
   });
 
   socket.on("coach_on_demand_error", (data) => {

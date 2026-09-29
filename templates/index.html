@@ -493,6 +493,26 @@
           <div id="exercise-coup-reel" style="display:none; font-size:0.82rem; color:#1a2a3a; margin-top:4px; padding:4px 6px; background:#fff6da; border-radius:4px;">
             Coup réellement joué à l'époque : <strong id="exercise-coup-reel-value"></strong>
           </div>
+          <div id="exercise-coach-lines" style="display:none; margin-top:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; flex-wrap:wrap;">
+              <strong style="font-size:0.82rem; color:#1a2a3a;">Lignes du coach</strong>
+              <label style="font-size:0.78rem; color:#556; display:flex; align-items:center; gap:4px;">
+                Vitesse
+                <select id="exercise-lines-speed" style="padding:4px; font-size:0.78rem;">
+                  <option value="500">0,5 s</option>
+                  <option value="1000" selected>1 s</option>
+                </select>
+              </label>
+            </div>
+            <div style="overflow-x:auto; margin-top:4px;">
+              <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                <tbody id="exercise-coach-lines-body"></tbody>
+              </table>
+            </div>
+            <button type="button" id="exercise-lines-restore-btn" onclick="exerciseLinesRestore()" style="display:none; margin-top:6px; padding:8px 10px; font-size:0.8rem;">
+              ◀ Revenir à la position de l'exercice
+            </button>
+          </div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-editor">
@@ -589,6 +609,7 @@
   <script src="{{ url_for('static', filename='pgn_library.js') }}"></script>
   <script src="{{ url_for('static', filename='free_play.js') }}"></script>
   <script src="{{ url_for('static', filename='game_analysis.js') }}"></script>
+  <script src="{{ url_for('static', filename='coach_lines.js') }}"></script>
   <script src="{{ url_for('static', filename='exercise.js') }}"></script>
   <script src="{{ url_for('static', filename='pedagogic.js') }}"></script>
   <script src="{{ url_for('static', filename='opening.js') }}"></script>

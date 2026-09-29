@@ -53,6 +53,27 @@ let exercisePvMeilleurCoup = null;
 // chat libre concernent une tentative annulée, pas l'état réel actuel.
 let exerciseJustReprised   = false;
 
+// Position juste après le coup proposé par Alain pour la tentative en cours
+// (issue #58) — second candidat de départ possible pour une ligne citée par
+// le coach, essayé seulement si la position d'avant son coup (exerciseFenAvant)
+// ne rend pas la ligne légale. Remise à null à chaque nouvel exercice/reprise.
+let exerciseFenApresCoup   = null;
+
+// Tableau des lignes de coups citées par le coach pour l'exercice en cours
+// (issue #58), vidé à chaque nouvel exercice. Chaque entrée :
+// { key, displayText, resolved: {label, startFen, steps} | null, special }
+// — resolved est null quand la ligne n'est légale depuis aucune des
+// positions de départ candidates ("ligne non jouable").
+let exerciseCoachLines        = [];
+let exerciseStockfishLineAdded = false; // une seule ligne Stockfish par exercice
+let exercisePlayingIdx        = null;   // index dans exerciseCoachLines en cours de lecture, ou null
+let exercisePlaybackController = null;  // contrôleur {stop()} de coach_lines.js, ou null
+// Vrai pendant qu'une ligne du coach est affichée sur le plateau (avant/après
+// lecture) plutôt que la position réelle de l'exercice — bloque les clics du
+// plateau (onExerciseBoardClick) tant qu'on n'est pas revenu à l'exercice.
+let exerciseLinesPreviewActive = false;
+let exercisePreviewSnapshot    = null;  // { fen, lastMove, selected } sauvegardés avant la 1re lecture
+
 function exercisePhaseFiltre() {
   const sel = document.getElementById("exercise-phase-select");
   return sel ? sel.value : "toutes";
@@ -72,6 +93,29 @@ function _exerciseResetTentative() {
   exercisePvMeilleurCoup = null;
 }
 
+function exerciseLineStopPlayback() {
+  // Interrompt la lecture en cours (bouton Stop, ou changement de ligne/
+  // d'exercice) sans toucher à exerciseGame ni à l'historique du chat.
+  if (exercisePlaybackController) exercisePlaybackController.stop();
+  exercisePlaybackController = null;
+  exercisePlayingIdx = null;
+}
+
+function _exerciseResetCoachLines() {
+  // Nouvel exercice, reprise, ou abandon (issue #58) : le tableau "Lignes du
+  // coach" ne doit rien conserver de la tentative précédente, et toute
+  // lecture en cours doit s'arrêter proprement.
+  exerciseLineStopPlayback();
+  exerciseCoachLines         = [];
+  exerciseStockfishLineAdded = false;
+  exerciseFenApresCoup       = null;
+  exerciseLinesPreviewActive = false;
+  exercisePreviewSnapshot    = null;
+  const restoreBtn = document.getElementById("exercise-lines-restore-btn");
+  if (restoreBtn) restoreBtn.style.display = "none";
+  renderExerciseCoachLinesTable();
+}
+
 // Pas d'événement serveur "exercise_abandon" : contrairement aux autres
 // modes, exercise_new ne laisse aucun état serveur à nettoyer entre deux
 // exercices (cf. _current_exercise, app.py, simplement remplacé au prochain
@@ -89,6 +133,7 @@ function abandonExerciseGame() {
   exerciseVerdictObtenu = false;
   exerciseLastMove  = null;
   _exerciseResetTentative();
+  _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
   resetBoardToNeutral();
   setActiveMode(null);
@@ -104,6 +149,7 @@ function startExercise() {
   exerciseLastMove  = null;
   exerciseJustReprised = false;
   _exerciseResetTentative();
+  _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
   // Nouvel exercice : le chat libre repart sans l'historique de l'exercice
   // précédent, qui n'a plus rien à voir avec la position/le coup en cours.
@@ -131,6 +177,15 @@ function reprendreExerciceCoup() {
   exerciseExploring = exerciseVerdictObtenu;
   exerciseLastMove  = null;
   _exerciseResetTentative();
+  // "Reprendre mon coup" doit rendre le plateau immédiatement rejouable —
+  // si une ligne du coach était en cours d'affichage/lecture (issue #58),
+  // on en sort sans vider le tableau (qui reste valable pour cet exercice).
+  exerciseLineStopPlayback();
+  exerciseLinesPreviewActive = false;
+  exercisePreviewSnapshot    = null;
+  const linesRestoreBtn = document.getElementById("exercise-lines-restore-btn");
+  if (linesRestoreBtn) linesRestoreBtn.style.display = "none";
+  renderExerciseCoachLinesTable();
   exerciseJustReprised = true;
   // La tentative annulée (coup proposé, verdict du coach) ne doit plus
   // induire le coach en erreur dans une question de suivi (issue #17,
@@ -161,6 +216,178 @@ function _exerciseUpdateCoupReelDisplay() {
   } else {
     el.style.display = "none";
   }
+}
+
+// ── Tableau "Lignes du coach" (issue #58) ───────────────────────────────────
+// Extraction/résolution/lecture réutilisables via coach_lines.js — ici,
+// seule la mécanique propre au mode exercice (quand alimenter le tableau,
+// quelles positions candidates, où le dessiner).
+
+function exerciseOnCoachText(text) {
+  // Hook générique (cf. board.js, socket.on("coach_response")/
+  // ("coach_on_demand_response")) : toute réponse du coach affichée pendant
+  // un exercice actif (verdict, ou question de suivi posée dans le chat
+  // libre pendant l'exploration après verdict) alimente aussi le tableau.
+  if (!exerciseActive) return;
+  _exerciseAddCoachLines(text);
+}
+
+function _exerciseAddCoachLines(text) {
+  if (!exerciseFenAvant) return;
+  const rawLines = extractCoachMoveLines(text);
+  if (!rawLines.length) return;
+  const candidates = [{ fen: exerciseFenAvant, label: "depuis la position de départ" }];
+  if (exerciseFenApresCoup && exerciseFenApresCoup !== exerciseFenAvant) {
+    candidates.push({ fen: exerciseFenApresCoup, label: "depuis la position après ton coup" });
+  }
+  let added = false;
+  rawLines.forEach((moves) => {
+    const key = moves.join(" ");
+    if (exerciseCoachLines.some((l) => l.key === key)) return;
+    const resolved = resolveCoachLineStart(candidates, moves);
+    exerciseCoachLines.push({ key, displayText: key, resolved, special: null });
+    added = true;
+  });
+  if (added) renderExerciseCoachLinesTable();
+}
+
+function _exerciseAddStockfishLine() {
+  // Bonus (issue #58) : la ligne du meilleur coup déjà calculée par
+  // Stockfish et transmise au coach (exercisePvMeilleurCoup, issue #20) —
+  // toujours depuis exerciseFenAvant (cf. engine_stockfish._pv_to_san,
+  // appelé depuis la position d'avant le coup proposé). Une seule fois par
+  // exercice, même si plusieurs verdicts successifs se succèdent.
+  if (exerciseStockfishLineAdded) return;
+  if (!exerciseFenAvant || !exercisePvMeilleurCoup) return;
+  const moveTokens = exercisePvMeilleurCoup.split(/\s+/).filter(Boolean);
+  if (!moveTokens.length) return;
+  exerciseStockfishLineAdded = true;
+  const key = moveTokens.join(" ");
+  // Même clé que celle utilisée par _exerciseAddCoachLines (le texte brut
+  // des coups, sans le préfixe d'affichage) : si le coach cite ensuite
+  // exactement la même ligne dans sa prose, elle ne doit pas apparaître une
+  // deuxième fois sous forme de doublon.
+  if (exerciseCoachLines.some((l) => l.key === key)) return;
+  const resolved = resolveCoachLineStart(
+    [{ fen: exerciseFenAvant, label: "depuis la position de départ" }],
+    moveTokens
+  );
+  exerciseCoachLines.unshift({
+    key,
+    displayText: "Ligne de Stockfish : " + key,
+    resolved,
+    special: "stockfish",
+  });
+  renderExerciseCoachLinesTable();
+}
+
+function renderExerciseCoachLinesTable() {
+  const wrap = document.getElementById("exercise-coach-lines");
+  const body = document.getElementById("exercise-coach-lines-body");
+  if (!wrap || !body) return;
+  if (!exerciseCoachLines.length) {
+    wrap.style.display = "none";
+    body.innerHTML = "";
+    return;
+  }
+  wrap.style.display = "block";
+  body.innerHTML = "";
+  exerciseCoachLines.forEach((line, idx) => {
+    const tr = document.createElement("tr");
+    tr.style.borderTop = "1px solid #e0e6ec";
+
+    const tdText = document.createElement("td");
+    tdText.style.cssText = "padding:6px 4px; vertical-align:top; word-break:break-word;";
+    tdText.textContent = line.displayText;
+    tr.appendChild(tdText);
+
+    const tdLabel = document.createElement("td");
+    tdLabel.style.cssText = "padding:6px 4px; vertical-align:top; white-space:nowrap; color:#667; font-size:0.74rem;";
+    if (line.resolved) {
+      tdLabel.textContent = line.resolved.label;
+    } else {
+      tdLabel.textContent = "ligne non jouable";
+      tdLabel.style.fontStyle = "italic";
+    }
+    tr.appendChild(tdLabel);
+
+    const tdBtn = document.createElement("td");
+    tdBtn.style.cssText = "padding:6px 4px; vertical-align:top; text-align:right;";
+    if (line.resolved) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.id = `exercise-line-btn-${idx}`;
+      btn.style.cssText = "padding:8px 12px; font-size:0.78rem; min-width:52px;";
+      btn.textContent = (exercisePlayingIdx === idx) ? "Stop" : "Play";
+      btn.onclick = () => exerciseLineToggle(idx);
+      tdBtn.appendChild(btn);
+    }
+    tr.appendChild(tdBtn);
+
+    body.appendChild(tr);
+  });
+}
+
+function exerciseLineToggle(idx) {
+  const line = exerciseCoachLines[idx];
+  if (!line || !line.resolved) return;
+
+  if (exercisePlayingIdx === idx) {
+    exerciseLineStopPlayback();
+    renderExerciseCoachLinesTable();
+    return;
+  }
+  exerciseLineStopPlayback();
+
+  if (!exerciseLinesPreviewActive) {
+    // Première lecture depuis la position réelle de l'exercice (issue #58) :
+    // on la mémorise pour pouvoir y revenir, quel que soit le nombre de
+    // lignes rejouées ensuite avant le retour explicite.
+    exercisePreviewSnapshot = {
+      fen: exerciseGame.fen(),
+      lastMove: exerciseLastMove,
+      selected: exerciseSelected,
+    };
+    exerciseLinesPreviewActive = true;
+    exerciseSelected = null;
+    const restoreBtn = document.getElementById("exercise-lines-restore-btn");
+    if (restoreBtn) restoreBtn.style.display = "inline-block";
+  }
+
+  exercisePlayingIdx = idx;
+  renderExerciseCoachLinesTable();
+
+  renderBoard(line.resolved.startFen.split(" ")[0], null, null, null, null, null, null);
+
+  const speedSel = document.getElementById("exercise-lines-speed");
+  const speedMs = speedSel ? parseInt(speedSel.value, 10) : 1000;
+
+  exercisePlaybackController = playCoachLineSequence(line.resolved.steps, {
+    speedMs,
+    renderStep: (fen, from, to) => {
+      renderBoard(fen.split(" ")[0], freeAlgebraicToSquareId(from), freeAlgebraicToSquareId(to), null, null, null, null);
+    },
+    onDone: () => {
+      exercisePlayingIdx = null;
+      exercisePlaybackController = null;
+      renderExerciseCoachLinesTable();
+    },
+  });
+}
+
+function exerciseLinesRestore() {
+  exerciseLineStopPlayback();
+  renderExerciseCoachLinesTable();
+  if (exercisePreviewSnapshot) {
+    exerciseGame     = new Chess(exercisePreviewSnapshot.fen);
+    exerciseLastMove = exercisePreviewSnapshot.lastMove;
+    exerciseSelected = exercisePreviewSnapshot.selected;
+  }
+  exerciseLinesPreviewActive = false;
+  exercisePreviewSnapshot    = null;
+  const restoreBtn = document.getElementById("exercise-lines-restore-btn");
+  if (restoreBtn) restoreBtn.style.display = "none";
+  renderExerciseBoard();
 }
 
 function askExerciseCoach() {
@@ -207,6 +434,11 @@ function renderExerciseBoard() {
 
 function onExerciseBoardClick(e) {
   if (!exerciseActive || !exerciseGame) return;
+  // Le plateau affiche une ligne du coach (issue #58, avant/pendant/après sa
+  // lecture) plutôt que la position réelle de l'exercice : les clics sont
+  // bloqués jusqu'au retour explicite à l'exercice ("Revenir à la position
+  // de l'exercice"), pour ne jamais mélanger les deux positions.
+  if (exerciseLinesPreviewActive) return;
   // Tant que le verdict n'est pas encore revenu pour la tentative en cours,
   // le plateau reste bloqué (le coach réfléchit) ; une fois le verdict rendu,
   // exerciseExploring passe à vrai (cf. socket.on("exercise_comment")) et le
@@ -262,6 +494,11 @@ function submitExerciseAnswer(move) {
   exerciseAnswered = true;
   exerciseCoupPropose  = move.san;
   exerciseJustReprised = false;
+  // Second candidat de départ pour une ligne citée par le coach (issue #58,
+  // cf. resolveCoachLineStart) : la position juste après le coup qu'Alain
+  // vient de proposer, essayée si la ligne n'est pas légale depuis
+  // exerciseFenAvant (position d'avant son coup).
+  exerciseFenApresCoup = exerciseGame.fen();
   const statusEl = document.getElementById("exercise-status");
   if (statusEl) statusEl.textContent = "Le coach réfléchit...";
   const messageUtilisateur = `Exercice — je joue ${move.san}`;
@@ -288,6 +525,7 @@ if (typeof socket !== "undefined") {
     exerciseLastMove  = null;
     exerciseFenAvant  = data.fen;
     exerciseCampAlain = data.camp_alain;
+    _exerciseResetCoachLines();
     setActiveMode("exercise");
 
     _boardFlipped = (data.camp_alain === "noirs");
@@ -325,7 +563,11 @@ if (typeof socket !== "undefined") {
     exercisePvCoupPropose  = (data && data.pv_coup_propose) || null;
     exercisePvMeilleurCoup = (data && data.pv_meilleur_coup) || null;
     _exerciseUpdateCoupReelDisplay();
+    // Ligne de Stockfish (bonus, issue #58) : déjà calculée et transmise
+    // avec le verdict (pv_meilleur_coup), pas besoin de recalcul côté client.
+    _exerciseAddStockfishLine();
     const text = stripMarkdownForChat((data && data.text) || "");
+    _exerciseAddCoachLines(text);
     if (text) {
       _coachRenderBubble("assistant", text);
       if (typeof _coachHistory !== "undefined") {
