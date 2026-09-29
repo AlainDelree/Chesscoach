@@ -43,5 +43,12 @@ SYZYGY_PATH = ENGINES_DIR / "syzygy"
 LLM_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 LLM_MODEL = os.environ.get("CHESSCOACH_LLM_MODEL", "claude-haiku-4-5")
 
+# Mode debug Flask/Werkzeug (débogueur interactif + rechargement automatique
+# du code) — désactivé par défaut (issue #51) car le débogueur expose une
+# console web joignable avant le filtre d'accès distant. Réactivable pour le
+# développement local via cette variable ; app.py force alors l'écoute sur
+# 127.0.0.1 uniquement, jamais sur 0.0.0.0.
+DEBUG_DEV = os.environ.get("CHESSCOACH_DEBUG_DEV", "") == "1"
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SYZYGY_PATH.mkdir(parents=True, exist_ok=True)

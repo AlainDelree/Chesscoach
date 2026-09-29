@@ -1833,5 +1833,14 @@ if __name__ == "__main__":
     # Tailscale — _FiltreAccesDistant ci-dessus reste la vraie barrière de
     # sécurité (localhost + 100.64.0.0/10 uniquement), ce n'est pas une
     # écoute ouverte sans filtre.
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True,
-                 allow_unsafe_werkzeug=True)
+    #
+    # debug=False par défaut (issue #51) : le débogueur Werkzeug (console web
+    # interactive, protégée par un simple code PIN) peut être servi avant
+    # _FiltreAccesDistant et serait donc potentiellement joignable depuis le
+    # réseau local ou un wifi public si jamais activé sur cette écoute
+    # 0.0.0.0. CHESSCOACH_DEBUG_DEV=1 le réactive pour le développement local
+    # (debug + rechargement automatique), mais force alors l'écoute sur
+    # 127.0.0.1 uniquement — jamais combiné avec 0.0.0.0.
+    host = "127.0.0.1" if config.DEBUG_DEV else "0.0.0.0"
+    socketio.run(app, host=host, port=5000, debug=config.DEBUG_DEV,
+                 use_reloader=config.DEBUG_DEV, allow_unsafe_werkzeug=True)

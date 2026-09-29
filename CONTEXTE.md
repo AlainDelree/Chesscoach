@@ -78,6 +78,16 @@ vérification d'origine intégrée à Socket.IO compare l'Origin du navigateur
 au Host de la requête, donc elle s'aligne automatiquement sur l'adresse
 utilisée (locale ou Tailscale) sans configuration supplémentaire.
 
+Mode debug Flask/Werkzeug désactivé par défaut (issue #51) : le débogueur
+interactif expose une console web (protégée par un simple code PIN) qui
+pourrait être servie avant `_FiltreAccesDistant` et donc potentiellement
+joignable depuis le réseau local ou un wifi public. Conséquence pratique :
+**après une modification du code, il faut relancer le coach à la main**
+(plus de rechargement automatique). Réactivation volontaire pour le
+développement local via `CHESSCOACH_DEBUG_DEV=1` — dans ce cas l'appli
+n'écoute plus que sur `127.0.0.1` (jamais combiné avec l'écoute
+`0.0.0.0`/Tailscale).
+
 ## Conventions spécifiques à ce projet
 - Toute modification de code passe par une issue Bridge_Agent
   (PROJET | chesscoach), même petite.
