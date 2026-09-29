@@ -712,7 +712,7 @@ function _coachRenderBubble(role, text) {
   if (empty) empty.style.display = "none";
   const bubble = document.createElement("div");
   const isUser = role === "user";
-  bubble.style.cssText = `background:${isUser ? "#e8f0f8" : "#dcecdc"}; border-radius:8px; padding:8px 12px; align-self:${isUser ? "flex-end" : "flex-start"}; max-width:88%; font-size:1.05rem; line-height:1.45; color:#1a2a3a; white-space:pre-wrap;`;
+  bubble.className = "coach-bubble " + (isUser ? "user" : "assistant");
   bubble.textContent = text;
   history.appendChild(bubble);
   if (isUser) {
@@ -750,7 +750,7 @@ function _coachRenderCreditInsuffisant() {
   const empty = document.getElementById("coach-empty");
   if (empty) empty.style.display = "none";
   const bubble = document.createElement("div");
-  bubble.style.cssText = "background:#f8d7da; border-radius:8px; padding:8px 12px; align-self:flex-start; max-width:88%; font-size:1.05rem; line-height:1.45; color:#5a1a1a;";
+  bubble.className = "coach-bubble error";
   const p = document.createElement("div");
   p.textContent = "Le crédit de l'API Claude est épuisé — le coach ne peut plus répondre pour le moment.";
   bubble.appendChild(p);
@@ -758,7 +758,6 @@ function _coachRenderCreditInsuffisant() {
   a.href = CONSOLE_API_URL;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
-  a.style.cssText = "color:#5a1a1a; text-decoration:underline; display:inline-block; margin-top:4px;";
   a.textContent = "Recharger sur la Console";
   bubble.appendChild(a);
   history.appendChild(bubble);

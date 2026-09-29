@@ -11,34 +11,72 @@
        utilisé pour jouer, seul le double-tap-zoom est neutralisé. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <title>ChessCoach</title>
+  <!-- Figtree (texte courant) / Caprasimo (titres, boutons, pastilles) —
+       polices de la maquette Claude Design (issue #63, design/exercice.html),
+       chargées ici depuis Google Fonts avec la même pile de secours que la
+       maquette (system-ui, sans-serif) si le service est indisponible. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caprasimo&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='board.css') }}">
   <style>
     /* Mise en page générale de la page (colonnes) — board.css ne définit que
-       les styles des composants (plateau, historique, chat...), pas
-       l'agencement de la page qui les contient. */
+       les styles des composants (plateau, historique, chat...) et les
+       variables de palette --cc-*, pas l'agencement de la page qui les
+       contient. */
     body {
       margin: 0;
-      font-family: system-ui, sans-serif;
-      background: #eef2f6;
-      color: #1a2a3a;
+      font-family: var(--cc-font-body);
+      background: var(--cc-bg);
+      color: var(--cc-text);
     }
     header {
       padding: 10px 16px;
-      background: #1a2a3a;
-      color: #fff;
+      background: var(--cc-bg);
+      color: var(--cc-text);
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      border-bottom: 1px solid var(--cc-divider);
     }
-    header h1 { margin: 0; font-size: 1.1rem; }
+    header h1 { margin: 0; font-size: 1.05rem; font-family: var(--cc-font-heading); font-weight: 400; color: var(--cc-accent-strong); }
     header .cout-api-link {
-      color: #cfe0f0;
+      color: var(--cc-accent);
       font-size: 0.9rem;
+      font-family: var(--cc-font-body);
+      font-weight: 600;
       text-decoration: none;
       white-space: nowrap;
     }
     header .cout-api-link:hover { text-decoration: underline; }
+
+    /* Apparence commune des boutons (issue #63) : pastille à bord terracotta
+       (seule couleur cliquable, souhait d'Alain) sur tous les modes — les
+       classes plus spécifiques ci-dessous (.mode-tab-btn, .llm-model-btn,
+       .coach-send-btn...) prennent le dessus par spécificité CSS. */
+    button {
+      font-family: var(--cc-font-body);
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--cc-accent-strong);
+      background: var(--cc-bg);
+      border: 2px solid var(--cc-accent);
+      border-radius: var(--cc-radius-pill);
+      padding: 6px 14px;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: var(--cc-accent); color: var(--cc-bg); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-filled {
+      background: var(--cc-accent) !important;
+      color: var(--cc-bg) !important;
+      border: none !important;
+      font-family: var(--cc-font-heading);
+      font-weight: 400;
+    }
+    .btn-filled:hover:not(:disabled) { background: var(--cc-accent-hover) !important; }
 
     /* Sélecteur de modèle Claude actif (issue #61) : deux boutons contigus
        façon "segmented control", discret dans l'en-tête près du compteur de
@@ -49,29 +87,30 @@
     #llm-model-selector {
       display: flex;
       align-items: center;
-      border: 1px solid #3a5570;
-      border-radius: 4px;
+      border: 2px solid var(--cc-accent);
+      border-radius: var(--cc-radius-pill);
       overflow: hidden;
       flex-shrink: 0;
     }
     #llm-model-selector .llm-model-btn {
       background: none;
       border: none;
-      padding: 3px 8px;
+      border-radius: 0;
+      padding: 4px 10px;
       margin: 0;
       min-height: 0;
-      color: #9fb3c8;
+      color: var(--cc-accent-strong);
       font-size: 0.72rem;
-      font-family: inherit;
+      font-family: var(--cc-font-body);
       cursor: pointer;
       white-space: nowrap;
     }
-    #llm-model-selector .llm-model-btn + .llm-model-btn { border-left: 1px solid #3a5570; }
-    #llm-model-selector .llm-model-btn:hover:not(:disabled) { color: #cfe0f0; }
+    #llm-model-selector .llm-model-btn + .llm-model-btn { border-left: 2px solid var(--cc-accent); }
+    #llm-model-selector .llm-model-btn:hover:not(:disabled) { background: var(--cc-neutral-200); color: var(--cc-accent-strong); }
     #llm-model-selector .llm-model-btn.active {
-      background: #3a5570;
-      color: #fff;
-      font-weight: 600;
+      background: var(--cc-accent);
+      color: var(--cc-bg);
+      font-weight: 700;
     }
     #llm-model-selector .llm-model-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .llm-model-compact { display: none; }
@@ -94,15 +133,17 @@
     #usage-toggle-btn {
       background: none;
       border: none;
+      border-radius: 0;
       padding: 0;
       margin: 0;
-      color: #9fb3c8;
+      color: var(--cc-accent-strong);
       font-size: 0.72rem;
-      font-family: inherit;
+      font-family: var(--cc-font-body);
+      font-weight: 600;
       cursor: pointer;
       white-space: nowrap;
     }
-    #usage-toggle-btn:hover { color: #cfe0f0; text-decoration: underline; }
+    #usage-toggle-btn:hover { background: none; color: var(--cc-accent-strong); text-decoration: underline; }
     .usage-compact { display: none; }
     #usage-detail {
       display: none;
@@ -110,15 +151,15 @@
       top: 100%;
       right: 0;
       margin-top: 6px;
-      background: #fff;
-      color: #1a2a3a;
-      border: 1px solid #a0b8d0;
-      border-radius: 4px;
+      background: var(--cc-surface);
+      color: var(--cc-text);
+      border: none;
+      border-radius: var(--cc-radius-md);
       padding: 8px 10px;
       font-size: 0.78rem;
       line-height: 1.5;
       white-space: nowrap;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      box-shadow: var(--cc-shadow-md);
       z-index: 20;
     }
     #usage-tokens-widget:hover #usage-detail,
@@ -197,33 +238,35 @@
       gap: 4px;
       margin-bottom: 10px;
       padding-bottom: 8px;
-      border-bottom: 1px solid #a0b8d0;
+      border-bottom: 1px solid var(--cc-divider);
     }
     .mode-tab-btn {
       padding: 5px 8px;
       font-size: 0.76rem;
-      border: 1px solid #a0b8d0;
-      background: #eef2f6;
-      border-radius: 4px;
+      font-family: var(--cc-font-body);
+      font-weight: 600;
+      border: 1px solid var(--cc-accent);
+      background: var(--cc-bg);
+      border-radius: var(--cc-radius-sm);
       cursor: pointer;
-      color: #1a2a3a;
+      color: var(--cc-accent-strong);
     }
     .mode-tab-btn.active {
-      background: #1a2a3a;
-      color: #fff;
-      border-color: #1a2a3a;
+      background: var(--cc-accent);
+      color: var(--cc-bg);
+      border-color: var(--cc-accent);
     }
     .mode-tab-panel { display: none; }
     .mode-tab-panel.active { display: block; }
     #review-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
     #finale-demo-next-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .panel {
-      background: #fff;
-      border: 1px solid #a0b8d0;
-      border-radius: 4px;
-      padding: 8px;
+      background: var(--cc-surface);
+      border: none;
+      border-radius: var(--cc-radius-lg);
+      padding: 14px 16px;
     }
-    .panel h2 { font-size: 0.9rem; margin: 0 0 6px; }
+    .panel h2 { font-size: 1rem; font-family: var(--cc-font-heading); font-weight: 400; margin: 0 0 10px; color: var(--cc-text); }
     #historique { max-height: 420px; }
     #pgn-lib-games { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
     #coach-column {
@@ -240,11 +283,11 @@
        onglets ; historique des coups en dernier (secondaire sur GSM). Rien
        ici n'est actif au-dessus de 900px : le layout desktop d'origine
        (colonnes #historique/#board/#mode-tabs/#coach côte à côte) est
-       inchangé. */
+       inchangé (issue #63, disposition grand écran conservée). */
     @media (max-width: 900px) {
-      :root { --bd-size: min(70vh, 560px, calc(100vw - 92px)); }
+      :root { --bd-size: min(76vh, 600px, calc(100vw - 76px)); }
 
-      #app { flex-direction: column; flex-wrap: nowrap; padding: 8px; gap: 10px; }
+      #app { flex-direction: column; flex-wrap: nowrap; padding: 8px; gap: 10px; padding-bottom: 84px; }
 
       #board-column,
       #coach-column,
@@ -267,19 +310,80 @@
          défiler la page (souhait d'Alain), au lieu de calc(100vh - 60px). */
       .coach-drawer { max-height: 55vh; }
 
-      /* Barre d'onglets de mode : défilement horizontal plutôt
-         qu'un retour à la ligne qui la rendrait trop haute. */
+      /* ── Sélecteur de mode en menu déroulant (issue #63) ─────────────────
+         Les 7 boutons d'onglets existants (mode-tab-btn, switchModeTab dans
+         controls.js — logique inchangée) sont déplacés par JS
+         (placeModeTabBarForViewport, controls.js) dans #mobile-mode-bar-slot,
+         collé en haut de l'écran ; le reste de l'en-tête (sélecteur de
+         modèle, compteur de tokens, lien Coût API) défile normalement avec
+         la page. Fermé : seul le bouton .active est visible, habillé en
+         pastille avec chevron. Ouvert (classe .open, posée par le
+         gestionnaire de clic délégué de controls.js) : les 7 boutons
+         s'affichent en liste, celui actif surligné en vert clair — sans
+         aucune réécriture de switchModeTab/ensureModeSwitchClean. */
+      #mobile-mode-bar-slot {
+        position: sticky;
+        top: 0;
+        z-index: 40;
+        background: var(--cc-bg);
+      }
       .mode-tab-bar {
         flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        padding-bottom: 10px;
+        overflow-x: visible;
+        gap: 4px;
+        margin-bottom: 0;
+        padding: 6px 8px 8px;
+        border-bottom: none;
+        position: relative;
       }
-      .mode-tab-btn {
+      .mode-tab-bar:not(.open) .mode-tab-btn:not(.active) { display: none; }
+      .mode-tab-bar:not(.open) .mode-tab-btn.active {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--cc-font-heading);
+        font-weight: 400;
+        font-size: 1rem;
+        background: var(--cc-bg);
+        color: var(--cc-accent-strong);
+        border: 2px solid var(--cc-accent);
+        border-radius: var(--cc-radius-pill);
+        padding: 10px 16px 10px 20px;
+        min-height: 0;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .mode-tab-bar:not(.open) .mode-tab-btn.active::after { content: "▾"; margin-left: auto; }
+      .mode-tab-bar.open {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        top: 100%;
+        background: var(--cc-surface);
+        border-radius: var(--cc-radius-md);
+        box-shadow: var(--cc-shadow-lg);
+        padding: 8px;
+      }
+      .mode-tab-bar.open .mode-tab-btn {
+        display: block;
         flex-shrink: 0;
-        padding: 10px 12px;
-        min-height: 44px;
-        font-size: 0.85rem;
+        font-family: var(--cc-font-body);
+        font-weight: 600;
+        font-size: 0.88rem;
+        text-align: left;
+        background: transparent;
+        color: var(--cc-text);
+        border: none;
+        border-radius: var(--cc-radius-pill);
+        padding: 11px 16px;
+        min-height: 0;
+      }
+      .mode-tab-bar.open .mode-tab-btn.active {
+        background: var(--cc-accent-2-200);
+        color: var(--cc-accent-2-800);
       }
 
       /* Cibles tactiles agrandies + 16px minimum sur les champs de saisie
@@ -291,10 +395,113 @@
         padding: 10px 14px;
         min-height: 44px;
       }
+      .mode-tab-bar .mode-tab-btn { min-height: 0; }
+
+      /* ── Barre du bas du mode exercice (issue #63) ───────────────────────
+         Pilote sharedReprendreCoup() (déjà existant, controls.js) et
+         l'ouverture de la feuille de phase ci-dessous — visible uniquement
+         quand l'onglet Exercice est actif (classe .show posée par
+         switchModeTab, controls.js). */
+      .mobile-exercise-bar.show {
+        display: flex;
+        gap: 8px;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+        background: var(--cc-bg);
+        box-shadow: var(--cc-shadow-lg);
+        z-index: 30;
+      }
+      .mobile-exercise-bar.show button {
+        flex: 1;
+        min-height: 44px;
+        padding: 8px 6px;
+        font-size: 0.82rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Sélecteur de phase + bouton "Nouvel exercice" d'origine (onglet
+         Exercice) : remplacés à l'écran par la feuille du bas sur mobile,
+         jamais retirés du DOM ni de leur logique (cf. commentaire HTML). */
+      .exercise-desktop-controls { display: none !important; }
+
+      /* ── Feuille "Nouvel exercice" (issue #63) ───────────────────────────
+         Pilote le <select id="exercise-phase-select"> existant (source de
+         vérité, lu par exercisePhaseFiltre()) ; "Lancer l'exercice" appelle
+         startExercise() sans le réécrire (exercise.js). */
+      .phase-sheet-backdrop.open {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: color-mix(in srgb, var(--cc-text) 45%, transparent);
+        z-index: 45;
+      }
+      .phase-sheet.open {
+        display: block;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: var(--cc-bg);
+        border-radius: var(--cc-radius-lg) var(--cc-radius-lg) 0 0;
+        box-shadow: var(--cc-shadow-lg);
+        padding: 22px 16px calc(30px + env(safe-area-inset-bottom, 0px));
+        z-index: 46;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-sizing: border-box;
+      }
+      .phase-sheet-title { font-family: var(--cc-font-heading); font-weight: 400; font-size: 1.4rem; color: var(--cc-text); margin: 0 0 14px; }
+      .phase-sheet-label { font-family: var(--cc-font-body); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--cc-text-muted); margin-bottom: 8px; }
+      .phase-sheet-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+      .phase-pill {
+        font-family: var(--cc-font-body);
+        font-weight: 600;
+        font-size: 0.95rem;
+        padding: 12px 18px;
+        min-height: 0;
+        border-radius: var(--cc-radius-pill);
+        border: 2px solid var(--cc-accent);
+        background: transparent;
+        color: var(--cc-accent-strong);
+        text-align: left;
+      }
+      .phase-pill.active { background: var(--cc-accent); color: var(--cc-bg); }
+      .phase-sheet-launch {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        font-family: var(--cc-font-heading);
+        font-weight: 400;
+        font-size: 1rem;
+        padding: 14px;
+        min-height: 0;
+        border-radius: var(--cc-radius-pill);
+        border: none;
+        background: var(--cc-accent);
+        color: var(--cc-bg);
+      }
     }
+
+    /* Composants mobiles (issue #63) : sans effet au-dessus de 900px — les
+       règles ci-dessus (dans la media query) sont les seules à leur donner
+       display:flex/block. */
+    #mobile-mode-bar-slot { display: block; }
+    .mobile-exercise-bar { display: none; }
+    .phase-sheet-backdrop, .phase-sheet { display: none; }
   </style>
 </head>
 <body>
+  <!-- Emplacement du sélecteur de mode en menu déroulant sur mobile (issue
+       #63) : vide sur grand écran, reçoit .mode-tab-bar (déplacé par
+       placeModeTabBarForViewport, controls.js) et le rend collé en haut de
+       l'écran sur GSM (<900px, cf. media query ci-dessus) — les 7 boutons
+       d'onglets existants (switchModeTab) ne sont jamais dupliqués. -->
+  <div id="mobile-mode-bar-slot"></div>
   <header>
     <h1>ChessCoach — plateau &amp; revue de partie</h1>
     <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
@@ -329,9 +536,15 @@
   <div id="app">
 
     <!-- ── Colonne historique des coups ─────────────────────────────────── -->
+    <!-- Repliable sur mobile (issue #63, toggleHistoriqueCollapsed dans
+         controls.js) : ajout purement présentation, la table #historique
+         elle-même et son rendu (renderHistory, board.js) sont inchangés. -->
     <div id="historique-column">
       <div class="panel">
-        <h2>Historique des coups</h2>
+        <div class="historique-header-row" onclick="toggleHistoriqueCollapsed()">
+          <h2 style="margin:0;">Historique des coups</h2>
+          <span class="historique-toggle-chevron">Déplier ▼</span>
+        </div>
         <div id="historique"></div>
       </div>
     </div>
@@ -375,7 +588,7 @@
         <strong id="review-move-san"></strong>
         <span id="review-best-move-san" style="display:none; color:#1a9bc0;"></span>
       </div>
-      <div id="fen-extract-status" style="font-size:0.78rem; color:#445; word-break:break-all;"></div>
+      <div id="fen-extract-status" style="font-size:0.78rem; color:var(--cc-text-muted); word-break:break-all;"></div>
       <div>
         <label style="font-size:0.82rem;">Importer un PGN :
           <input type="file" accept=".pgn,.txt" onchange="loadPgnFile(event)">
@@ -394,7 +607,7 @@
           <button id="shared-abandon-btn" onclick="sharedAbandonMode()">Abandonner</button>
           <button id="shared-ask-coach-btn" onclick="sharedAskCoach()">Demander l'avis du coach</button>
         </div>
-        <div id="shared-mode-status" style="font-size:0.78rem; color:#778; margin-top:4px;">Aucun mode interactif actif.</div>
+        <div id="shared-mode-status" style="font-size:0.78rem; color:var(--cc-text-muted); margin-top:4px;">Aucun mode interactif actif.</div>
       </div>
 
     </div>
@@ -408,7 +621,7 @@
          s'appliquent quel que soit le mode actif. -->
     <div id="mode-tabs-column">
       <div class="panel" style="width:100%; box-sizing:border-box;">
-        <div class="mode-tab-bar">
+        <div class="mode-tab-bar" id="mode-tab-bar">
           <button type="button" class="mode-tab-btn" id="tab-btn-library" onclick="switchModeTab('library')">Bibliothèque / Revue PGN</button>
           <button type="button" class="mode-tab-btn" id="tab-btn-free" onclick="switchModeTab('free')">Partie libre</button>
           <button type="button" class="mode-tab-btn" id="tab-btn-pedagogic" onclick="switchModeTab('pedagogic')">Partie pédagogique</button>
@@ -443,7 +656,7 @@
               <input type="file" accept=".pgn,.txt" onchange="pgnLibImportFile(event)">
             </label>
           </div>
-          <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
+          <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:var(--cc-text-muted); margin-top:4px;"></div>
 
           <!-- ── Analyse post-partie complète (issues #41/#42) ───────────
                Repère mécaniquement (delta_cp/qualite) les coups en perte
@@ -456,8 +669,8 @@
                "Expliquer ce coup" à la demande (pas d'appel automatique). -->
           <div id="game-analysis-panel" style="margin-top:10px; padding-top:8px; border-top:1px solid #dde6ee;">
             <button id="game-analysis-btn" onclick="analyserPartieCourante()">Analyser cette partie</button>
-            <div id="game-analysis-status" style="font-size:0.8rem; color:#445; margin-top:4px;"></div>
-            <div id="game-analysis-coach-status" style="font-size:0.8rem; color:#778; margin-top:2px; font-style:italic;"></div>
+            <div id="game-analysis-status" style="font-size:0.8rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+            <div id="game-analysis-coach-status" style="font-size:0.8rem; color:var(--cc-text-muted); margin-top:2px; font-style:italic;"></div>
             <ul id="game-analysis-report" style="list-style:none; margin:6px 0 0; padding:0; max-height:260px; overflow-y:auto;"></ul>
           </div>
         </div>
@@ -478,7 +691,7 @@
             <input id="free-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
             <button onclick="saveFreeGameAsFinale()">Enregistrer comme finale</button>
           </div>
-          <div id="free-play-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+          <div id="free-play-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-pedagogic">
@@ -486,7 +699,7 @@
             <button onclick="startPedagogicGame('blancs')">Jouer les Blancs</button>
             <button onclick="startPedagogicGame('noirs')">Jouer les Noirs</button>
           </div>
-          <div id="pedagogic-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+          <div id="pedagogic-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-opening">
@@ -498,13 +711,13 @@
                champ texte libre ci-dessus — un clic préremplit le champ avec
                le nom reconnu (1.e4/1.d4/1.c4/1.Nf3) ou, au-delà, le coup lui-même
                (voir opening_book.FIRST_MOVE_OPENING_NAMES). -->
-          <div id="opening-suggestions-label" style="font-size:0.76rem; color:#778; margin-top:6px;"></div>
+          <div id="opening-suggestions-label" style="font-size:0.76rem; color:var(--cc-text-muted); margin-top:6px;"></div>
           <div id="opening-suggestions" style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;"></div>
           <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
             <button onclick="startOpeningGame('noirs')">Jouer les Noirs</button>
           </div>
-          <div id="opening-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+          <div id="opening-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-finale">
@@ -526,12 +739,17 @@
             <button type="button" id="finale-demo-toggle-btn" onclick="toggleFinaleDemo()">Voir une démonstration</button>
             <button type="button" id="finale-demo-next-btn" onclick="finaleDemoNext()" style="display:none;">Coup suivant</button>
           </div>
-          <div id="finale-description" style="font-size:0.78rem; color:#556; margin-top:4px;"></div>
-          <div id="finale-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+          <div id="finale-description" style="font-size:0.78rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+          <div id="finale-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-exercise">
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <!-- Sélecteur de phase + bouton "Nouvel exercice" d'origine (source
+               de vérité, exercisePhaseFiltre()/startExercise() — exercise.js) :
+               masqués sur mobile (classe exercise-desktop-controls, cf. media
+               query) où la feuille du bas (#exercise-phase-sheet) les pilote
+               à leur place, mais jamais retirés du DOM ni de leur logique. -->
+          <div class="exercise-desktop-controls" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
             <select id="exercise-phase-select" style="flex:1; min-width:140px;">
               <option value="toutes">Toutes les phases</option>
               <option value="ouverture">Ouverture</option>
@@ -539,19 +757,19 @@
               <option value="finale">Finale</option>
             </select>
           </div>
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+          <div class="exercise-desktop-controls" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button onclick="startExercise()">Nouvel exercice</button>
           </div>
-          <div id="exercise-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
-          <div id="exercise-coup-reel" style="display:none; font-size:0.82rem; color:#1a2a3a; margin-top:4px; padding:4px 6px; background:#fff6da; border-radius:4px;">
+          <div id="exercise-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+          <div id="exercise-coup-reel" style="display:none; font-size:0.82rem; color:var(--cc-text); margin-top:4px; padding:6px 10px; background:var(--cc-accent-2-200); border-radius:var(--cc-radius-pill);">
             Coup réellement joué à l'époque : <strong id="exercise-coup-reel-value"></strong>
           </div>
           <div id="exercise-coach-lines" style="display:none; margin-top:8px;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; flex-wrap:wrap;">
-              <strong style="font-size:0.82rem; color:#1a2a3a;">Lignes du coach</strong>
-              <label style="font-size:0.78rem; color:#556; display:flex; align-items:center; gap:4px;">
+              <strong style="font-size:0.82rem; color:var(--cc-text);">Lignes du coach</strong>
+              <label style="font-size:0.78rem; color:var(--cc-text-muted); display:flex; align-items:center; gap:4px;">
                 Vitesse
-                <select id="exercise-lines-speed" style="padding:4px; font-size:0.78rem;">
+                <select id="exercise-lines-speed" style="padding:4px 10px; font-size:0.78rem; min-height:0; border-radius:var(--cc-radius-pill); border:2px solid var(--cc-accent); color:var(--cc-accent-strong); background:var(--cc-bg);">
                   <option value="500">0,5 s</option>
                   <option value="1000" selected>1 s</option>
                 </select>
@@ -574,7 +792,7 @@
             <button onclick="clearEditorBoard()">Vider l'échiquier</button>
           </div>
           <div id="editor-palette" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:8px;"></div>
-          <div id="editor-trash" style="margin-top:6px; padding:6px; border:1px dashed #a0b8d0; border-radius:4px; font-size:0.78rem; color:#778; text-align:center;">
+          <div id="editor-trash" style="margin-top:6px; padding:6px; border:1px dashed var(--cc-accent); border-radius:4px; font-size:0.78rem; color:var(--cc-text-muted); text-align:center;">
             Glisser une pièce ici pour la retirer de l'échiquier
           </div>
           <div style="display:flex; gap:12px; align-items:center; margin-top:8px; font-size:0.82rem;">
@@ -582,7 +800,7 @@
             <label><input type="radio" name="editor-trait" value="noirs" onchange="onEditorTraitChange()"> Trait aux Noirs</label>
           </div>
           <div style="display:flex; gap:12px; align-items:center; margin-top:4px; font-size:0.82rem;">
-            <span style="color:#556;">Alain joue :</span>
+            <span style="color:var(--cc-text-muted);">Alain joue :</span>
             <label><input type="radio" name="editor-camp-alain" id="editor-camp-alain-blancs" value="blancs" checked onchange="onEditorCampAlainChange()"> les Blancs</label>
             <label><input type="radio" name="editor-camp-alain" id="editor-camp-alain-noirs" value="noirs" onchange="onEditorCampAlainChange()"> les Noirs</label>
           </div>
@@ -594,7 +812,7 @@
             <input id="editor-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
             <button id="editor-save-btn" onclick="saveEditorPositionAsFinale()" disabled>Enregistrer comme finale</button>
           </div>
-          <div id="editor-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+          <div id="editor-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
         </div>
       </div>
     </div>
@@ -608,7 +826,7 @@
     <div id="coach-column">
       <div class="panel coach-drawer" style="margin-bottom:12px;">
         <h2 style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
-          <span>Coach</span>
+          <span style="display:flex; align-items:center; gap:8px;"><span class="coach-avatar" aria-hidden="true">C</span>Coach</span>
           <!-- Case "Commenter chaque coup" (issue #27) : déplacée ici depuis la
                barre mutualisée "Contrôles du mode actif" (issue #15), pour
                plus de proximité visuelle avec le fil de discussion qu'elle
@@ -622,13 +840,13 @@
           <button onclick="coachClear()" style="font-size:0.75rem; font-weight:normal;">Effacer</button>
         </h2>
         <div id="coach-history" class="coach-history">
-          <div id="coach-empty" style="color:#778; font-size:0.82rem; text-align:center; padding:20px 8px;">
+          <div id="coach-empty" style="color:var(--cc-text-muted); font-size:0.82rem; text-align:center; padding:20px 8px;">
             Posez une question sur la position affichée.
           </div>
         </div>
         <div class="coach-input-row">
           <textarea id="coach-input" placeholder="Votre question..." rows="3" style="flex:1; resize:vertical; font:inherit;"></textarea>
-          <button id="coach-send-btn" class="coach-send-btn" onclick="coachSend()">Envoyer</button>
+          <button id="coach-send-btn" class="coach-send-btn btn-filled" onclick="coachSend()">Envoyer</button>
           <div id="coach-spinner" class="coach-spinner"></div>
         </div>
       </div>
@@ -638,14 +856,38 @@
           {% for objectif in objectifs_courants %}
           <li>{{ objectif }}</li>
           {% else %}
-          <li id="training-program-empty" style="list-style:none; padding-left:0; color:#778;">Aucun programme établi pour l'instant.</li>
+          <li id="training-program-empty" style="list-style:none; padding-left:0; color:var(--cc-text-muted);">Aucun programme établi pour l'instant.</li>
           {% endfor %}
         </ul>
         <button id="training-program-btn" onclick="buildTrainingProgram()">Établir mon programme d'entraînement</button>
-        <div id="training-program-status" style="font-size:0.82rem; color:#445; margin-top:4px;"></div>
+        <div id="training-program-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
       </div>
     </div>
 
+  </div>
+
+  <!-- ── Barre du bas + feuille "Nouvel exercice" (mobile, issue #63) ────────
+       Sans effet au-dessus de 900px (cf. media query dans <style>). La barre
+       n'est visible (classe .show) que sur l'onglet Exercice — posée par
+       switchModeTab (controls.js) — et pilote sharedReprendreCoup() déjà
+       existant. La feuille pilote le <select id="exercise-phase-select">
+       existant (source de vérité, exercisePhaseFiltre() dans exercise.js) et
+       appelle startExercise() sans le réécrire. -->
+  <div id="mobile-exercise-bar" class="mobile-exercise-bar">
+    <button type="button" onclick="sharedReprendreCoup()">Reprendre mon coup</button>
+    <button type="button" class="btn-filled" onclick="openExercisePhaseSheet()">Nouvel exercice</button>
+  </div>
+  <div id="exercise-phase-sheet-backdrop" class="phase-sheet-backdrop" onclick="closeExercisePhaseSheet()"></div>
+  <div id="exercise-phase-sheet" class="phase-sheet" role="dialog" aria-label="Nouvel exercice">
+    <h3 class="phase-sheet-title">Nouvel exercice</h3>
+    <div class="phase-sheet-label">Phase de la partie</div>
+    <div class="phase-sheet-options" id="exercise-phase-options">
+      <button type="button" class="phase-pill" data-phase="toutes" onclick="exercisePhaseSheetPick('toutes')">Toutes les phases</button>
+      <button type="button" class="phase-pill" data-phase="ouverture" onclick="exercisePhaseSheetPick('ouverture')">Ouverture</button>
+      <button type="button" class="phase-pill" data-phase="milieu_de_partie" onclick="exercisePhaseSheetPick('milieu_de_partie')">Milieu de partie</button>
+      <button type="button" class="phase-pill" data-phase="finale" onclick="exercisePhaseSheetPick('finale')">Finale</button>
+    </div>
+    <button type="button" class="phase-sheet-launch" onclick="launchExerciseFromSheet()">Lancer l'exercice</button>
   </div>
 
   <script src="{{ url_for('static', filename='vendor/socket.io/socket.io.min.js') }}"></script>

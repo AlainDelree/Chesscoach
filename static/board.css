@@ -7,10 +7,50 @@
  * d'AlChess (sélecteurs #ex-board, #retrans-board, .ex-hint, spinner
  * d'exercice, etc.) — ne restent que les sélecteurs génériques renommés
  * #board / #arrows-svg / #eval-* pour coller aux IDs utilisés par board.js.
+ *
+ * ── Palette et typographies (issue #63) ──────────────────────────────────
+ * Variables reprises telles quelles de la maquette Claude Design
+ * (design/exercice.html, relevées via getComputedStyle plutôt que lues en
+ * texte brut — voir le rapport de l'issue). Règle de conception d'Alain :
+ * le terracotta (--cc-accent) ne sert qu'à ce qui est cliquable ; tout le
+ * reste (titres, textes d'état, compteur de tokens, avatars) utilise le
+ * brun foncé (--cc-accent-strong) ou le gris (--cc-text-muted). Deux
+ * teintes de jaune doux (--cc-last-move-*) sont ajoutées pour le dernier
+ * coup joué — absentes de la maquette (qui ne montre aucun coup en cours),
+ * c'est une demande propre à Alain.
  */
 
 :root {
   --bd-size: min(70vh, 560px);
+
+  /* Palette (issue #63, maquette Claude Design) */
+  --cc-bg:              #f5ead8;
+  --cc-surface:         #ebddc5;
+  --cc-text:            #201e1d;
+  --cc-text-muted:      #645c50;
+  --cc-neutral-200:     #eee7db;
+  --cc-neutral-800:     #474238;
+  --cc-accent:          #c67139; /* terracotta — réservé au cliquable */
+  --cc-accent-hover:    #b2622d;
+  --cc-accent-strong:   #8c491a; /* brun foncé — non cliquable */
+  --cc-accent-2-200:    #e1eecc; /* vert clair — item de menu actif */
+  --cc-accent-2-400:    #aebf92; /* case verte du plateau */
+  --cc-accent-2-800:    #3d472b; /* texte sur item de menu actif */
+  --cc-divider:         color-mix(in srgb, #201e1d 16%, transparent);
+  --cc-last-move-from:  #efe1a0; /* jaune doux — dernier coup (souhait d'Alain, absent de la maquette) */
+  --cc-last-move-to:    #e6cd74;
+
+  --cc-font-body:    "Figtree", system-ui, sans-serif;
+  --cc-font-heading: "Caprasimo", system-ui, sans-serif;
+
+  --cc-radius-pill: 99px;
+  --cc-radius-lg:   28px;
+  --cc-radius-md:   16px;
+  --cc-radius-sm:   8px;
+
+  --cc-shadow-sm: 0 1px 2px color-mix(in srgb, #2e2b25 14%, transparent);
+  --cc-shadow-md: 0 3px 10px color-mix(in srgb, #2e2b25 16%, transparent);
+  --cc-shadow-lg: 0 12px 32px color-mix(in srgb, #2e2b25 22%, transparent);
 }
 
 #board {
@@ -24,8 +64,8 @@
 #board-wrapper {
   display: flex;
   align-items: flex-start;
-  border: 2px solid #a0b8d0;
-  border-radius: 4px;
+  border: 2px solid var(--cc-accent);
+  border-radius: var(--cc-radius-md);
   overflow: hidden;
   position: relative;
 }
@@ -53,10 +93,13 @@
   pointer-events: none;
 }
 
-.square.light { background: #f0d9b5; }
-.square.dark  { background: #b58863; }
-.square.last-move-from       { background: #cdd16f !important; }
-.square.last-move-to         { background: #aaa23a !important; }
+.square.light { background: var(--cc-neutral-200); }
+.square.dark  { background: var(--cc-accent-2-400); }
+/* Dernier coup joué (issue #63, souhait d'Alain) : jaune doux, absent de la
+   maquette (qui ne montre aucun coup en cours) — remplace l'ancien
+   olive/kaki (#cdd16f/#aaa23a). */
+.square.last-move-from       { background: var(--cc-last-move-from) !important; }
+.square.last-move-to         { background: var(--cc-last-move-to)   !important; }
 .square.highlight-best-from  { background: #50c8f0 !important; }
 .square.highlight-best-to    { background: #1a9bc0 !important; }
 .square.feedback-bon         { background: #4caf50 !important; }
@@ -93,39 +136,39 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #a0b8d0;
-  border-radius: 4px;
-  background: #f0f4f8;
+  border: 1px solid var(--cc-accent);
+  border-radius: var(--cc-radius-sm);
+  background: var(--cc-surface);
   cursor: pointer;
   user-select: none;
 }
 .editor-palette-piece img { width: 85%; height: 85%; object-fit: contain; pointer-events: none; }
-.editor-palette-piece.selected { background: #6fa8dc; border-color: #1a2a3a; }
-.editor-palette-piece.editor-palette-delete { font-size: 0.68rem; text-align: center; color: #445; }
+.editor-palette-piece.selected { background: #6fa8dc; border-color: var(--cc-text); }
+.editor-palette-piece.editor-palette-delete { font-size: 0.68rem; text-align: center; color: var(--cc-text-muted); }
 
 /* ── Suggestions d'ouvertures populaires (issue #27) ── */
 .opening-suggestion-btn {
   padding: 3px 7px;
   font-size: 0.76rem;
-  border: 1px solid #a0b8d0;
-  background: #eef2f6;
-  border-radius: 4px;
+  border: 1px solid var(--cc-accent);
+  background: var(--cc-surface);
+  border-radius: var(--cc-radius-sm);
   cursor: pointer;
-  color: #1a2a3a;
+  color: var(--cc-accent-strong);
 }
-.opening-suggestion-btn:hover { background: #dde6ef; }
+.opening-suggestion-btn:hover { background: var(--cc-neutral-200); }
 
 /* ── Bannière de fin de partie (issue #31) ──────────────────────────────────
-   Remplace la simple ligne de statut discrète (0.82rem, gris #445) par un
-   bandeau nettement plus visible, placé au-dessus de l'échiquier. Couleur
-   distincte selon le résultat quand il est connaissable (victoire/défaite du
-   camp d'Alain) ; sinon (démonstration Stockfish-Stockfish, partie libre où
-   les deux camps sont joués librement) une couleur neutre "mat" reste
-   utilisée plutôt que de deviner. */
+   Remplace la simple ligne de statut discrète par un bandeau nettement plus
+   visible, placé au-dessus de l'échiquier. Couleur distincte selon le
+   résultat quand il est connaissable (victoire/défaite du camp d'Alain) ;
+   sinon (démonstration Stockfish-Stockfish, partie libre où les deux camps
+   sont joués librement) une couleur neutre "mat" reste utilisée plutôt que
+   de deviner. */
 .game-over-banner {
   margin-bottom: 8px;
   padding: 10px 14px;
-  border-radius: 6px;
+  border-radius: var(--cc-radius-md);
   font-size: 1.15rem;
   font-weight: 700;
   text-align: center;
@@ -168,15 +211,15 @@
 .mat-score {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #e94560;
+  color: var(--cc-accent-strong);
   margin-left: 6px;
 }
 
 /* ── Historique des coups ── */
 #historique { overflow-y: auto; flex: 1; }
 #historique table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-#historique td { padding: 2px 4px; white-space: nowrap; color: #1a2a3a; }
-#historique th { padding: 2px 4px; font-weight: 700; color: #1a2a3a; font-size: 0.8rem; border-bottom: 1px solid #a0b8d0; }
+#historique td { padding: 2px 4px; white-space: nowrap; color: var(--cc-text); }
+#historique th { padding: 2px 4px; font-weight: 700; color: var(--cc-text); font-size: 0.8rem; border-bottom: 1px solid var(--cc-divider); }
 
 .move-chip {
   display: inline-block;
@@ -186,17 +229,30 @@
   white-space: nowrap;
   width: 56px;
   text-align: left;
-  color: #1a2a3a;
+  color: var(--cc-text);
 }
-.move-chip.bon         { color: #1a2a3a; }
+.move-chip.bon         { color: var(--cc-text); }
 .move-chip.imprecision { color: #cc7700; }
 .move-chip.erreur      { color: #cc2200; }
 .move-chip.blunder     { color: #7b00b0; }
 
+/* Historique repliable (issue #63, disposition mobile du mode exercice) —
+   collapsibleHistoryToggle() dans controls.js ; comportement additif, la
+   table #historique elle-même est inchangée. */
+.historique-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  gap: 8px;
+}
+.historique-toggle-chevron { color: var(--cc-accent-strong); font-size: 0.8rem; white-space: nowrap; }
+#historique-column.collapsed #historique { display: none; }
+
 /* ── Barre d'évaluation Stockfish ── */
 .eval-bar-wrap  { display: flex; flex-direction: column; align-items: center; width: 18px; flex-shrink: 0; }
-.eval-score     { font-size: 0.62rem; color: #445; margin-bottom: 2px; white-space: nowrap; }
-.eval-bar-track { flex: 1; width: 14px; border-radius: 4px; overflow: hidden; border: 1px solid #333; background: #111; display: flex; flex-direction: column; }
+.eval-score     { font-size: 0.62rem; color: var(--cc-text-muted); margin-bottom: 2px; white-space: nowrap; }
+.eval-bar-track { flex: 1; width: 14px; border-radius: var(--cc-radius-sm); overflow: hidden; border: 1px solid #333; background: #111; display: flex; flex-direction: column; }
 .eval-fill-black { background: #222;    width: 100%; flex: 1; transition: flex 0.4s ease; }
 .eval-fill-white { background: #e0e0e0; width: 100%; flex: 1; transition: flex 0.4s ease; }
 
@@ -217,15 +273,89 @@
   padding: 4px;
 }
 .coach-input-row { display: flex; gap: 8px; align-items: flex-end; }
-.coach-send-btn  { margin: 0; padding: 6px 12px; font-size: 0.82rem; }
+.coach-send-btn  { margin: 0; padding: 8px 18px; font-size: 0.82rem; min-height: 0; }
+.coach-input-row textarea {
+  border-radius: var(--cc-radius-md);
+  border: 2px solid var(--cc-accent);
+  padding: 10px 16px;
+  background: var(--cc-bg);
+  color: var(--cc-text);
+}
+
+/* Avatar rond "C" du coach (issue #63) — décoratif, non cliquable donc dans
+   la teinte verte de la maquette plutôt qu'en terracotta. */
+.coach-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--cc-accent-2-400);
+  color: var(--cc-neutral-800);
+  font-family: var(--cc-font-heading);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+/* Bulles du chat (issue #63) — remplace les couleurs codées en dur de
+   _coachRenderBubble (board.js) par ces classes, pilotées par les mêmes
+   variables de palette que le reste de l'appli. */
+.coach-bubble {
+  border-radius: 20px 20px 6px 20px;
+  padding: 10px 14px;
+  max-width: 88%;
+  font-size: 1.05rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.coach-bubble.user {
+  align-self: flex-end;
+  background: var(--cc-neutral-200);
+  color: var(--cc-text);
+  border-radius: 20px 20px 20px 6px;
+}
+.coach-bubble.assistant {
+  align-self: flex-start;
+  background: var(--cc-neutral-800);
+  color: var(--cc-bg);
+  border-radius: 20px 20px 6px 20px;
+}
+.coach-bubble.error {
+  align-self: flex-start;
+  background: #f8d7da;
+  color: #5a1a1a;
+}
+.coach-bubble.error a { color: #5a1a1a; text-decoration: underline; display: inline-block; margin-top: 4px; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .coach-spinner {
   display: none;
   width: 16px;
   height: 16px;
-  border: 3px solid #a0b8d0;
-  border-top-color: #e94560;
+  border: 3px solid var(--cc-accent);
+  border-top-color: var(--cc-neutral-800);
   border-radius: 50%;
   animation: spin 0.9s linear infinite;
 }
+
+/* ── Lignes du coach (issue #58, restylées issue #63) ──────────────────────
+   Remplace les styles inline de renderExerciseCoachLinesTable() (exercise.js)
+   — même table/tbody, même logique, seule la présentation change. */
+.coach-line-text  { padding: 8px 4px; vertical-align: top; word-break: break-word; color: var(--cc-text); font-size: 0.85rem; }
+.coach-line-label { padding: 8px 4px; vertical-align: top; white-space: nowrap; color: var(--cc-text-muted); font-size: 0.74rem; }
+.coach-line-label.unresolved { font-style: italic; }
+.coach-line-btn-cell { padding: 8px 4px; vertical-align: top; text-align: right; }
+.coach-line-play-btn {
+  padding: 8px 14px;
+  font-size: 0.78rem;
+  min-width: 56px;
+  border-radius: var(--cc-radius-pill);
+  border: none;
+  background: var(--cc-accent);
+  color: var(--cc-bg);
+  font-family: var(--cc-font-body);
+  font-weight: 700;
+  cursor: pointer;
+}
+.coach-line-play-btn.playing { background: var(--cc-neutral-800); }

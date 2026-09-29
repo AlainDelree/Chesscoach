@@ -72,7 +72,58 @@ function switchModeTab(tabKey) {
     if (btn)   btn.classList.toggle("active", isActive);
     if (panel) panel.classList.toggle("active", isActive);
   });
+  // Barre du bas "Reprendre mon coup" / "Nouvel exercice" (issue #63,
+  // disposition mobile du mode exercice) : visible uniquement sur cet
+  // onglet, sans effet au-dessus de 900px (cf. media query, templates/
+  // index.html) — ne duplique aucune logique, ses deux boutons appellent
+  // sharedReprendreCoup()/openExercisePhaseSheet() (exercise.js).
+  const mobileExerciseBar = document.getElementById("mobile-exercise-bar");
+  if (mobileExerciseBar) mobileExerciseBar.classList.toggle("show", tabKey === "exercise");
 }
+
+// ── Sélecteur de mode en menu déroulant sur mobile (issue #63) ─────────────
+// Les boutons d'onglets existants (switchModeTab, ci-dessus) sont déplacés
+// tels quels entre leur emplacement d'origine (grand écran, disposition
+// inchangée) et #mobile-mode-bar-slot (collé en haut de l'écran, <900px) —
+// aucune logique de changement de mode n'est dupliquée ni réécrite, seul cet
+// habillage présentationnel est ajouté.
+let _modeTabBarHomeParent = null;
+let _modeTabBarHomeNextSibling = null;
+const _mobileModeBarQuery = window.matchMedia("(max-width: 900px)");
+
+function placeModeTabBarForViewport(isMobile) {
+  const bar = document.getElementById("mode-tab-bar");
+  const slot = document.getElementById("mobile-mode-bar-slot");
+  if (!bar || !slot) return;
+  if (isMobile) {
+    if (bar.parentElement !== slot) slot.appendChild(bar);
+  } else {
+    bar.classList.remove("open");
+    if (bar.parentElement !== _modeTabBarHomeParent) {
+      _modeTabBarHomeParent.insertBefore(bar, _modeTabBarHomeNextSibling);
+    }
+  }
+}
+
+// Un seul bouton (.active) reste visible quand le menu est fermé (cf. media
+// query) ; le cliquer l'ouvre. Ouvert, cliquer un bouton (actif ou non)
+// laisse switchModeTab() s'exécuter normalement (onclick déjà posé sur
+// chaque bouton) puis referme le menu — délégation d'événement plutôt que
+// modifier les 7 boutons, pour ne toucher à aucun onclick existant.
+document.addEventListener("click", (e) => {
+  const bar = document.getElementById("mode-tab-bar");
+  if (!bar || !_mobileModeBarQuery.matches) return;
+  const btn = e.target.closest(".mode-tab-btn");
+  if (btn && bar.contains(btn)) {
+    // Fermé, seul .active est visible → ce clic l'ouvre. Ouvert, l'onclick=
+    // "switchModeTab(...)" du bouton (posé dans templates/index.html) s'est
+    // déjà exécuté avant que cet écouteur délégué ne reçoive l'événement à
+    // la remontée → il ne reste qu'à refermer le menu.
+    bar.classList.toggle("open");
+    return;
+  }
+  if (!bar.contains(e.target)) bar.classList.remove("open");
+});
 
 // ── Bascule propre entre modes (issue #23) ──────────────────────────────────
 // Si un mode interactif est déjà actif (activeMode) et qu'un autre onglet
@@ -238,8 +289,38 @@ function extraireFen() {
   }
 }
 
+// ── Historique des coups repliable (issue #63, disposition mobile) ─────────
+// Ajout purement présentationnel : #historique et son rendu (renderHistory,
+// board.js) sont inchangés, seule la visibilité de la table est togglée.
+function toggleHistoriqueCollapsed() {
+  const col = document.getElementById("historique-column");
+  const chevron = document.querySelector(".historique-toggle-chevron");
+  if (!col) return;
+  const collapsed = col.classList.toggle("collapsed");
+  if (chevron) chevron.textContent = collapsed ? "Déplier ▼" : "Replier ▲";
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   updateSharedControlBar();
   updateReviewControlsEnabled();
   switchModeTab("library");
+
+  const bar = document.getElementById("mode-tab-bar");
+  if (bar) {
+    _modeTabBarHomeParent = bar.parentElement;
+    _modeTabBarHomeNextSibling = bar.nextSibling;
+    placeModeTabBarForViewport(_mobileModeBarQuery.matches);
+    _mobileModeBarQuery.addEventListener("change", (e) => placeModeTabBarForViewport(e.matches));
+  }
+
+  // Replié par défaut sur mobile seulement (issue #63) — sur grand écran,
+  // l'historique reste dépliable mais visible d'entrée comme avant. Le
+  // libellé statique du gabarit ("Déplier ▼") est resynchronisé ici dans
+  // les deux cas, plutôt que de dépendre du texte codé en dur du template.
+  const chevron = document.querySelector(".historique-toggle-chevron");
+  if (_mobileModeBarQuery.matches) {
+    toggleHistoriqueCollapsed();
+  } else if (chevron) {
+    chevron.textContent = "Replier ▲";
+  }
 });
