@@ -36,9 +36,11 @@ logger = logging.getLogger("chesscoach.llm_coach")
 
 class CreditInsuffisantError(Exception):
     """Levée quand l'API Claude répond que le crédit est épuisé (issue #54,
-    erreur HTTP 403 de type "billing_error") — distinguée des autres erreurs
-    HTTP pour que l'appelant puisse afficher un message clair dans le chat
-    plutôt qu'une erreur technique générique."""
+    détection tolérante depuis l'issue #60 : error.type == "billing_error"
+    quel que soit le code HTTP, ou HTTP 402, ou HTTP 400
+    "invalid_request_error" dont le message évoque le solde/les crédits) —
+    distinguée des autres erreurs HTTP pour que l'appelant puisse afficher un
+    message clair dans le chat plutôt qu'une erreur technique générique."""
     pass
 
 _SYSTEM_PROMPT = (
@@ -884,9 +886,10 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
     simple chaîne (raccourci équivalent à [{"role": "user", "content": messages}]).
 
     Retourne le texte de la réponse (comme avant l'issue #54). Lève
-    CreditInsuffisantError si l'API répond que le crédit est épuisé (HTTP 403,
-    error.type == "billing_error"), pour que l'appelant affiche un message
-    clair au lieu de la ValueError générique. Relève aussi les tokens
+    CreditInsuffisantError si l'API répond que le crédit est épuisé (détection
+    tolérante, issue #60 : voir CreditInsuffisantError ci-dessus), pour que
+    l'appelant affiche un message clair au lieu de la ValueError générique.
+    Relève aussi les tokens
     consommés (usage.input_tokens/output_tokens/cache_*) depuis la réponse et
     les cumule dans usage_path si fourni — aucun appel API supplémentaire,
     ces informations sont déjà présentes dans la réponse normale (issue #54)."""
@@ -944,21 +947,40 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
         with urllib.request.urlopen(req, timeout=90) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        # Solde de crédit épuisé (issue #54) : l'API répond alors en HTTP 403
-        # avec error.type == "billing_error" (distinct de "permission_error",
-        # qui partage le même code HTTP mais désigne une clé sans les droits
-        # nécessaires). Le corps de la réponse doit être lu ici : une fois
-        # l'exception propagée, e.read() ne serait plus disponible.
+        # Solde de crédit épuisé (issue #54, détection élargie issue #60) :
+        # distinct de "permission_error" (403, clé sans les droits
+        # nécessaires) et d'un 400 "invalid_request_error" ordinaire (requête
+        # mal formée, sans rapport avec le crédit). Le corps de la réponse
+        # doit être lu ici : une fois l'exception propagée, e.read() ne
+        # serait plus disponible.
         corps = e.read().decode("utf-8", errors="replace")
         try:
             err_data = json.loads(corps)
         except (ValueError, TypeError):
             err_data = {}
-        err_type = (err_data.get("error") or {}).get("type", "")
-        if e.code == 403 and err_type == "billing_error":
-            raise CreditInsuffisantError(
-                (err_data.get("error") or {}).get("message", "Crédit épuisé")
-            ) from e
+        err_info = err_data.get("error") or {}
+        err_type = err_info.get("type", "")
+        err_msg = err_info.get("message", "")
+        # Détection tolérante (issue #60) : la forme "403 billing_error"
+        # observée initialement (issue #54) n'est pas garantie stable dans le
+        # temps — des retours d'utilisateurs de l'API (2024-2025, non
+        # revérifiables sans épuiser réellement un crédit) rapportent aussi un
+        # statut 402, ou un 400 "invalid_request_error" dont le message
+        # évoque le solde/les crédits (ex. "Your credit balance is too low...
+        # Plans & Billing..."). On reconnaît donc les trois formes, sans se
+        # fier à un unique couple (code, type) — tout en gardant les vraies
+        # erreurs de permission (403 permission_error) et les vraies requêtes
+        # invalides (400 sans mention de crédit) hors de ce cas.
+        msg_lower = err_msg.lower()
+        mots_credit = ("credit balance", "insufficient credit", "plans & billing", "plans and billing")
+        est_credit_epuise = (
+            err_type == "billing_error"
+            or e.code == 402
+            or (e.code == 400 and err_type == "invalid_request_error"
+                and any(mot in msg_lower for mot in mots_credit))
+        )
+        if est_credit_epuise:
+            raise CreditInsuffisantError(err_msg or "Crédit épuisé") from e
         raise
     # Tokens consommés par cet appel (issue #54) — déjà présents dans la
     # réponse normale de l'API, pas d'appel supplémentaire nécessaire. Le
