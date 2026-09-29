@@ -41,6 +41,10 @@
   aspect-ratio: 1;
   line-height: 1;
   user-select: none;
+  /* issue #50 : évite le double-tap-zoom pendant la séquence de deux taps
+     (case de départ, case d'arrivée) du déplacement tactile — sans effet
+     visuel, donc neutre pour le rendu desktop à la souris. */
+  touch-action: manipulation;
 }
 .square img {
   width: 85%;
