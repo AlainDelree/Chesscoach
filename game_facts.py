@@ -31,6 +31,30 @@ Ajouté par l'issue #56 :
     matérielle d'au moins _SEUIL_MOMENT_CLE points (constat en test réel :
     un mat en 9 coups sans aucune perte de matériel passait inaperçu du
     bloc, le coach ne s'en sortant que grâce au signe "#" du texte PGN).
+
+Ajouté par l'issue #57, constat sur une partie pédagogique réelle perdue par
+Alain (Blancs) :
+  - solde net après reprise : un moment clé qui capture une pièce n'indiquait
+    jusqu'ici que la variation matérielle BRUTE de ce seul demi-coup (ex.
+    "variation matérielle de 9 points" pour 16...Rxb3, qui capture la dame),
+    sans jamais dire qu'une reprise immédiate (Bxb3/Nxb3/axb3) ramenait le
+    solde réel à 4 points. Le coach a retenu le chiffre brut (9) comme perte
+    sèche, sans compensation. _solde_net_apres_capture calcule ce solde
+    (mécaniquement, coups légaux réels, pas de recherche en profondeur au-delà
+    d'une reprise immédiate) et _decrit_moment_cle l'ajoute explicitement, en
+    disant sans ambiguïté lequel des deux chiffres (brut ou net) est le
+    résultat réel de l'échange ;
+  - find_stockfish_check_targets : identifie (sans appeler Stockfish, voir
+    plus bas) les deux derniers coups d'Alain qui précèdent le premier moment
+    où il perd au moins _SEUIL_MOMENT_CLE points nets (après reprise
+    mécanique éventuelle) ou se fait mater — le coup qui a permis la perte,
+    et celui d'avant. L'appelant (app.py, qui détient engine_manager) fait
+    évaluer ces deux positions par Stockfish avec un budget de temps court et
+    borné, puis transmet le résultat à build_game_facts_text via le
+    paramètre stockfish_check. Ce module reste volontairement sans aucun
+    appel Stockfish direct (cf. en-tête ci-dessus) : il ne fait que désigner
+    QUELLES positions mériteraient une vérification, jamais le calcul
+    lui-même.
 """
 
 import io
@@ -133,6 +157,40 @@ def _numero_coup(board: "chess.Board", est_blanc: bool) -> str:
     return f"{coup_plein}." if est_blanc else f"{coup_plein}..."
 
 
+def _variation_materielle(w_avant: int, b_avant: int, w_apres: int, b_apres: int) -> int:
+    """Variation matérielle (signée) du demi-coup qui vient de mener de
+    (w_avant, b_avant) à (w_apres, b_apres) — le camp dont le total a le plus
+    bougé (en général le seul des deux qui bouge, sauf promotion). Factorisé
+    (issue #57) pour rester identique entre le texte des moments clés
+    (build_game_facts_text) et le ciblage Stockfish
+    (find_stockfish_check_targets), qui doivent s'accorder sur les mêmes
+    demi-coups."""
+    delta_w = w_apres - w_avant
+    delta_b = b_apres - b_avant
+    return delta_b if abs(delta_b) >= abs(delta_w) else delta_w
+
+
+def _solde_net_apres_capture(board_apres: "chess.Board", case_arrivee: int, variation: int) -> int | None:
+    """Solde net (signé, du point de vue du camp qui vient de perdre la pièce
+    capturée par ce demi-coup) si ce camp reprend immédiatement sur la case
+    de la capture (issue #57, constat réel : 16...Rxb3 avec Bxb3/Nxb3/axb3
+    possibles ramène le solde de -9 à -4, pas les -9 retenus à tort par le
+    coach). Reprise possible = calculée via les coups légaux réels sur
+    board_apres (échec, clouage, obstruction... déjà pris en compte par
+    python-chess), jamais supposée. Ne regarde qu'UNE reprise immédiate (pas
+    de recherche tactique plus profonde) : reste un calcul mécanique, pas une
+    évaluation Stockfish. Retourne None si aucune reprise n'est légale sur
+    cette case — dans ce cas, la variation brute est le résultat final.
+
+    Négatif = perte nette malgré la reprise ; positif = le camp qui a
+    capturé en premier ressort finalement perdant de l'échange."""
+    if not any(m.to_square == case_arrivee for m in board_apres.legal_moves):
+        return None
+    piece_recapturable = board_apres.piece_at(case_arrivee)
+    valeur_recapturable = _VALEURS.get(piece_recapturable.piece_type, 0) if piece_recapturable else 0
+    return valeur_recapturable - variation
+
+
 def _decrit_moment_cle(numero: str, san: str, est_blanc_qui_joue: bool, camp_alain: str,
                         piece_capturee, case_arrivee: int, board_apres: "chess.Board",
                         variation: int) -> str:
@@ -142,18 +200,33 @@ def _decrit_moment_cle(numero: str, san: str, est_blanc_qui_joue: bool, camp_ala
     if piece_capturee is not None:
         nom_piece = _NOM_PIECE.get(piece_capturee.piece_type, "une pièce")
         # nom_piece porte déjà son article ("la dame", "le cavalier"...).
-        # Reprise possible = un coup légal de la partie perdante peut, dès
-        # maintenant (c'est son trait après ce coup), reprendre sur cette
-        # case précise — calculé via les coups légaux réels (échec, clouage,
-        # obstruction... tout est déjà pris en compte par python-chess),
-        # jamais supposé (c'est exactement ce que le coach a inventé à tort
-        # dans l'incident source de l'issue #55, ex. "16.Rxd1" impossible).
-        reprise_possible = any(m.to_square == case_arrivee for m in board_apres.legal_moves)
-        reprise_txt = "reprise possible" if reprise_possible else "aucune reprise possible"
+        solde_net = _solde_net_apres_capture(board_apres, case_arrivee, variation)
+        if solde_net is not None:
+            # Reprise possible (issue #57, point 1) : le solde net après
+            # cette reprise est le résultat réel de l'échange, PAS la
+            # variation brute ci-dessous — dit explicitement pour éviter que
+            # le coach ne retienne le chiffre brut comme perte sèche
+            # (incident source : 9 points retenus au lieu du solde net de 4).
+            piece_recapturante = board_apres.piece_at(case_arrivee)
+            nom_recapturante = (
+                _NOM_PIECE.get(piece_recapturante.piece_type, "la pièce qui vient de capturer")
+                if piece_recapturante else "la pièce qui vient de capturer"
+            )
+            reprise_txt = (
+                f"reprise de {nom_recapturante} possible par {label_perdant} : solde net "
+                f"de {solde_net:+d} points pour {label_perdant} après cette reprise — c'est "
+                f"CE solde net qui est le résultat réel de l'échange, pas la seule variation "
+                f"brute ci-dessous"
+            )
+        else:
+            reprise_txt = (
+                f"aucune reprise possible pour {label_perdant} : la variation brute "
+                f"ci-dessous est donc bien le résultat final de cet échange"
+            )
         return (
             f"Coup {numero} {san} : {label_capturant} capture {nom_piece} de "
-            f"{label_perdant} en {case_txt} ({reprise_txt}), variation matérielle "
-            f"de {variation} points."
+            f"{label_perdant} en {case_txt} ({reprise_txt}) ; variation matérielle brute "
+            f"(avant reprise éventuelle) de {variation} points."
         )
     return (
         f"Coup {numero} {san} : {label_capturant} change le bilan matériel de "
@@ -197,18 +270,121 @@ def _decrit_fin_de_partie(numero: str, san: str, est_blanc_qui_joue: bool, camp_
     return None
 
 
-def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | None = None) -> str:
+def find_stockfish_check_targets(pgn_text: str, camp_alain: str) -> list:
+    """Identifie, SANS appeler Stockfish (ce module n'en fait jamais l'appel
+    direct, voir en-tête), les positions à vérifier par Stockfish pour le
+    premier moment où Alain perd au moins _SEUIL_MOMENT_CLE points nets
+    (après reprise mécanique éventuelle, cf. _solde_net_apres_capture) ou se
+    fait mater (issue #57, point 2) — le premier de la partie, jamais le plus
+    spectaculaire plus tard : c'est la cause racine la plus utile
+    pédagogiquement, et la seule qui reste sans ambiguïté quand plusieurs
+    moments qualifient.
+
+    Retourne jusqu'à 2 positions, dans l'ordre chronologique : le dernier
+    coup d'Alain avant ce moment (celui qui l'a permis), et celui d'avant —
+    jamais le coup du moment clé lui-même, qui est nécessairement celui de
+    l'adversaire (une perte de matériel pour Alain ou un mat contre lui ne
+    peut être infligé que par un coup adverse). Chaque élément :
+    {"fen_avant": str, "san": str, "numero": str, "coup_plein": int,
+    "camp": "blancs"/"noirs"} — fen_avant est la position AVANT ce coup
+    d'Alain, à transmettre telle quelle à Stockfish par l'appelant (app.py,
+    qui détient engine_manager).
+
+    Repli silencieux ([]) si le PGN est illisible, camp_alain n'est pas
+    connu, ou aucun moment de cette gravité n'est trouvé dans la partie."""
+    pgn_text = (pgn_text or "").strip()
+    if not pgn_text or camp_alain not in ("blancs", "noirs"):
+        return []
+
+    try:
+        game = chess.pgn.read_game(io.StringIO(pgn_text))
+        if game is None:
+            return []
+        board = game.board()
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] find_stockfish_check_targets : PGN illisible : {e}")
+        return []
+
+    est_blanc_alain = camp_alain == "blancs"
+    historique = []
+    w_avant, b_avant = _materiel(board)
+    moment_index = None
+
+    try:
+        for i, move in enumerate(game.mainline_moves()):
+            est_blanc = board.turn == chess.WHITE
+            numero = _numero_coup(board, est_blanc)
+            coup_plein = board.fullmove_number
+            fen_avant = board.fen()
+            try:
+                san = board.san(move)
+            except Exception:
+                san = move.uci()
+
+            case_arrivee = move.to_square
+            piece_capturee = None
+            if board.is_capture(move):
+                piece_capturee = board.piece_at(case_arrivee)
+                if piece_capturee is None and board.is_en_passant(move):
+                    piece_capturee = chess.Piece(chess.PAWN, not est_blanc)
+
+            board.push(move)
+            historique.append({
+                "numero": numero, "san": san, "est_blanc": est_blanc, "fen_avant": fen_avant,
+                "coup_plein": coup_plein,
+            })
+            w_apres, b_apres = _materiel(board)
+
+            if moment_index is None and est_blanc != est_blanc_alain:
+                # Le coup qui inflige la perte/le mat est nécessairement
+                # celui de l'adversaire (est_blanc != est_blanc_alain) : un
+                # coup d'Alain lui-même ne peut pas le faire perdre du
+                # matériel net ni le mater à son propre trait.
+                if board.is_checkmate():
+                    moment_index = i
+                elif piece_capturee is not None:
+                    variation = abs(_variation_materielle(w_avant, b_avant, w_apres, b_apres))
+                    solde_net = _solde_net_apres_capture(board, case_arrivee, variation)
+                    perte_nette_alain = -solde_net if solde_net is not None else variation
+                    if perte_nette_alain >= _SEUIL_MOMENT_CLE:
+                        moment_index = i
+
+            w_avant, b_avant = w_apres, b_apres
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] find_stockfish_check_targets : rejeu interrompu : {e}")
+        return []
+
+    if moment_index is None:
+        return []
+
+    coups_alain = [h for h in historique[:moment_index + 1] if h["est_blanc"] == est_blanc_alain]
+    return [
+        {
+            "fen_avant": c["fen_avant"], "san": c["san"], "numero": c["numero"],
+            "coup_plein": c["coup_plein"], "camp": camp_alain,
+        }
+        for c in coups_alain[-2:]
+    ]
+
+
+def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | None = None,
+                           stockfish_check: list | None = None) -> str:
     """Construit le bloc de faits calculés (issue #55) :
       1. coups numérotés, camp explicite de chacun, bilan matériel après
          chaque coup (point de vue d'Alain, points classiques) ;
       2. moments clés (variation matérielle d'au moins 2 points, qui capture
-         quoi, reprise possible ou non) et, en dernier, la fin de partie
-         (mat/pat/nulle par la règle/abandon) si la partie est terminée —
-         ajoutée même sans aucune variation matérielle (issue #56 point 4) ;
+         quoi, reprise possible et solde net après reprise le cas échéant,
+         issue #57) et, en dernier, la fin de partie (mat/pat/nulle par la
+         règle/abandon) si la partie est terminée — ajoutée même sans aucune
+         variation matérielle (issue #56 point 4) ;
       3. position actuelle : pièces par camp avec cases exactes, FEN,
          matériel restant, mention explicite si un camp n'a plus de dame ;
       4. si fourni, les coups flagués par une analyse mécanique Stockfish
-         déjà effectuée cette session (bouton "Analyser cette partie").
+         déjà effectuée cette session (bouton "Analyser cette partie") ;
+      5. si fourni (issue #57, point 2), la vérification Stockfish ciblée sur
+         les deux coups d'Alain qui précèdent le moment clé le plus
+         significatif contre lui (voir find_stockfish_check_targets) —
+         calculée par l'appelant (app.py), jamais par ce module.
 
     Repli silencieux ("") si le PGN est vide/illisible ou si camp_alain n'est
     pas "blancs"/"noirs" : le contexte reste utilisable sans ce bloc plutôt
@@ -263,9 +439,7 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
                 f"{numero} {san} — {label} — matériel Alain {alain_apres} / adversaire {adv_apres}"
             )
 
-            delta_w = w_apres - w_avant
-            delta_b = b_apres - b_avant
-            variation = delta_b if abs(delta_b) >= abs(delta_w) else delta_w
+            variation = _variation_materielle(w_avant, b_avant, w_apres, b_apres)
             if abs(variation) >= _SEUIL_MOMENT_CLE:
                 moments_cles.append(_decrit_moment_cle(
                     numero, san, est_blanc, camp_alain, piece_capturee, case_arrivee,
@@ -341,6 +515,38 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
             parties.append(
                 "Coups flagués par l'analyse mécanique Stockfish déjà effectuée cette "
                 "session (bouton \"Analyser cette partie\") :\n" + "\n".join(lignes_flag)
+            )
+
+    if stockfish_check:
+        lignes_sf = []
+        for c in stockfish_check:
+            if not isinstance(c, dict):
+                continue
+            numero  = c.get("numero")
+            san     = (c.get("san") or "").strip()
+            camp    = (c.get("camp") or "").strip()
+            if not san or numero is None:
+                continue
+            camp_txt = camp_label(camp == "blancs", camp_alain) if camp in ("blancs", "noirs") else ""
+            segs = [f"coup joué {san}{(' (' + camp_txt + ')') if camp_txt else ''}"]
+            meilleur_coup = (c.get("meilleur_coup") or "").strip()
+            if meilleur_coup:
+                segs.append(f"meilleur coup selon Stockfish {meilleur_coup}")
+            perte_cp = c.get("perte_cp")
+            if isinstance(perte_cp, (int, float)):
+                segs.append(f"perte estimée {perte_cp} centipawns")
+            ligne_principale = (c.get("ligne_principale") or "").strip()
+            if ligne_principale:
+                segs.append(f"ligne principale {ligne_principale}")
+            lignes_sf.append(f"Coup {numero} {san} : " + " ; ".join(segs))
+        if lignes_sf:
+            parties.append(
+                "Vérification Stockfish ciblée (issue #57), calcul court et borné, sur les "
+                "deux derniers coups d'Alain qui précèdent le moment clé le plus significatif "
+                "contre lui dans cette partie (perte nette d'au moins "
+                f"{_SEUIL_MOMENT_CLE} points ou mat subi) — absente si Stockfish était "
+                "indisponible ou trop lent au moment du calcul, sans que cela soit une erreur :"
+                "\n" + "\n".join(lignes_sf)
             )
 
     return "\n\n".join(parties)

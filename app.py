@@ -12,6 +12,7 @@ import ipaddress
 import json
 import logging
 import random
+import time
 from pathlib import Path
 
 import chess
@@ -739,6 +740,144 @@ def on_coach_comment_on_demand(data):
         emit("coach_on_demand_response", {"text": response, "meilleur_coup": meilleur_coup_san})
 
 
+# Budget de temps de la vérification Stockfish ciblée du chat coach (issue
+# #57, point 2) : appelée en direct dans le fil d'une réponse du coach
+# (coach_ask), donc volontairement bornée en TEMPS plutôt qu'en profondeur —
+# une profondeur fixe ne borne pas le temps de calcul sur une position
+# complexe, alors que Stockfish respecte lui-même un temps de recherche
+# donné (movetime), sans qu'un thread de timeout externe soit nécessaire.
+# Deux positions au plus (les deux derniers coups d'Alain avant le moment
+# clé), un appel evaluate_move (avant + après coup) chacune ⇒ jusqu'à 4
+# appels moteur à ce temps ; STOCKFISH_CHECK_BUDGET_TOTAL est une garde
+# globale en plus, pour ne jamais dépasser ce budget même si une position
+# individuelle traîne.
+STOCKFISH_CHECK_TIME_PAR_POSITION = 0.7
+STOCKFISH_CHECK_BUDGET_TOTAL = 4.0
+
+# Cache mémoire process (issue #57, point 2 : "réutiliser les résultats déjà
+# disponibles" pour ne pas relancer Stockfish à chaque tour du chat sur la
+# même partie) — clé (camp_alain, pgn) : le PGN change dès qu'un nouveau coup
+# est joué, donc la clé se périme naturellement au fil de la partie. Appli
+# personnelle mono-utilisateur (cf. CONTEXTE.md) : pas de notion de session
+# à isoler, un simple dict process suffit. Purge grossière au-delà de 50
+# entrées plutôt qu'une vraie éviction LRU, pour ne pas grossir indéfiniment
+# sur un process qui tourne plusieurs jours.
+_stockfish_check_cache: dict = {}
+
+
+def _cached_stockfish_eval(cible: dict, cached_flags: list | None) -> dict | None:
+    """Cherche, dans les coups flagués par une analyse mécanique Stockfish
+    déjà effectuée cette session (bouton "Analyser cette partie", cf.
+    board.js _coachAnalysisFlaggedMoves qui transmet fen_avant/best_move
+    depuis _gameAnalysisResults), un résultat déjà calculé pour EXACTEMENT la
+    position visée par `cible` (issue #57 point 2) — matché sur fen_avant
+    (la position avant le coup), jamais sur le seul numéro de coup qui
+    pourrait coïncider par hasard avec un autre coup de la partie. Retourne
+    None si rien ne correspond ou si l'entrée trouvée n'a pas de meilleur
+    coup connu — l'appelant retombe alors sur un appel Stockfish borné."""
+    fen_avant_cible = cible.get("fen_avant")
+    for m in cached_flags or []:
+        if not isinstance(m, dict) or m.get("fen_avant") != fen_avant_cible:
+            continue
+        best_move_uci = m.get("best_move")
+        if not best_move_uci:
+            return None
+        try:
+            board = chess.Board(fen_avant_cible)
+            meilleur_coup_san = board.san(chess.Move.from_uci(best_move_uci))
+        except Exception:
+            return None
+        return {
+            "meilleur_coup": meilleur_coup_san,
+            "perte_cp": m.get("delta_cp"),
+            "ligne_principale": "",
+        }
+    return None
+
+
+def _stockfish_eval_cible(cible: dict) -> dict | None:
+    """Appelle Stockfish, borné en temps (STOCKFISH_CHECK_TIME_PAR_POSITION),
+    pour la position visée par `cible` (issue #57 point 2). Best-effort :
+    None si Stockfish est indisponible, si le coup n'est pas légal sur
+    fen_avant (ne devrait pas arriver, cible vient du rejeu mécanique du même
+    PGN par game_facts.find_stockfish_check_targets), ou si l'appel échoue
+    pour toute autre raison — jamais une exception qui remonterait jusqu'à la
+    réponse du coach."""
+    if not engine_manager:
+        return None
+    try:
+        board = chess.Board(cible["fen_avant"])
+        move = board.parse_san(cible["san"])
+        _qualite, delta_cp, meilleur_coup_uci, pv_info = engine_manager.evaluate_move(
+            board, move, always_return_best=True, return_pv=True,
+            time_limit=STOCKFISH_CHECK_TIME_PAR_POSITION,
+        )
+        meilleur_coup_san = cible["san"]
+        if meilleur_coup_uci:
+            try:
+                meilleur_coup_san = board.san(chess.Move.from_uci(meilleur_coup_uci))
+            except Exception:
+                meilleur_coup_san = meilleur_coup_uci
+        return {
+            "meilleur_coup": meilleur_coup_san,
+            "perte_cp": delta_cp,
+            "ligne_principale": pv_info.get("pv_meilleur_coup", ""),
+        }
+    except Exception as e:
+        logger.warning(
+            f"[GAME_FACTS] Vérification Stockfish du moment clé échouée pour {cible.get('san')} : {e}"
+        )
+        return None
+
+
+def _stockfish_check_key_moment(pgn: str, camp_alain: str, cached_flags: list | None) -> list:
+    """Vérification Stockfish ciblée (issue #57, point 2) : identifie d'abord
+    mécaniquement, sans aucun appel Stockfish (game_facts.find_stockfish_check_targets),
+    les deux derniers coups d'Alain avant le premier moment où il perd au
+    moins 2 points nets ou se fait mater, puis les fait évaluer par
+    Stockfish — en réutilisant un résultat déjà disponible cette session
+    (bouton "Analyser cette partie") quand la position correspond exactement
+    (_cached_stockfish_eval), sinon via un appel borné en temps
+    (_stockfish_eval_cible). Toujours best-effort et budgété globalement
+    (STOCKFISH_CHECK_BUDGET_TOTAL) : Stockfish indisponible, ou trop lent sur
+    une position, ne fait jamais échouer la réponse du coach — les lignes
+    correspondantes sont simplement omises du bloc de faits."""
+    if not engine_manager:
+        return []
+    try:
+        cibles = game_facts.find_stockfish_check_targets(pgn, camp_alain)
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] find_stockfish_check_targets a échoué : {e}")
+        return []
+    if not cibles:
+        return []
+
+    cache_key = (camp_alain, pgn)
+    if cache_key in _stockfish_check_cache:
+        return _stockfish_check_cache[cache_key]
+
+    debut = time.monotonic()
+    resultats = []
+    for cible in cibles:
+        if time.monotonic() - debut >= STOCKFISH_CHECK_BUDGET_TOTAL:
+            logger.info(
+                "[GAME_FACTS] Budget de vérification Stockfish du moment clé dépassé, "
+                "coup(s) restant(s) omis."
+            )
+            break
+        info = _cached_stockfish_eval(cible, cached_flags)
+        if info is None:
+            info = _stockfish_eval_cible(cible)
+        if info is None:
+            continue
+        resultats.append({**cible, **info})
+
+    if len(_stockfish_check_cache) > 50:
+        _stockfish_check_cache.clear()
+    _stockfish_check_cache[cache_key] = resultats
+    return resultats
+
+
 def _enrich_context_with_game_facts(context: dict) -> dict:
     """Ajoute le bloc de faits calculés mécaniquement avec python-chess
     (issue #55, game_facts.py) au contexte du chat libre, pour les modes
@@ -763,9 +902,11 @@ def _enrich_context_with_game_facts(context: dict) -> dict:
         return context
     if context.get("mode_exercice") or context.get("mode_demonstration"):
         return context
+    cached_flags = context.get("analyse_mecanique_flags")
     try:
         faits = game_facts.build_game_facts_text(
-            pgn, camp_alain, flagged_moves=context.get("analyse_mecanique_flags")
+            pgn, camp_alain, flagged_moves=cached_flags,
+            stockfish_check=_stockfish_check_key_moment(pgn, camp_alain, cached_flags),
         )
     except Exception as e:
         logger.warning(f"[GAME_FACTS] Construction du contexte échouée (issue #55) : {e}")

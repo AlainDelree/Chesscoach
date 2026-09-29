@@ -346,9 +346,20 @@ class EngineManager:
                 logger.error(f"Erreur get_move_finales : {e}")
                 return None
 
-    def evaluate(self, board: chess.Board, depth: int = 8) -> dict:
+    def evaluate(self, board: chess.Board, depth: int = 8, time_limit: float | None = None) -> dict:
         """
         Évalue une position avec le moteur d'évaluation (pleine force).
+
+        Paramètres :
+          depth      : profondeur de recherche (défaut, ignoré si time_limit
+                       est fourni).
+          time_limit : si fourni (secondes), borne la recherche en temps
+                       plutôt qu'en profondeur (issue #57, vérification
+                       Stockfish courte et bornée d'un moment clé du chat
+                       coach — la profondeur seule ne garantit pas un temps
+                       de calcul borné sur une position complexe, alors que
+                       Stockfish respecte lui-même un temps de recherche
+                       donné via movetime, sans thread de timeout externe).
 
         Retourne un dict :
           {
@@ -362,9 +373,10 @@ class EngineManager:
             if not self._engine_eval:
                 return {"cp": None, "mate": None, "wdl": None, "best_move": None}
             try:
+                limit = chess.engine.Limit(time=time_limit) if time_limit else chess.engine.Limit(depth=depth)
                 info = self._engine_eval.analyse(
                     board,
-                    chess.engine.Limit(depth=depth),
+                    limit,
                     info=chess.engine.INFO_ALL,
                 )
                 score = info.get("score")
@@ -416,11 +428,16 @@ class EngineManager:
                       depth: int = 8,
                       always_return_best: bool = False,
                       return_pv: bool = False,
-                      pv_max_plies: int = 6) -> tuple[str, int, str | None]:
+                      pv_max_plies: int = 6,
+                      time_limit: float | None = None) -> tuple[str, int, str | None]:
         """
         Évalue la qualité d'un coup joué.
 
         Paramètres :
+          time_limit : si fourni (secondes), transmis tel quel aux deux
+            appels internes à evaluate() (avant/après coup) à la place de
+            depth — même usage que evaluate() (issue #57, vérification
+            Stockfish courte et bornée du chat coach).
           always_return_best : si True, le 3e élément retourné est toujours
             le meilleur coup UCI pour la position AVANT le coup, même quand
             il coïncide avec le coup joué (au lieu de None dans ce cas — cf.
@@ -461,7 +478,7 @@ class EngineManager:
             joueur = board.turn
 
             # Évaluation AVANT le coup
-            eval_avant = self.evaluate(board, depth=depth)
+            eval_avant = self.evaluate(board, depth=depth, time_limit=time_limit)
             cp_avant   = eval_avant["cp"]
             best_move  = eval_avant["best_move"]
             pv_avant   = eval_avant.get("pv") or []
@@ -481,7 +498,7 @@ class EngineManager:
             if return_pv or not position_deja_matee:
                 board_apres = board.copy()
                 board_apres.push(move)
-                eval_apres = self.evaluate(board_apres, depth=depth)
+                eval_apres = self.evaluate(board_apres, depth=depth, time_limit=time_limit)
                 cp_apres   = eval_apres["cp"]
                 pv_apres   = eval_apres.get("pv") or []
 

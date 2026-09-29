@@ -598,6 +598,13 @@ const _MODE_ORIGINE_LABELS = {
 // partielle ou une partie différente ne doit jamais être transmise comme si
 // elle décrivait la partie en cours (issue #55 point 4). Retourne [] si
 // aucune analyse en mémoire ou si elle ne correspond pas à cette partie.
+//
+// fen_avant/best_move (issue #57 point 2) : transmis en plus des champs
+// d'affichage historiques pour que le serveur (app.py
+// _cached_stockfish_eval) puisse reconnaître une position déjà analysée par
+// Stockfish cette session et éviter un nouvel appel moteur pour la
+// vérification ciblée du chat coach — matché côté serveur sur fen_avant
+// exact, jamais sur le seul numéro de coup.
 function _coachAnalysisFlaggedMoves() {
   if (typeof _gameAnalysisResults === "undefined" || !_gameAnalysisResults.length) return [];
   if (typeof getActiveModeMoves !== "function") return [];
@@ -614,6 +621,8 @@ function _coachAnalysisFlaggedMoves() {
       camp: m.color === "white" ? "blancs" : "noirs",
       delta_cp: m.delta_cp,
       qualite: m.qualite,
+      fen_avant: m.fen_avant,
+      best_move: m.best_move,
     }));
 }
 
