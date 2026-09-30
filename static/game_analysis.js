@@ -41,6 +41,23 @@
  * dans _gameAnalysisResults) — le serveur en déduit mécaniquement la
  * conséquence matérielle réelle de ce coup flagué (capture, perte nette,
  * reprise possible), pour que le coach l'explique au lieu de la deviner.
+ *
+ * Analyse "en place", sans quitter l'écran de partie (issue #72) : pour une
+ * partie jouée dans un des 4 modes de partie (libre/pédagogique/ouverture/
+ * finale) affichée dans l'écran de jeu mobile (isGameUiActive(),
+ * mobile_game.js), l'analyse porte sur les coups réels de ce mode
+ * (getActiveModeMoves(), controls.js) au lieu de reviewMoves, et le rapport
+ * s'affiche dans l'onglet Analyse déjà en place (switchGameTab) — sans
+ * jamais appeler switchModeTab("library")/parsePgn (qui rechargeraient la
+ * partie en revue de bibliothèque, remettraient activeMode à null et
+ * effaceraient le plateau/l'historique/le bandeau réels du mode en cours).
+ * _gameAnalysisEnPlace mémorise, pour la réponse du serveur qui arrive de
+ * façon asynchrone, si CETTE analyse a été lancée ainsi — pour ne surtout
+ * pas laisser cette réponse muter reviewMoves/appeler renderReview() (qui
+ * écraserait le plateau réel avec la position, possiblement obsolète, de la
+ * dernière revue de bibliothèque). Hors de ce contexte (grand écran, ou
+ * Bibliothèque/Revue PGN elle-même), comportement existant intégralement
+ * conservé.
  */
 
 let _gameAnalysisBusy = false;
@@ -61,6 +78,16 @@ let _coachExplicationsParIdx = {};
 // idx en cours de chargement (bouton "Expliquer ce coup" cliqué, réponse pas
 // encore arrivée) — évite les doubles clics sur le même coup.
 let _coachExplicationEnCours = {};
+// true si _gameAnalysisResults provient d'une analyse "en place" (issue #72,
+// partie en cours dans l'écran de jeu mobile) plutôt que de la revue de
+// bibliothèque — décide, à la réponse du serveur, si reviewMoves/renderReview()
+// doivent être touchés (jamais en place) ou pas.
+let _gameAnalysisEnPlace = false;
+// idx (dans _gameAnalysisResults) du coup flagué actuellement prévisualisé
+// sur le plateau réel d'une partie en cours (explorerCoupFlagge, issue #72
+// point 2), ou null — cf. _updateBoardLinesCommandBar (game_coach_lines.js),
+// qui affiche le bouton de retour correspondant.
+let _gameAnalysisFlaggedPreviewIdx = null;
 
 // Vide l'affichage du rapport SANS toucher au cache (_gameAnalysisResults et
 // co.) — appelée depuis des points de coupure qui n'invalident pas
@@ -81,13 +108,72 @@ function _clearGameAnalysisDisplay() {
   if (progress) progress.classList.remove("show");
 }
 
+// Coups de la partie en cours d'un des 4 modes de partie, affichée dans
+// l'écran de jeu mobile (issue #72) — null hors de ce contexte (grand écran,
+// Bibliothèque/Revue PGN), pour retomber sur reviewMoves comme avant.
+function _gameAnalysisLiveMoves() {
+  if (typeof isGameUiActive !== "function" || !isGameUiActive()) return null;
+  if (typeof getActiveModeMoves !== "function") return [];
+  return getActiveModeMoves() || [];
+}
+
+// PGN de la partie actuellement en cours dans le mode actif, via la fonction
+// dédiée de chaque mode (_xxxGamePgnForAnalysis) déjà utilisée par le
+// bandeau de fin de partie (pedagogic.js/free_play.js/opening.js/finales.js)
+// — pour disposer des en-têtes White/Black "Alain" vs "Stockfish"/
+// "Adversaire" (issue #56) même quand l'analyse est lancée directement
+// depuis le bouton de l'onglet Analyse plutôt que depuis le bandeau.
+function _gameAnalysisPgnForActiveMode() {
+  const mode = typeof activeMode !== "undefined" ? activeMode : null;
+  if (mode === "free"      && typeof _freeGamePgnForAnalysis      === "function") return _freeGamePgnForAnalysis();
+  if (mode === "pedagogic" && typeof _pedagogicGamePgnForAnalysis === "function") return _pedagogicGamePgnForAnalysis();
+  if (mode === "opening"   && typeof _openingGamePgnForAnalysis   === "function") return _openingGamePgnForAnalysis();
+  if (mode === "finale"    && typeof _finaleGamePgnForAnalysis    === "function") return _finaleGamePgnForAnalysis();
+  return null;
+}
+
+// Extrait White/Black d'un texte PGN dans reviewWhite/reviewBlack SANS les
+// autres effets de parsePgn (board.js) — reviewFens/reviewMoves/reviewIdx,
+// activeMode, plateau : aucun ne doit changer pendant une analyse en place
+// (issue #72). reviewWhite/reviewBlack ne servent qu'à la déduction du camp
+// d'Alain côté serveur (demanderExplicationsCoach/demanderExplicationCoup
+// ci-dessous) — jamais affichés, donc sans risque à réutiliser ainsi.
+function _appliquerEntetesPgn(pgnText) {
+  if (!pgnText) return;
+  try {
+    const chess = new Chess();
+    if (!chess.load_pgn(pgnText)) return;
+    const h = chess.header();
+    reviewWhite = h.White || "";
+    reviewBlack = h.Black || "";
+  } catch (e) { /* ignore */ }
+}
+
 function analyserPartieCourante() {
+  const liveMoves = _gameAnalysisLiveMoves();
+  const enPlace = liveMoves !== null;
+  // Ouvre l'onglet Analyse même si l'analyse ne démarre pas encore (déjà en
+  // cours, ou résultat en cache réaffiché juste après par l'appelant) — le
+  // bouton de l'onglet et celui du bandeau de fin de partie doivent tous les
+  // deux y amener (issue #72 point 1).
+  if (enPlace && typeof switchGameTab === "function") switchGameTab("analyse");
   if (_gameAnalysisBusy) return;
-  if (!reviewMoves.length) {
+  // Une nouvelle analyse invalide toute prévisualisation de coup flagué en
+  // cours (issue #72 point 2) — revient d'abord à la position réelle.
+  if (_gameAnalysisFlaggedPreviewIdx !== null && typeof gameAnalysisReturnToPartie === "function") {
+    gameAnalysisReturnToPartie();
+  }
+  const moves = enPlace ? liveMoves : reviewMoves;
+  if (!moves.length) {
     const status = document.getElementById("game-analysis-status");
-    if (status) status.textContent = "Chargez d'abord une partie à analyser.";
+    if (status) {
+      status.textContent = enPlace
+        ? "Aucun coup n'a encore été joué dans cette partie."
+        : "Chargez d'abord une partie à analyser.";
+    }
     return;
   }
+  _gameAnalysisEnPlace = enPlace;
   _gameAnalysisBusy = true;
   const btn = document.getElementById("game-analysis-btn");
   if (btn) btn.disabled = true;
@@ -96,7 +182,7 @@ function analyserPartieCourante() {
   const progress = document.getElementById("game-analysis-progress");
   if (progress) progress.classList.add("show");
   const status = document.getElementById("game-analysis-status");
-  if (status) status.textContent = "Analyse Stockfish en cours (peut prendre une minute)...";
+  if (status) status.textContent = "Analyse en cours (Stockfish, peut prendre une minute)...";
   const coachStatus = document.getElementById("game-analysis-coach-status");
   if (coachStatus) coachStatus.textContent = "";
   const report = document.getElementById("game-analysis-report");
@@ -106,7 +192,9 @@ function analyserPartieCourante() {
   _coachExplicationsParIdx = {};
   _coachExplicationEnCours = {};
 
-  lancerAnalyse(reviewMoves.map(m => m.uci));
+  if (enPlace) _appliquerEntetesPgn(_gameAnalysisPgnForActiveMode());
+
+  lancerAnalyse(moves.map(m => m.uci));
 }
 
 function _gameAnalysisQualiteLabel(qualite) {
@@ -246,30 +334,69 @@ function demanderExplicationCoup(m) {
   });
 }
 
-// Point 3 : rejouer un coup flagué du rapport avec Stockfish — charge la
-// position juste avant ce coup (reviewFens[idx], cf. board.js parsePgn) en
-// mode "partie libre" explorable, plutôt que de construire un mode dédié.
+// Point 3/point 2 (issue #72) : rejouer un coup flagué du rapport.
+// - Partie en cours affichée dans l'écran de jeu mobile (_gameAnalysisEnPlace,
+//   issue #72 point 2) : prévisualise la position AVANT ce coup directement
+//   sur le plateau réel de la partie — sans changer de mode, sans le moindre
+//   game.move()/socket.emit —, en réutilisant le même mécanisme de blocage/
+//   retour que la lecture d'une ligne du coach (gameCoachLinesPreviewActive,
+//   game_coach_lines.js, issue #68) : les clics du plateau des 4 modes de
+//   partie sont déjà gardés par ce flag, et mobile_game.js suspend déjà sur
+//   lui le rétrécissement du plateau au défilement. _updateBoardLinesCommandBar
+//   (game_coach_lines.js) affiche le bouton "Revenir à la partie" dès que
+//   _gameAnalysisFlaggedPreviewIdx n'est plus null.
+// - Bibliothèque/Revue PGN (comportement existant, inchangé) : charge la
+//   position (reviewFens[idx]) en mode "partie libre" explorable.
 function explorerCoupFlagge(idx) {
+  const m = _gameAnalysisResults[idx];
+  if (_gameAnalysisEnPlace && m && m.fen_avant) {
+    if (typeof gameLineStopPlayback === "function") gameLineStopPlayback();
+    gameCoachLinesPreviewActive = true;
+    _gameAnalysisFlaggedPreviewIdx = idx;
+    renderBoard(m.fen_avant.split(" ")[0], null, null, null, null, null, null);
+    if (typeof _updateBoardLinesCommandBar === "function") _updateBoardLinesCommandBar();
+    if (typeof _updateBoardCompactState === "function") _updateBoardCompactState();
+    return;
+  }
   const fen = reviewFens[idx];
-  const m = reviewMoves[idx];
+  const rm  = reviewMoves[idx];
   if (!fen) return;
   switchModeTab("free");
   startFreeGameFromFen(fen);
   const status = document.getElementById("free-play-status");
-  if (status && m) {
-    status.textContent = `Position avant ${m.san} (coup flagué de l'analyse) — explorez librement.`;
+  if (status && rm) {
+    status.textContent = `Position avant ${rm.san} (coup flagué de l'analyse) — explorez librement.`;
   }
 }
 
+// Retour explicite à la position finale de la partie depuis la
+// prévisualisation d'un coup flagué (issue #72 point 2) — ne modifie aucun
+// état réel (aucun n'a été touché par explorerCoupFlagge ci-dessus), ne
+// fait que redessiner le plateau réel du mode actif, comme gameLinesRestore()
+// (game_coach_lines.js) pour la lecture des lignes du coach.
+function gameAnalysisReturnToPartie() {
+  _gameAnalysisFlaggedPreviewIdx = null;
+  gameCoachLinesPreviewActive = false;
+  if (typeof _gameLinesRerenderCurrentMode === "function") _gameLinesRerenderCurrentMode();
+  if (typeof _updateBoardLinesCommandBar === "function") _updateBoardLinesCommandBar();
+  if (typeof _updateBoardCompactState === "function") _updateBoardCompactState();
+}
+
 // Point 4 : point d'entrée depuis la fin d'une partie pédagogique/libre/
-// ouverture/finale — bascule vers l'onglet Bibliothèque/Revue avec la partie
-// qui vient de se dérouler déjà chargée (parsePgn, board.js), puis lance
-// l'analyse automatiquement (issue #59 : un seul clic depuis la bannière de
-// fin de partie, plutôt que de contraindre l'utilisateur à recliquer sur le
-// bouton de l'onglet, en particulier sur GSM où il est placé sous la liste
-// des parties importées, cf. _lancerAnalyseAutoDepuisBanniere ci-dessous).
+// ouverture/finale.
+// - Affichée dans l'écran de jeu mobile (isGameUiActive()) : analyse EN
+//   PLACE (issue #72), sans changer d'onglet ni charger la partie en revue
+//   de bibliothèque — _lancerAnalyseEnPlaceDepuisBanniere ci-dessous.
+// - Sinon (grand écran ou déjà en Bibliothèque/Revue) : comportement
+//   historique inchangé (issue #59) — bascule vers l'onglet Bibliothèque/
+//   Revue avec la partie qui vient de se dérouler déjà chargée (parsePgn,
+//   board.js), puis lance l'analyse automatiquement.
 function analyserPartieDepuisPgn(pgnText) {
   if (!pgnText) return;
+  if (typeof isGameUiActive === "function" && isGameUiActive()) {
+    _lancerAnalyseEnPlaceDepuisBanniere();
+    return;
+  }
   switchModeTab("library");
   parsePgn(pgnText, (info) => {
     const label = document.getElementById("pgn-lib-loaded-label");
@@ -307,6 +434,13 @@ function _scrollVersPanneauAnalyse() {
 function _lancerAnalyseAutoDepuisBanniere() {
   if (_gameAnalysisResults.length && _gameAnalysisResults.length === reviewMoves.length
       && reviewMoves.every((m, i) => m.san === _gameAnalysisResults[i].san)) {
+    // Remis à false explicitement (issue #72) : _gameAnalysisResults en
+    // cache peut provenir d'une analyse en place précédente qui correspond,
+    // coup à coup, à la partie chargée ici en revue — explorerCoupFlagge()
+    // doit alors bien recharger la position en mode "partie libre"
+    // explorable (comportement de la revue), pas prévisualiser sur un
+    // plateau de mode de partie qui n'est plus affiché.
+    _gameAnalysisEnPlace = false;
     reviewMoves.forEach((m, i) => {
       const r = _gameAnalysisResults[i];
       m.qualite   = r.qualite;
@@ -316,6 +450,32 @@ function _lancerAnalyseAutoDepuisBanniere() {
     _isAnalysed = true;
     renderGameAnalysisReport();
     renderReview();
+    const status = document.getElementById("game-analysis-status");
+    if (status) {
+      status.textContent = `Analyse déjà disponible (${_gameAnalysisResults.length} coups) — réalisée plus tôt dans la session.`;
+    }
+    _scrollVersPanneauAnalyse();
+    return;
+  }
+  _gameAnalysisScrollApresResultat = true;
+  analyserPartieCourante();
+  _scrollVersPanneauAnalyse();
+}
+
+// Variante en place de _lancerAnalyseAutoDepuisBanniere ci-dessus (issue #72) :
+// depuis la bannière de fin de partie d'un mode de partie affiché dans
+// l'écran de jeu mobile — ouvre directement l'onglet Analyse (switchGameTab)
+// et compare au cache sur les coups RÉELS du mode actif (getActiveModeMoves)
+// plutôt que sur reviewMoves ; ne charge jamais la partie en revue de
+// bibliothèque, ne touche jamais reviewFens/reviewMoves/activeMode/le
+// plateau. Même comportement de cache/défilement que la variante historique.
+function _lancerAnalyseEnPlaceDepuisBanniere() {
+  if (typeof switchGameTab === "function") switchGameTab("analyse");
+  const liveMoves = _gameAnalysisLiveMoves() || [];
+  if (_gameAnalysisResults.length && liveMoves.length && _gameAnalysisResults.length === liveMoves.length
+      && liveMoves.every((m, i) => m.san === _gameAnalysisResults[i].san)) {
+    _gameAnalysisEnPlace = true;
+    renderGameAnalysisReport();
     const status = document.getElementById("game-analysis-status");
     if (status) {
       status.textContent = `Analyse déjà disponible (${_gameAnalysisResults.length} coups) — réalisée plus tôt dans la session.`;
@@ -341,21 +501,31 @@ if (typeof socket !== "undefined") {
       if (_gameAnalysisScrollApresResultat) { _gameAnalysisScrollApresResultat = false; _scrollVersPanneauAnalyse(); }
       return;
     }
-    // Fusionne qualite/delta_cp/best_move dans reviewMoves (même ordre que
-    // les coups envoyés) pour réutiliser directement les badges existants de
-    // la revue (renderHistory/renderReview/showReviewBestMove, board.js).
-    // _gameAnalysisResults garde le rapport complet (fen_avant/phase inclus)
-    // pour le module d'explications narratives (issue #42).
-    data.moves.forEach((m, i) => {
-      if (!reviewMoves[i]) return;
-      reviewMoves[i].qualite   = m.qualite;
-      reviewMoves[i].delta_cp  = m.delta_cp;
-      reviewMoves[i].best_move = m.best_move;
-    });
     _gameAnalysisResults = data.moves;
-    _isAnalysed = true;
-    renderGameAnalysisReport();
-    renderReview();
+    if (_gameAnalysisEnPlace) {
+      // Issue #72 : partie en cours affichée dans l'écran de jeu mobile — ne
+      // touche NI reviewMoves/reviewFens (partie potentiellement différente,
+      // chargée ou non en revue de bibliothèque) NI renderReview()/le
+      // plateau, qui écraserait la position RÉELLE du mode en cours avec
+      // celle, possiblement obsolète, de la dernière revue. Le rapport
+      // (renderGameAnalysisReport) est autonome, lui — n'affiche que
+      // _gameAnalysisResults.
+      renderGameAnalysisReport();
+    } else {
+      // Comportement existant (Bibliothèque/Revue PGN), inchangé : fusionne
+      // qualite/delta_cp/best_move dans reviewMoves (même ordre que les
+      // coups envoyés) pour réutiliser directement les badges existants de
+      // la revue (renderHistory/renderReview/showReviewBestMove, board.js).
+      data.moves.forEach((m, i) => {
+        if (!reviewMoves[i]) return;
+        reviewMoves[i].qualite   = m.qualite;
+        reviewMoves[i].delta_cp  = m.delta_cp;
+        reviewMoves[i].best_move = m.best_move;
+      });
+      _isAnalysed = true;
+      renderGameAnalysisReport();
+      renderReview();
+    }
     if (status) status.textContent = `Analyse terminée (${data.moves.length} coups examinés).`;
     if (typeof _gameTabMarkNovelty === "function") _gameTabMarkNovelty("analyse");
     demanderExplicationsCoach();

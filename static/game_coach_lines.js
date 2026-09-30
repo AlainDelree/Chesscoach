@@ -22,6 +22,15 @@
  * Stop/"Revenir à la partie" n'ont donc jamais besoin de restaurer quoi que
  * ce soit d'autre que l'affichage (position, historique, bandeau de fin
  * compris, puisqu'aucun de ces états n'a été modifié entre-temps).
+ *
+ * Réutilisé tel quel par game_analysis.js (issue #72, prévisualisation d'un
+ * coup flagué de l'analyse en place pendant une partie affichée dans l'écran
+ * de jeu mobile) : gameCoachLinesPreviewActive bloque déjà les clics du
+ * plateau des 4 modes, et _updateBoardLinesCommandBar ci-dessous affiche le
+ * bouton "Revenir à la partie" pour l'un ou l'autre usage (jamais les deux
+ * en même temps — explorerCoupFlagge stoppe toute lecture de ligne en cours
+ * avant de prévisualiser, et gameLinesRestore()/gameCoachLinesReset()
+ * effacent aussi _gameAnalysisFlaggedPreviewIdx par précaution).
  */
 
 let gameCoachLines             = [];
@@ -51,6 +60,9 @@ function gameCoachLinesReset() {
   gameLineStopPlayback();
   gameCoachLines = [];
   gameCoachLinesPreviewActive = false;
+  // Issue #72 : une nouvelle partie/segment ne doit laisser aucune
+  // prévisualisation de coup flagué de l'ancienne analyse active.
+  if (typeof _gameAnalysisFlaggedPreviewIdx !== "undefined") _gameAnalysisFlaggedPreviewIdx = null;
   const restoreBtn = document.getElementById("game-coach-lines-restore-btn");
   if (restoreBtn) restoreBtn.style.display = "none";
   renderGameCoachLinesTable();
@@ -244,6 +256,21 @@ function _updateBoardLinesCommandBar() {
     btn.onclick = () => gameLineToggle(gameCoachLinesPlayingIdx);
     bar.appendChild(span);
     bar.appendChild(btn);
+  } else if (typeof _gameAnalysisFlaggedPreviewIdx !== "undefined" && _gameAnalysisFlaggedPreviewIdx !== null) {
+    // Prévisualisation d'un coup flagué de l'analyse en place (issue #72
+    // point 2, game_analysis.js explorerCoupFlagge) — même bouton de retour
+    // que la lecture d'une ligne du coach ci-dessous, réutilisé tel quel.
+    bar.style.display = "flex";
+    _setReviewControlsHiddenForLinePlayback(true);
+    const m = (typeof _gameAnalysisResults !== "undefined" && _gameAnalysisResults[_gameAnalysisFlaggedPreviewIdx]) || null;
+    const span = document.createElement("span");
+    span.textContent = m ? `Position avant ${m.san} (coup signalé) affichée.` : "Position du coup signalé affichée.";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "◀ Revenir à la partie";
+    btn.onclick = () => gameAnalysisReturnToPartie();
+    bar.appendChild(span);
+    bar.appendChild(btn);
   } else if (gameCoachLinesPreviewActive) {
     bar.style.display = "flex";
     _setReviewControlsHiddenForLinePlayback(true);
@@ -369,6 +396,10 @@ function gameLineToggle(idx) {
 function gameLinesRestore() {
   gameLineStopPlayback();
   gameCoachLinesPreviewActive = false;
+  // Issue #72 : garde les deux mécanismes de prévisualisation (ligne du
+  // coach ici, coup flagué de l'analyse en place — game_analysis.js) en
+  // accord, au cas où l'un serait resté actif alors que l'autre restaure.
+  if (typeof _gameAnalysisFlaggedPreviewIdx !== "undefined") _gameAnalysisFlaggedPreviewIdx = null;
   const restoreBtn = document.getElementById("game-coach-lines-restore-btn");
   if (restoreBtn) restoreBtn.style.display = "none";
   renderGameCoachLinesTable();
