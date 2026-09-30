@@ -431,10 +431,37 @@
          voyagent ensemble avec #board-sticky-wrap, jamais séparés. */
       #board-sticky-wrap {
         position: sticky;
-        top: 0;
+        /* top (issue #71 point 1) : #mobile-mode-bar-slot est désormais
+           lui-même sticky top:0 dans tous les modes (cf. règle plus bas) —
+           le plateau doit se coller JUSTE EN DESSOUS de lui plutôt que se
+           superposer au même niveau. --mobile-header-h (controls.js,
+           ResizeObserver sur #mobile-mode-bar-slot) republie sa hauteur
+           réelle, qui varie (un seul bouton replié hors mode jeu, pastille
+           de modèle + menu "..." en mode jeu). */
+        top: var(--mobile-header-h, 0px);
         z-index: 25;
         background: var(--cc-bg);
         padding-bottom: 4px;
+      }
+
+      /* Bibliothèque/Revue PGN et Éditeur de position (issue #71 point 3) :
+         plateau élargi (repasse "largeur-bound" comme avant l'issue #69,
+         qui avait réduit --bd-size à 30vh pour tous les modes hors jeu sans
+         changer la largeur soustraite — sur un écran portrait, 30vh devient
+         alors plus petit que la largeur disponible et la détermine, d'où le
+         rétrécissement constaté par Alain). Coordonnées repliées dans les
+         cases (règle .square[data-*-label]::before plus bas) pour libérer
+         la place prise par #coord-rank/#coord-file. Classe posée par
+         mobile_game.js (onGameUiRefresh), mêmes deux onglets que
+         placeModeTabBarForViewport. Mode exercice volontairement hors de
+         cette classe (n'utilise pas ce plateau élargi, cf. rapport de
+         clôture). */
+      body.mobile-wide-board {
+        --bd-size: min(58vh, 480px, calc(100vw - 52px));
+      }
+      body.mobile-wide-board #coord-rank,
+      body.mobile-wide-board #coord-file {
+        display: none;
       }
 
       /* Issue #69 point 4 : petite barre de commande (Stop / "Revenir à la
@@ -553,10 +580,27 @@
          délégué de controls.js) : les 7 boutons s'affichent en liste, celui
          actif surligné en vert clair — sans aucune réécriture de
          switchModeTab/ensureModeSwitchClean.
-         Issue #69 point 1 : n'est plus collé (position:sticky retirée) — le
-         plateau reprend ce rôle (#board-sticky-wrap ci-dessus), ce sélecteur
-         "peut défiler normalement" comme demandé (aucun autre changement de
-         position : il reste tout en haut de la page, juste avant l'en-tête). */
+         Issue #71 point 1 : redevient collé (position:sticky rétablie sur
+         #mobile-mode-bar-slot lui-même, ci-dessous) — l'issue #69 l'avait
+         retirée en pariant que le plateau (#board-sticky-wrap) suffirait à
+         garder un repère fixe en haut d'écran, mais laissait alors
+         .mode-tab-bar.open (position:absolute) sans ancêtre positionné dans
+         les modes hors jeu (#mobile-mode-bar-slot n'avait position:relative
+         qu'en mode jeu, cf. ancienne règle "body.mobile-game-active
+         #mobile-mode-bar-slot") : la liste ouverte se positionnait alors
+         par rapport à la racine du document entier plutôt que sous le
+         sélecteur, d'où le symptôme observé par Alain ("la liste disparaît,
+         puis réapparaît au milieu de l'écran après défilement"). */
+      #mobile-mode-bar-slot {
+        position: sticky;
+        top: 0;
+        z-index: 35;
+        background: var(--cc-bg);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 8px 8px;
+      }
       .mode-tab-bar {
         flex-wrap: nowrap;
         overflow-x: visible;
@@ -719,8 +763,13 @@
 
     /* Composants mobiles (issue #63) : sans effet au-dessus de 900px — les
        règles ci-dessus (dans la media query) sont les seules à leur donner
-       display:flex/block. */
-    #mobile-mode-bar-slot { display: block; }
+       display:flex/block. #mobile-mode-bar-slot n'a plus besoin d'un
+       "display:block" par défaut ici (issue #71 : entrait en conflit avec le
+       "display:flex" posé par la règle sticky dans la media query, plus haut
+       dans la cascade mais de même spécificité — la déclaration la PLUS
+       BASSE dans le fichier l'emportait quel que soit son media query, cf.
+       rapport de clôture) : un <div> est display:block par défaut (feuille
+       de style du navigateur), inutile de le répéter ici. */
     .mobile-exercise-bar { display: none; }
     .phase-sheet-backdrop, .phase-sheet { display: none; }
     /* display:contents (issue #65 point 6) : ni boîte propre ni effet sur la
@@ -774,18 +823,12 @@
          usage_tokens.js retrouvent leurs éléments par id, peu importe leur
          parent réel — même principe que placeModeTabBarForViewport). */
       body.mobile-game-active header { display: none; }
-      body.mobile-game-active #mobile-mode-bar-slot {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 8px 8px;
-        /* position:relative (issue #70) : ancre #game-model-popup/
-           #game-menu-dropdown (position:absolute, top:100%) juste sous cette
-           rangée — sans ça, ils se positionnent par rapport au prochain
-           ancêtre positionné (ou à défaut la racine), bien plus bas que
-           l'écran. */
-        position: relative;
-      }
+      /* #mobile-mode-bar-slot est maintenant sticky+position dans tous les
+         modes (règle générale ci-dessus, issue #71 point 1) — reste ici
+         uniquement ce qui est spécifique au mode jeu (répartition flex avec
+         la pastille de modèle/le menu "..."). Ancre déjà #game-model-popup/
+         #game-menu-dropdown (position:absolute, top:100%) via ce même
+         sticky, plus besoin d'un position:relative dédié. */
       body.mobile-game-active #mobile-mode-bar-slot .mode-tab-bar {
         order: 1;
         flex: 1;
@@ -843,32 +886,94 @@
       #game-menu-usage { font-size: 0.78rem; color: var(--cc-text-muted); padding: 6px; }
       #game-menu-mode-extra:empty { display: none; }
 
-      /* Plateau fixe ~40% d'écran au maximum (point 10 : dvh, hauteur
-         dynamique, pour tenir compte de la barre d'adresse mobile) —
-         remplace la valeur générale 30vh (issue #69) dans ce contexte
-         précis uniquement, jamais plus large que l'écran (calc(100vw-76px)
-         inchangé). */
-      body.mobile-game-active { --bd-size: min(36dvh, 400px, calc(100vw - 76px)); }
+      /* Plateau plus grand (issue #71 point 3) : SEULE variable à ajuster
+         pour changer la taille du plateau des modes de partie — jusqu'à 44%
+         de la hauteur dynamique de l'écran (dvh, tient compte de la barre
+         d'adresse mobile), jamais plus large que l'écran moins ~24px de
+         marges. Le 4e terme (--bd-size-game-max, mobile_game.js) garantit
+         les ~180px de contenu visible sous les onglets demandés : le reste
+         de la rangée d'en-tête collée + matériel capturé + ligne d'état +
+         #review-controls + #shared-mode-controls (dont les 3 boutons
+         peuvent passer sur 2 lignes selon la largeur d'écran) + les onglets
+         Coach/Lignes/Analyse/Coups varie trop selon l'état (boutons de
+         démarrage, bannière de fin de partie, repli des boutons partagés)
+         pour être couvert par un simple calc() statique — mesuré en continu
+         sur le DOM réel (ResizeObserver sur #board-sticky-wrap, même
+         principe que --mobile-header-h/scroll-padding-top, controls.js) et
+         republié dans cette variable, presque toujours plus petite que
+         44dvh sur les téléphones courants (~640-800px de haut) : la
+         fourchette "44-46%" reste donc un PLAFOND, atteint seulement sur
+         les plus grands téléphones, plutôt qu'une valeur garantie partout —
+         compromis assumé, cf. rapport de clôture pour les tailles
+         réellement obtenues. #coord-rank/#coord-file et la barre d'éval
+         sont masqués ici (coordonnées repliées dans les cases, cf.
+         .square[data-*-label] plus bas) : sans eux, ces ~24px ne couvrent
+         plus que les marges de page/la bordure du plateau, contre 76px
+         avant l'issue #69 (colonne de rangs + barre d'éval + marges). */
+      body.mobile-game-active {
+        --bd-size: min(44dvh, 480px, calc(100vw - 24px), var(--bd-size-game-max, 480px));
+      }
+      body.mobile-game-active #coord-rank,
+      body.mobile-game-active #coord-file,
+      body.mobile-game-active .eval-bar-wrap {
+        display: none;
+      }
 
       body.mobile-game-active #board-full-view { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; }
-      #board-compact-strip { display: none; }
-      body.mobile-game-active #board-sticky-wrap.board-compact #board-full-view { display: none; }
-      body.mobile-game-active #board-sticky-wrap.board-compact #board-compact-strip {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        width: 100%;
-        min-height: 56px;
-        padding: 6px 10px;
-        box-sizing: border-box;
-        background: var(--cc-surface);
-        border-radius: var(--cc-radius-md);
+
+      /* Plateau réduit au défilement (issue #71 point 4) : remplace
+         l'ancienne bande uniquement textuelle (#board-compact-strip,
+         supprimée) — #board-full-view reste affiché, simplement rétréci via
+         --bd-size local (même plateau, mêmes pièces, aucun rendu dupliqué ;
+         renderBoard()/board.js n'a besoin d'aucune modification). Cible
+         ~40% du plateau complet, soit ~150-170px de côté (clamp plutôt
+         qu'un pourcentage du --bd-size courant, pour rester dans cette
+         fourchette même si --bd-size est ajusté plus tard). Le matériel
+         capturé est masqué (redondant avec la ligne d'état ci-dessous, qui
+         reste affichée) ; les cases ne répondent plus aux clics tant que
+         compact (pointer-events:none sur #board) — un tap ouvre le plateau
+         complet via l'onclick de #board-full-view (_boardFullViewClick,
+         mobile_game.js), qui vérifie lui-même la classe "board-compact"
+         plutôt que d'agir aussi en plateau complet. */
+      body.mobile-game-active #board-sticky-wrap.board-compact {
+        --bd-size: clamp(150px, 42vw, 170px);
+      }
+      body.mobile-game-active #board-sticky-wrap.board-compact #board-full-view .material-row {
+        display: none;
+      }
+      body.mobile-game-active #board-sticky-wrap.board-compact #board-full-view {
         cursor: pointer;
       }
-      #board-compact-strip .board-compact-move { font-weight: 700; font-size: 0.86rem; color: var(--cc-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      #board-compact-strip .board-compact-material { font-size: 0.76rem; color: var(--cc-text-muted); }
-      #board-compact-strip .board-compact-info { flex: 1; min-width: 0; }
-      #board-compact-strip .board-compact-chevron { color: var(--cc-accent-strong); font-size: 1.1rem; flex-shrink: 0; }
+      body.mobile-game-active #board-sticky-wrap.board-compact #board-full-view #board {
+        pointer-events: none;
+      }
+
+      /* Coordonnées repliées dans les cases (issue #71 point 3) — remplace
+         #coord-rank/#coord-file (masqués ci-dessus et en Bibliothèque/
+         Éditeur, cf. règle .mobile-wide-board plus haut) pour libérer la
+         colonne de gauche. data-rank-label/data-file-label posés par
+         buildBoard() (board.js) uniquement sur les cases du bord concerné
+         (rang à gauche, colonne en bas, selon l'orientation _boardFlipped) ;
+         un seul ::before (pas de ::after, déjà pris par le hachurage
+         .finale-king-restricted) combine les deux si les deux s'appliquent
+         (case de coin). Inerte sur grand écran (où ces attributs ne sont
+         jamais lus visuellement, coord-rank/coord-file y restent la seule
+         source affichée). */
+      body.mobile-game-active .square[data-rank-label]::before,
+      body.mobile-game-active .square[data-file-label]::before,
+      body.mobile-wide-board .square[data-rank-label]::before,
+      body.mobile-wide-board .square[data-file-label]::before {
+        content: attr(data-rank-label) attr(data-file-label);
+        position: absolute;
+        top: 1px;
+        left: 2px;
+        font-size: 0.55rem;
+        font-weight: 700;
+        line-height: 1;
+        color: var(--cc-text-muted);
+        z-index: 2;
+        pointer-events: none;
+      }
 
       /* Ligne d'état discrète (point 1) : "Coup N · coup" à gauche, matériel
          capturé + pastille de couleur du camp en avance à droite, camp au
@@ -927,6 +1032,24 @@
       body.mobile-game-active #shared-mode-controls > div:not(#shared-mode-status) { margin: 0; }
       body.mobile-game-active #shared-mode-controls button { flex: 1; }
 
+      /* Écrans mélangés (issue #71 point 6) : #shared-mode-controls vit hors
+         des onglets (issue #15, #board-column est toujours visible sur
+         mobile quel que soit l'onglet affiché) pour rester utilisable en
+         consultant un autre onglet pendant qu'un mode interactif tourne en
+         arrière-plan — utile sur grand écran, mais prêtait à confusion sur
+         mobile en Bibliothèque/Exercice/Éditeur (activeMode pouvait encore
+         être un mode de partie déjà quitté des yeux, cf. rapport signalé par
+         Alain : contrôles de la partie pédagogique visibles en Bibliothèque,
+         partie démarrable sans bouton Abandonner à l'écran). Classe posée
+         par mobile_game.js (_updateModeControlsMismatch, appelée à chaque
+         onGameUiRefresh) uniquement quand le contenu affiché (activeMode)
+         diffère de l'onglet réellement consulté — n'influence jamais le
+         contenu du bandeau (toujours piloté par activeMode,
+         updateSharedControlBar), seulement sa visibilité sur mobile. */
+      body.mode-controls-mismatch #shared-mode-controls {
+        display: none !important;
+      }
+
       /* États avant/pendant/après partie (point 4). */
       .mode-start-slot { display: contents; }
       body.mobile-game-active .mode-start-buttons {
@@ -973,14 +1096,16 @@
       }
       body.mobile-game-active #board-column { order: 1; }
       /* min-height (issue #70 point 5) : garantit assez de hauteur de page
-         pour que la bascule plateau complet/bande compacte (qui rétrécit
-         #board-sticky-wrap d'environ 500px) ne fasse jamais passer la page
-         SOUS la hauteur de la fenêtre — sinon le navigateur ramène le
-         défilement à 0 (plus rien à défiler), ce qui annule aussitôt la
-         bascule qui vient de se produire (onglet Coach vide juste après le
-         début d'une partie, avant tout message). Repéré avec Playwright (cf.
-         rapport de clôture) ; 160dvh couvre confortablement ce rétrécissement
-         même sur un petit téléphone (~640px de haut). */
+         pour que la bascule plateau complet/plateau réduit (qui rétrécit
+         #board-sticky-wrap d'environ 200-250px depuis l'issue #71 point 4 —
+         moins qu'avant, qui remplaçait tout le plateau par une bande de
+         texte) ne fasse jamais passer la page SOUS la hauteur de la fenêtre
+         — sinon le navigateur ramène le défilement à 0 (plus rien à
+         défiler), ce qui annule aussitôt la bascule qui vient de se produire
+         (onglet Coach vide juste après le début d'une partie, avant tout
+         message). Repéré avec Playwright (cf. rapport de clôture de l'issue
+         #70) ; 160dvh couvre très confortablement ce rétrécissement plus
+         modeste, marge de sécurité conservée telle quelle. */
       body.mobile-game-active #app { min-height: 160dvh; }
       /* Contenu réel déplacé dans les nouveaux onglets par JS (mobile_game.js,
          même principe de déplacement de nœud DOM que placeModeTabBarForViewport
@@ -1080,9 +1205,11 @@
          La pastille reflète le modèle actif (#llm-model-selector reste la
          source de vérité, déplacé tel quel dans le popup au clic — issue
          #61, llm_model.js inchangé) ; "..." regroupe Extraire le FEN,
-         Importer un PGN, Bibliothèque, les contrôles propres au mode actif
+         Importer un PGN, les contrôles propres au mode actif
          (ouverture/finales) et ce qui ne sert pas pendant la partie
-         (compteur de jetons, lien Coût API — issue #54/#69). -->
+         (compteur de jetons, lien Coût API — issue #54/#69). L'entrée
+         "Bibliothèque" (doublon avec la liste principale des modes) a été
+         retirée à l'issue #71 point 5. -->
     <button type="button" id="game-model-pill" onclick="gameMenuToggleModelPopup()" title="Modèle Claude actif">{{ llm_model_choices[llm_model_actif].split(' ')[0] }}</button>
     <div id="game-model-popup"></div>
     <button type="button" id="game-menu-btn" onclick="gameMenuToggleDropdown()">⋯</button>
@@ -1091,7 +1218,6 @@
       <label class="game-menu-item" style="cursor:pointer;">Importer un PGN
         <input type="file" accept=".pgn,.txt" style="display:block; margin-top:4px; font-size:0.78rem;" onchange="loadPgnFile(event); gameMenuClose();">
       </label>
-      <button type="button" class="game-menu-item" onclick="switchModeTab('library'); gameMenuClose();">Bibliothèque</button>
       <div id="game-menu-mode-extra"></div>
       <div id="game-menu-usage"></div>
       <a class="game-menu-item" id="game-menu-cost-link" href="https://platform.claude.com/cost" target="_blank" rel="noopener noreferrer">Coût API</a>
@@ -1154,14 +1280,18 @@
            flux normal de #board-column). -->
       <div id="board-sticky-wrap">
         <div id="game-over-banner" class="game-over-banner" style="display:none;"></div>
-        <!-- #board-full-view/#board-compact-strip (issue #70 point 5) : sur
-             mobile, en mode jeu (mobile-game-active), le plateau complet est
-             remplacé par une bande compacte pendant le défilement de la zone
-             à onglets ou quand le champ de question a le focus (clavier
-             ouvert) — bascule de classe "board-compact" sur #board-sticky-wrap
-             pilotée par mobile_game.js. Sans effet ailleurs (display:contents/
-             none par défaut, cf. <style>). -->
-        <div id="board-full-view">
+        <!-- #board-full-view (issue #70 point 5, plateau réduit refondu à
+             l'issue #71 point 4) : sur mobile, en mode jeu (mobile-game-active),
+             ce même plateau rétrécit (--bd-size local, cf. <style>) pendant
+             le défilement de la zone à onglets ou quand le champ de question
+             a le focus (clavier ouvert) — bascule de classe "board-compact"
+             sur #board-sticky-wrap pilotée par mobile_game.js. L'onclick
+             n'agit que dans cet état compact (_boardFullViewClick vérifie la
+             classe avant d'appeler boardCompactExpand) — les clics sur une
+             case du plateau complet (déplacement de pièce) ne sont donc
+             jamais interceptés. Sans effet ailleurs (display:contents/none
+             par défaut, cf. <style>). -->
+        <div id="board-full-view" onclick="_boardFullViewClick()">
           <div class="material-row"><span id="material-top"></span></div>
           <div id="board-row">
             <div id="coord-rank"></div>
@@ -1200,14 +1330,6 @@
             <span class="game-status-right" id="game-status-right"></span>
           </div>
         </div>
-        <div id="board-compact-strip" onclick="boardCompactExpand()">
-          <div class="board-compact-info">
-            <div class="board-compact-move" id="board-compact-move"></div>
-            <div class="board-compact-material" id="board-compact-material"></div>
-          </div>
-          <span class="board-compact-chevron">▾</span>
-        </div>
-
         <!-- Issue #69 point 4 : barre Stop/"Revenir à la partie" pour la
              lecture d'une ligne du tableau "Lignes du coach" des modes de
              partie/revue — remplie par _updateBoardLinesCommandBar()

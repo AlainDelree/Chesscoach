@@ -62,6 +62,25 @@ let _coachExplicationsParIdx = {};
 // encore arrivée) — évite les doubles clics sur le même coup.
 let _coachExplicationEnCours = {};
 
+// Vide l'affichage du rapport SANS toucher au cache (_gameAnalysisResults et
+// co.) — appelée depuis des points de coupure qui n'invalident pas
+// forcément l'analyse en mémoire (changement de mode, chargement d'une autre
+// partie, qui peut être réanalysée depuis ce cache sans redemander Stockfish,
+// issue #59) mais où le rapport affiché à l'écran ne doit plus rester visible
+// tel quel (issue #71 point 6). analyserPartieCourante() ci-dessous continue
+// de vider aussi le cache, à part, pour le cas où elle démarre elle-même une
+// analyse neuve.
+function _clearGameAnalysisDisplay() {
+  const list = document.getElementById("game-analysis-report");
+  if (list) list.innerHTML = "";
+  const status = document.getElementById("game-analysis-status");
+  if (status) status.textContent = "";
+  const coachStatus = document.getElementById("game-analysis-coach-status");
+  if (coachStatus) coachStatus.textContent = "";
+  const progress = document.getElementById("game-analysis-progress");
+  if (progress) progress.classList.remove("show");
+}
+
 function analyserPartieCourante() {
   if (_gameAnalysisBusy) return;
   if (!reviewMoves.length) {

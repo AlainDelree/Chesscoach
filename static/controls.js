@@ -91,6 +91,19 @@ let currentModeTab = "library";
 function switchModeTab(tabKey) {
   if (MODE_TABS.indexOf(tabKey) === -1) return;
   currentModeTab = tabKey;
+  // Issue #71 point 2 : remonter tout en haut à chaque changement de mode —
+  // sans ça, la position de défilement laissée par le mode précédent reste
+  // active et peut immédiatement déclencher l'état "plateau réduit" du
+  // nouveau mode jeu (cf. _updateBoardCompactState, mobile_game.js) avant
+  // même d'avoir vu une seule fois le plateau complet/les boutons de
+  // démarrage. Immédiat (pas "smooth") : un changement de mode doit être
+  // instantané, pas animé.
+  if (typeof window.scrollTo === "function") window.scrollTo(0, 0);
+  // Issue #71 point 6 : le rapport d'analyse affiché ne correspond plus au
+  // nouvel onglet consulté (cf. _clearGameAnalysisDisplay, game_analysis.js
+  // — ne touche que l'affichage, pas le cache utilisé par la réutilisation
+  // automatique de l'issue #59).
+  if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
   MODE_TABS.forEach((key) => {
     const btn   = document.getElementById(`tab-btn-${key}`);
     const panel = document.getElementById(`tab-panel-${key}`);
@@ -207,7 +220,13 @@ function _updateStickyScrollPadding() {
     document.documentElement.style.scrollPaddingTop = "";
     return;
   }
-  document.documentElement.style.scrollPaddingTop = `${Math.ceil(wrap.getBoundingClientRect().height) + 12}px`;
+  // + la hauteur de #mobile-mode-bar-slot (issue #71 point 1, désormais
+  // sticky au-dessus de #board-sticky-wrap lui-même, cf. _updateMobileHeaderHeight
+  // ci-dessous) : sans elle, une cible visée par scrollIntoView se
+  // retrouverait masquée par CE sélecteur en plus du plateau.
+  const slot = document.getElementById("mobile-mode-bar-slot");
+  const headerH = slot ? Math.ceil(slot.getBoundingClientRect().height) : 0;
+  document.documentElement.style.scrollPaddingTop = `${Math.ceil(wrap.getBoundingClientRect().height) + headerH + 12}px`;
 }
 document.addEventListener("DOMContentLoaded", () => {
   const wrap = document.getElementById("board-sticky-wrap");
@@ -217,6 +236,32 @@ document.addEventListener("DOMContentLoaded", () => {
   _updateStickyScrollPadding();
 });
 _mobileModeBarQuery.addEventListener("change", _updateStickyScrollPadding);
+
+// ── Hauteur de la rangée d'en-tête collée (issue #71 point 1) ──────────────
+// #mobile-mode-bar-slot est désormais lui-même sticky top:0 dans tous les
+// modes (cf. templates/index.html) — #board-sticky-wrap (également sticky)
+// doit donc se coller JUSTE EN DESSOUS de lui plutôt que se superposer au
+// même niveau. Sa hauteur réelle varie (un seul bouton replié hors mode jeu,
+// pastille de modèle + menu "..." en mode jeu) : ce ResizeObserver la
+// republie dans --mobile-header-h, consommée par #board-sticky-wrap (règle
+// "top: var(--mobile-header-h, 0px)", même principe que
+// _updateStickyScrollPadding ci-dessus).
+function _updateMobileHeaderHeight() {
+  const slot = document.getElementById("mobile-mode-bar-slot");
+  if (!slot || !_mobileModeBarQuery.matches) {
+    document.documentElement.style.setProperty("--mobile-header-h", "0px");
+    return;
+  }
+  document.documentElement.style.setProperty("--mobile-header-h", `${Math.ceil(slot.getBoundingClientRect().height)}px`);
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const slot = document.getElementById("mobile-mode-bar-slot");
+  if (slot && typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(_updateMobileHeaderHeight).observe(slot);
+  }
+  _updateMobileHeaderHeight();
+});
+_mobileModeBarQuery.addEventListener("change", _updateMobileHeaderHeight);
 
 // ── Menu "..." de la rangée de navigation (issue #69 point 2) ──────────────
 // "Extraire le FEN" reste un seul bouton (extraireFen(), inchangé) — seul son

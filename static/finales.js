@@ -206,6 +206,9 @@ function loadSelectedFinale(id) {
   // Nouvelle partie (issue #64) : l'historique du chat envoyé à l'API repart
   // de zéro, séparé à l'écran des échanges de la finale précédente.
   if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
+  // Issue #71 point 6 : le rapport d'analyse affiché (Bibliothèque/Revue)
+  // n'a plus de rapport avec la partie qui démarre.
+  if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
   hideGameOverBanner();
   finaleWaiting  = true;
   finaleGameOver = false;
@@ -237,6 +240,9 @@ function startFinaleDemo() {
   // Nouvelle démonstration (issue #64) : l'historique du chat envoyé à
   // l'API repart de zéro, séparé à l'écran des échanges précédents.
   if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
+  // Issue #71 point 6 : le rapport d'analyse affiché (Bibliothèque/Revue)
+  // n'a plus de rapport avec la partie qui démarre.
+  if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
   hideGameOverBanner();
   finaleWaiting  = true;
   finaleGameOver = false;

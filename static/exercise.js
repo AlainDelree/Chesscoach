@@ -194,6 +194,9 @@ function startExercise() {
   // démarqué par un trait discret — coachClear() (bouton "Effacer") reste le
   // seul moyen de vider entièrement l'affichage.
   if (typeof coachNewSegment === "function") coachNewSegment("Nouvel exercice");
+  // Issue #71 point 6 : le rapport d'analyse affiché (Bibliothèque/Revue)
+  // n'a plus de rapport avec l'exercice qui démarre.
+  if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
   const statusEl = document.getElementById("exercise-status");
   if (statusEl) statusEl.textContent = "Chargement d'une position...";
   socket.emit("exercise_new", { phase: exercisePhaseFiltre() });

@@ -86,12 +86,21 @@ function buildBoard() {
 
   const rankOrder = _boardFlipped ? [0,1,2,3,4,5,6,7] : [7,6,5,4,3,2,1,0];
   const fileOrder = _boardFlipped ? [7,6,5,4,3,2,1,0] : [0,1,2,3,4,5,6,7];
+  // edge (issue #71 point 3) : coordonnées repliées dans les cases sur
+  // mobile (cf. .square[data-*-label]::before, templates/index.html) —
+  // colonne de gauche (rang) et rangée du bas (colonne), selon l'orientation
+  // courante. Les deux premiers éléments de rankOrder/fileOrder sont TOUJOURS
+  // la même valeur (0 non retourné, 7 retourné), qu'il s'agisse du rang ou
+  // du fichier : c'est la case visuellement en haut-à-gauche du plateau.
+  const edge = _boardFlipped ? 7 : 0;
   for (const rank of rankOrder) {
     for (const file of fileOrder) {
       const sq = document.createElement("div");
       const isLight = (rank + file) % 2 === 1;
       sq.className = `square ${isLight ? 'light' : 'dark'}`;
       sq.id = `sq-${file}-${rank}`;
+      if (file === edge) sq.dataset.rankLabel = String(rank + 1);
+      if (rank === edge) sq.dataset.fileLabel = "abcdefgh"[file];
       board.appendChild(sq);
     }
   }
@@ -451,10 +460,11 @@ function renderHistory(activeIdx) {
 // maquette, pour rester cohérent avec le reste de l'appli plutôt que
 // d'introduire une seconde numérotation) + matériel capturé condensé (une
 // pastille de la couleur en avance, "=" en cas d'égalité) + camp au trait.
-// Alimente à la fois la ligne d'état sous le plateau complet et la bande
-// compacte (#board-compact-strip) — sans effet tant que ces éléments sont
-// absents/masqués (grand écran, modes hors jeu). Appelée depuis
-// renderHistory() (déjà invoquée après chaque coup, tous modes confondus).
+// #game-status-line reste affichée sous le plateau qu'il soit complet ou
+// réduit (issue #71 point 4, remplace l'ancienne bande #board-compact-strip
+// séparée) — sans effet tant qu'elle est absente/masquée (grand écran, modes
+// hors jeu). Appelée depuis renderHistory() (déjà invoquée après chaque
+// coup, tous modes confondus).
 function _materialDiffFromFenBoard(fenBoard) {
   const vals = { p: 1, n: 3, b: 3, r: 5, q: 9 };
   let scoreW = 0, scoreB = 0;
@@ -469,9 +479,7 @@ function _materialDiffFromFenBoard(fenBoard) {
 function updateGameStatusLine() {
   const moveEl  = document.getElementById("game-status-move");
   const rightEl = document.getElementById("game-status-right");
-  const compactMoveEl = document.getElementById("board-compact-move");
-  const compactMatEl  = document.getElementById("board-compact-material");
-  if (!moveEl && !compactMoveEl) return;
+  if (!moveEl) return;
 
   let nbCoups = 0, lastSan = "", fenBoard = "", turnBlancs = true;
   if (typeof activeMode !== "undefined" && activeMode && typeof activeModeGameState === "function") {
@@ -493,7 +501,6 @@ function updateGameStatusLine() {
 
   const moveText = nbCoups > 0 ? `Coup ${nbCoups} · ${lastSan}` : "Position initiale";
   if (moveEl) moveEl.textContent = moveText;
-  if (compactMoveEl) compactMoveEl.textContent = moveText;
 
   const diff = fenBoard ? _materialDiffFromFenBoard(fenBoard) : 0;
   const turnText = turnBlancs ? "Trait aux Blancs" : "Trait aux Noirs";
@@ -517,7 +524,6 @@ function updateGameStatusLine() {
     turnSpan.textContent = turnText;
     rightEl.appendChild(turnSpan);
   }
-  if (compactMatEl) compactMatEl.textContent = `${materialText} · ${turnText}`;
 }
 
 function renderReview() {
@@ -618,6 +624,13 @@ function parsePgn(pgn, onLoaded) {
   // du chat envoyé à l'API repart de zéro, séparé à l'écran des échanges de
   // la partie précédemment revue.
   if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
+  // Issue #71 point 6 : vide l'AFFICHAGE du rapport d'analyse (pas le cache
+  // _gameAnalysisResults — game_analysis.js le garde pour reconnaître, une
+  // fois cette partie rechargée, qu'il s'agit de la même déjà analysée et le
+  // réafficher sans redemander Stockfish, issue #59) pour qu'aucun rapport
+  // de la partie précédemment chargée ne reste visible le temps qu'une
+  // nouvelle analyse (ou ce réaffichage automatique) ne le remplace.
+  if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
   try {
     const chess = new Chess();
     if (!chess.load_pgn(pgn)) {
