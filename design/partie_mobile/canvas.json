@@ -1,0 +1,170 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Analyse.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Analyse",
+      "w": 390,
+      "x": 1880,
+      "y": 0
+    },
+    "Avant.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Avant la partie",
+      "w": 390,
+      "x": 940,
+      "y": 870
+    },
+    "Clavier.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Coach — clavier ouvert",
+      "w": 390,
+      "x": 470,
+      "y": 0
+    },
+    "CoachCompact.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Coach — défilement (état compact)",
+      "w": 390,
+      "x": 470,
+      "y": 1740
+    },
+    "CoachNouveau.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Coach — nouveau contenu (point sur Lignes)",
+      "w": 390,
+      "x": 0,
+      "y": 1740
+    },
+    "Coups.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Coups",
+      "w": 390,
+      "x": 2350,
+      "y": 0
+    },
+    "FinAnalyse.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Fin de partie — Analyse",
+      "w": 390,
+      "x": 1880,
+      "y": 870
+    },
+    "FinCoach.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Fin de partie",
+      "w": 390,
+      "x": 1410,
+      "y": 870
+    },
+    "Lecture.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Lignes — lecture en cours",
+      "w": 390,
+      "x": 1410,
+      "y": 0
+    },
+    "Lignes.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Lignes",
+      "w": 390,
+      "x": 940,
+      "y": 0
+    },
+    "Main.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Coach",
+      "w": 390,
+      "x": 0,
+      "y": 0
+    },
+    "Menu.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Menu « … »",
+      "w": 390,
+      "x": 0,
+      "y": 870
+    },
+    "ModeMenu.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Liste des modes",
+      "w": 390,
+      "x": 470,
+      "y": 870
+    },
+    "Modele.dc.html": {
+      "h": 750,
+      "is_interactive": true,
+      "title": "Choix du modèle",
+      "w": 390,
+      "x": 940,
+      "y": 1740
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-09-30T16:40:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "compact": {
+      "fill": "gray",
+      "maxH": 240,
+      "text": "État compact : dès que le contenu sous les onglets défile, le plateau devient cette bande (mini-plateau, coup, matériel) et les barres de boutons disparaissent. Retour au plateau complet : remonter en haut de la zone, toucher la bande, ou lancer Play sur une ligne.",
+      "w": 360,
+      "x": 1410,
+      "y": 1740
+    },
+    "exemple": {
+      "fill": "gray",
+      "maxH": 90,
+      "text": "Contenu d'exemple : lignes, coups et analyse sont fictifs, pour montrer la mise en page.",
+      "w": 340,
+      "x": 0,
+      "y": -170
+    },
+    "titre": {
+      "kind": "title1",
+      "maxW": 2740,
+      "text": "Partie pédagogique — mobile 390 × 750",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Clavier.dc.html",
+    "Lignes.dc.html",
+    "Lecture.dc.html",
+    "Analyse.dc.html",
+    "Coups.dc.html",
+    "Menu.dc.html",
+    "ModeMenu.dc.html",
+    "Avant.dc.html",
+    "FinCoach.dc.html",
+    "FinAnalyse.dc.html",
+    "CoachNouveau.dc.html",
+    "CoachCompact.dc.html",
+    "Modele.dc.html"
+  ],
+  "pages": [],
+  "title": "Partie pédagogique — mobile"
+}
