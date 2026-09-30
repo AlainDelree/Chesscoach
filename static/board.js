@@ -744,7 +744,15 @@ function stripMarkdownForChat(text) {
 // `toStart` reprend la logique de l'issue #53 : true pour placer le DÉBUT de
 // l'élément en haut de la zone visible (réponse du coach), false pour
 // afficher sa fin (message d'Alain, séparateur, erreur).
-function _coachScrollReveal(history, el, toStart) {
+// `allowPageScroll` (issue #67) : sur mobile (branche "page qui défile"),
+// seuls les cas où Alain attend effectivement la réponse doivent faire
+// défiler la PAGE (réponse à une question tapée, réponse à "Demander l'avis
+// du coach", verdict d'exercice) — tous les autres messages automatiques
+// (coup joué, commentaire "Commenter chaque coup", info, erreur, séparateur)
+// restent silencieux pour ne pas faire sortir le plateau de l'écran à chaque
+// coup. Le défilement interne (bureau) n'est lui jamais concerné par ce
+// paramètre : comportement grand écran inchangé.
+function _coachScrollReveal(history, el, toStart, allowPageScroll) {
   const internallyScrollable = history.scrollHeight > history.clientHeight + 1;
   if (internallyScrollable) {
     if (toStart) {
@@ -761,12 +769,16 @@ function _coachScrollReveal(history, el, toStart) {
     } else {
       history.scrollTop = history.scrollHeight;
     }
-  } else {
+  } else if (allowPageScroll) {
     el.scrollIntoView({ block: toStart ? "start" : "end" });
   }
 }
 
-function _coachRenderBubble(role, text) {
+// `allowPageScroll` (issue #67, défaut false) : à ne passer à true que pour
+// les réponses qu'Alain attend activement (réponse à une question tapée,
+// réponse à "Demander l'avis du coach") — pas pour les messages automatiques
+// ("je joue ...", commentaires, info, erreur). Cf. _coachScrollReveal.
+function _coachRenderBubble(role, text, allowPageScroll) {
   const history = document.getElementById("coach-history");
   if (!history) return;
   const empty = document.getElementById("coach-empty");
@@ -779,7 +791,7 @@ function _coachRenderBubble(role, text) {
   // Message d'Alain : comportement inchangé, on descend tout en bas (voir
   // son message envoyé). Réponse du coach : afficher le DÉBUT de la réponse
   // en haut de la zone plutôt que sa fin (issue #53).
-  _coachScrollReveal(history, bubble, !isUser);
+  _coachScrollReveal(history, bubble, !isUser, allowPageScroll);
 }
 
 // Même lien que le "Coût API" de l'en-tête (issue #54) — la Console est
@@ -880,7 +892,9 @@ if (typeof socket !== "undefined") {
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
       _coachHistory.push({ role: "assistant", content: text });
-      _coachRenderBubble("assistant", text);
+      // Réponse à une question tapée par Alain : il l'attend, la page doit
+      // défiler jusqu'à elle sur mobile (issue #67).
+      _coachRenderBubble("assistant", text, true);
       // Alimente le tableau "Lignes du coach" du mode exercice (issue #58)
       // quand cette réponse arrive pendant un exercice actif — no-op pour
       // tout autre mode (fonction absente, ou exerciseActive faux).
@@ -987,7 +1001,9 @@ if (typeof socket !== "undefined") {
     setCoachOnDemandButtonsDisabled(false);
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
-      _coachRenderBubble("assistant", text);
+      // Réponse au bouton "Demander l'avis du coach" : Alain l'attend, la
+      // page doit défiler jusqu'à elle sur mobile (issue #67).
+      _coachRenderBubble("assistant", text, true);
       if (typeof exerciseOnCoachText === "function") exerciseOnCoachText(text);
     }
   });

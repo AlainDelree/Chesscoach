@@ -604,7 +604,9 @@ if (typeof socket !== "undefined") {
     const text = stripMarkdownForChat((data && data.text) || "");
     _exerciseAddCoachLines(text);
     if (text) {
-      _coachRenderBubble("assistant", text);
+      // Verdict de l'exercice : Alain l'attend, la page doit défiler jusqu'à
+      // lui sur mobile (issue #67, comportement voulu par la maquette).
+      _coachRenderBubble("assistant", text, true);
       if (typeof _coachHistory !== "undefined") {
         _coachHistory.push({ role: "assistant", content: text });
       }
