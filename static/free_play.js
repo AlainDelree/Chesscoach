@@ -124,6 +124,10 @@ function updateFreePlayStatus() {
 
 function onFreePlayBoardClick(e) {
   if (!freePlayActive || !freeGame || freeWaitingEngine || freeGameOver) return;
+  // Une ligne du coach est affichée sur le plateau (issue #68, avant/pendant/
+  // après sa lecture) : coups bloqués jusqu'au retour explicite ("Revenir à
+  // la partie").
+  if (typeof gameCoachLinesPreviewActive !== "undefined" && gameCoachLinesPreviewActive) return;
   const sqEl = e.target.closest(".square");
   if (!sqEl) return;
   const square = freeSquareIdToAlgebraic(sqEl.id.replace("sq-", ""));

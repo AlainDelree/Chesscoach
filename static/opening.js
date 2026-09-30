@@ -182,6 +182,10 @@ function openingIsAlainTurn() {
 
 function onOpeningBoardClick(e) {
   if (!openingActive || !openingGame || openingWaiting || openingGameOver) return;
+  // Une ligne du coach est affichée sur le plateau (issue #68, avant/pendant/
+  // après sa lecture) : coups bloqués jusqu'au retour explicite ("Revenir à
+  // la partie").
+  if (typeof gameCoachLinesPreviewActive !== "undefined" && gameCoachLinesPreviewActive) return;
   if (!openingIsAlainTurn()) return;
   const sqEl = e.target.closest(".square");
   if (!sqEl) return;
@@ -295,7 +299,13 @@ if (typeof socket !== "undefined") {
     } else if (data && !data.dans_le_livre && data.coup_livre_recommande) {
       text += `\n\n(Coup le plus joué du livre : ${data.coup_livre_recommande})`;
     }
-    if (text) _coachRenderBubble("assistant", text);
+    if (text) {
+      _coachRenderBubble("assistant", text);
+      // Tableau "Lignes du coach" (issue #68) : alimenté aussi par le
+      // commentaire automatique après chaque coup ("Commenter chaque coup"),
+      // pas seulement par le chat libre/la demande ponctuelle (board.js).
+      if (typeof gameCoachLinesOnCoachText === "function") gameCoachLinesOnCoachText(text);
+    }
   });
 
   socket.on("opening_error", (data) => {

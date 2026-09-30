@@ -181,6 +181,10 @@ function pedagogicIsAlainTurn() {
 
 function onPedagogicBoardClick(e) {
   if (!pedagogicActive || !pedagogicGame || pedagogicWaiting || pedagogicGameOver) return;
+  // Une ligne du coach est affichée sur le plateau (issue #68, avant/pendant/
+  // après sa lecture) : coups bloqués jusqu'au retour explicite ("Revenir à
+  // la partie").
+  if (typeof gameCoachLinesPreviewActive !== "undefined" && gameCoachLinesPreviewActive) return;
   if (!pedagogicIsAlainTurn()) return;
   const sqEl = e.target.closest(".square");
   if (!sqEl) return;
@@ -283,7 +287,13 @@ if (typeof socket !== "undefined") {
 
   socket.on("pedagogic_comment", (data) => {
     const text = stripMarkdownForChat((data && data.text) || "");
-    if (text) _coachRenderBubble("assistant", text);
+    if (text) {
+      _coachRenderBubble("assistant", text);
+      // Tableau "Lignes du coach" (issue #68) : alimenté aussi par le
+      // commentaire automatique après chaque coup ("Commenter chaque coup"),
+      // pas seulement par le chat libre/la demande ponctuelle (board.js).
+      if (typeof gameCoachLinesOnCoachText === "function") gameCoachLinesOnCoachText(text);
+    }
   });
 
   socket.on("pedagogic_error", (data) => {

@@ -348,6 +348,38 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     + _ANTI_INVENTION_ADDENDUM
 )
 
+# Complément de system prompt pour les modes de partie avec un historique réel
+# (libre, pédagogique, ouverture, finales) et la revue de bibliothèque (issue
+# #68) — chat coach en dehors du mode "exercice" (qui garde son propre
+# complément ci-dessus, une position isolée sans historique). Ajouté à toute
+# réponse hors exercice (get_coach_response), pas seulement quand un verdict
+# Stockfish est transmis : contrairement à l'exercice, une ligne alternative
+# citée ici peut partir d'une position déjà jouée PLUS TÔT dans la partie
+# (ex. "qu'aurais-je dû jouer au coup 8 ?"), pas seulement de la position
+# actuelle — Alain ne peut la rejouer sur l'échiquier (issue #68,
+# static/game_coach_lines.js) que si le coach introduit ce départ par une
+# mention au format fixe ci-dessous, que l'extraction côté client sait
+# reconnaître sans avoir à deviner quoi que ce soit.
+_GAME_LINES_ADDENDUM = (
+    "Quand tu cites une ligne de coups (une suite d'au moins deux coups), "
+    "écris-la toujours en notation d'échecs standard, coups séparés par des "
+    "espaces (exemple : \"Nxg4 exd6 Qxd6\") — Alain peut alors la rejouer "
+    "automatiquement sur l'échiquier. Si cette ligne part de la position "
+    "ACTUELLEMENT affichée sur l'échiquier, cite-la telle quelle, sans rien "
+    "ajouter avant. Si elle part au contraire d'une position DÉJÀ JOUÉE PLUS "
+    "TÔT dans cette partie (par exemple pour répondre à \"qu'aurais-je dû "
+    "jouer au coup 8 ?\"), introduis-la TOUJOURS, immédiatement avant les "
+    "coups, par une mention au format fixe suivant : \"depuis le coup N... "
+    "(Noirs)\" si c'est un coup des Noirs, ou \"depuis le coup N (Blancs)\" "
+    "si c'est un coup des Blancs — N étant le numéro de coup PGN standard de "
+    "cette partie (exemple complet : \"Ligne depuis le coup 8... (Noirs) : "
+    "Nxg4 exd6 Qxd6\"). N'utilise cette mention QUE si le numéro de coup et "
+    "le camp sont déjà connus avec certitude d'après la partie transmise "
+    "dans ce contexte — ne l'invente jamais, et ne devine jamais un autre "
+    "format : c'est cette mention exacte, et elle seule, qui permet à Alain "
+    "de retrouver la bonne position de départ."
+)
+
 # Appel dédié, distinct du chat coach (issue #14, "Établir mon programme
 # d'entraînement") : comme get_opening_moves, une réponse structurée en JSON
 # plutôt que de la prose libre, pour pouvoir stocker le résultat de façon
@@ -1394,11 +1426,18 @@ def get_coach_response(messages, context, coach_memory, config):
     prompt_sys = _SYSTEM_PROMPT
     if (context or {}).get("mode_exercice"):
         prompt_sys = f"{prompt_sys}\n\n{_EXERCISE_SYSTEM_ADDENDUM}"
-    elif (context or {}).get("verdict_qualite") or (context or {}).get("pv_coup_propose") or (context or {}).get("pv_meilleur_coup"):
-        # Mêmes garde-fous qu'en mode "exercice" (issue #26) dès qu'un verdict
-        # et/ou une PV Stockfish sont transmis par un autre mode (pédagogique,
-        # ouverture hors-livre, finales) — pas de flag mode_exercice requis.
-        prompt_sys = f"{prompt_sys}\n\n{_ANTI_INVENTION_ADDENDUM}"
+    else:
+        # Issue #68 : format de départ des lignes alternatives pour tous les
+        # modes hors exercice (partie avec historique réel, ou revue) — pas
+        # conditionné à la présence d'un verdict/d'une PV Stockfish,
+        # contrairement au garde-fou ci-dessous qui reste indépendant.
+        prompt_sys = f"{prompt_sys}\n\n{_GAME_LINES_ADDENDUM}"
+        if (context or {}).get("verdict_qualite") or (context or {}).get("pv_coup_propose") or (context or {}).get("pv_meilleur_coup"):
+            # Mêmes garde-fous qu'en mode "exercice" (issue #26) dès qu'un
+            # verdict et/ou une PV Stockfish sont transmis par un autre mode
+            # (pédagogique, ouverture hors-livre, finales) — pas de flag
+            # mode_exercice requis.
+            prompt_sys = f"{prompt_sys}\n\n{_ANTI_INVENTION_ADDENDUM}"
     if (context or {}).get("mode_demonstration"):
         # Indépendant des branches ci-dessus (issue #29) : une démonstration
         # ne transmet ni mode_exercice ni verdict Stockfish, ce garde-fou doit

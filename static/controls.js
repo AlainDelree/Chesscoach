@@ -73,6 +73,10 @@ function setActiveMode(mode) {
   updateSharedControlBar();
   updateReviewControlsEnabled();
   renderHistory(reviewIdx);
+  // Masque immédiatement le tableau "Lignes du coach" des modes de partie/
+  // revue (issue #68) au passage vers exercice/éditeur, même si des lignes
+  // restaient affichées d'un mode précédent pas encore réinitialisé.
+  if (typeof renderGameCoachLinesTable === "function") renderGameCoachLinesTable();
 }
 
 // ── Onglets par mode (issue #23) ────────────────────────────────────────────

@@ -1009,7 +1009,7 @@ def _stockfish_check_key_moment(pgn: str, camp_alain: str, cached_flags: list | 
     return resultats
 
 
-def _enrich_context_with_game_facts(context: dict) -> dict:
+def _enrich_context_with_game_facts(context: dict):
     """Ajoute le bloc de faits calculés mécaniquement avec python-chess
     (issue #55, game_facts.py) au contexte du chat libre, pour les modes
     interactifs qui transmettent un PGN et un camp_alain — partie libre,
@@ -1025,28 +1025,45 @@ def _enrich_context_with_game_facts(context: dict) -> dict:
 
     Best-effort : une erreur de calcul ne doit jamais faire échouer la
     réponse du coach, le contexte est alors renvoyé inchangé.
-    """
+
+    Retourne (context, stockfish_line) — stockfish_line est un dict
+    {"fen_avant", "ligne_principale", "coup_plein", "camp"} tiré du moment le
+    plus grave déjà vérifié par Stockfish ci-dessus (issue #68 point 5,
+    "Ligne de Stockfish" du tableau "Lignes du coach" — jamais un nouvel
+    appel moteur ici), ou None si aucune vérification n'a abouti à une ligne
+    principale non vide."""
     context = context or {}
     pgn = (context.get("pgn") or "").strip()
     camp_alain = (context.get("camp_alain") or "").strip()
     if not pgn or camp_alain not in ("blancs", "noirs"):
-        return context
+        return context, None
     if context.get("mode_exercice") or context.get("mode_demonstration"):
-        return context
+        return context, None
     cached_flags = context.get("analyse_mecanique_flags")
+    stockfish_check = _stockfish_check_key_moment(pgn, camp_alain, cached_flags)
+    stockfish_line = None
+    for c in stockfish_check:
+        if c.get("fen_avant") and c.get("ligne_principale"):
+            stockfish_line = {
+                "fen_avant": c["fen_avant"],
+                "ligne_principale": c["ligne_principale"],
+                "coup_plein": c.get("coup_plein"),
+                "camp": c.get("camp"),
+            }
+            break
     try:
         faits = game_facts.build_game_facts_text(
             pgn, camp_alain, flagged_moves=cached_flags,
-            stockfish_check=_stockfish_check_key_moment(pgn, camp_alain, cached_flags),
+            stockfish_check=stockfish_check,
         )
     except Exception as e:
         logger.warning(f"[GAME_FACTS] Construction du contexte échouée (issue #55) : {e}")
-        return context
+        return context, stockfish_line
     if not faits:
-        return context
+        return context, stockfish_line
     enrichi = dict(context)
     enrichi["faits_calcules"] = faits
-    return enrichi
+    return enrichi, stockfish_line
 
 
 @socketio.on("coach_ask")
@@ -1058,7 +1075,7 @@ def on_coach_ask(data):
     "coach_response"/"coach_error" lisent data.text / data.error).
     """
     messages = data.get("messages", [])
-    context = _enrich_context_with_game_facts(data.get("context", {}))
+    context, stockfish_line = _enrich_context_with_game_facts(data.get("context", {}))
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
@@ -1072,7 +1089,15 @@ def on_coach_ask(data):
         _handle_llm_model_indisponible_si_besoin(error)
         emit("coach_error", {"error": error})
     else:
-        emit("coach_response", {"text": response})
+        # stockfish_line (issue #68 point 5) : "Ligne de Stockfish" du
+        # tableau "Lignes du coach" côté client (static/game_coach_lines.js)
+        # — omis du payload si aucune vérification n'a abouti, plutôt que
+        # transmis à None (cf. gameCoachLinesOnStockfishLine, qui vérifie de
+        # toute façon sa présence).
+        payload = {"text": response}
+        if stockfish_line:
+            payload["stockfish_line"] = stockfish_line
+        emit("coach_response", payload)
 
 
 @socketio.on("training_program_build")

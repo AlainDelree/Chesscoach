@@ -373,13 +373,26 @@ let _isAnalysed    = false; // true une fois l'analyse Stockfish terminée
 let reviewWhite    = "";
 let reviewBlack    = "";
 
+// Bloqués pendant la lecture d'une ligne du coach (issue #68,
+// gameCoachLinesPreviewActive — game_coach_lines.js) : naviguer dans la
+// revue pendant qu'une ligne est affichée sur le plateau mélangerait la
+// position réellement affichée (celle de la ligne) avec la navigation
+// réelle (reviewIdx), sans qu'aucune des deux ne s'y retrouve — mêmes clics
+// bloqués que sur les plateaux interactifs (onFreePlayBoardClick and co.).
+function _reviewBlockedByLinePreview() {
+  return typeof gameCoachLinesPreviewActive !== "undefined" && gameCoachLinesPreviewActive;
+}
+
 function reviewPrev() {
+  if (_reviewBlockedByLinePreview()) return;
   if (reviewIdx > 0) { reviewIdx--; renderReview(); }
 }
 function reviewNext() {
+  if (_reviewBlockedByLinePreview()) return;
   if (reviewIdx < reviewFens.length - 1) { reviewIdx++; renderReview(); }
 }
 function reviewGoTo(index) {
+  if (_reviewBlockedByLinePreview()) return;
   if (index >= 0 && index < reviewFens.length) {
     reviewIdx = index;
     renderReview();
@@ -516,6 +529,14 @@ function parsePgn(pgn, onLoaded) {
   // (issue #23, ensureModeSwitchClean dans controls.js) plutôt que de laisser
   // deux modes "actifs" en même temps sur le même plateau.
   if (typeof ensureModeSwitchClean === "function") ensureModeSwitchClean("library");
+  // Issue #68 : un mode de partie (libre/pédagogique/ouverture/finales) ne
+  // remet jamais lui-même activeMode à null après une fin de partie (seuls
+  // exercice/éditeur le font, cf. abandonExerciseGame/abandonPositionEditor)
+  // — sans ce retour explicite, charger une partie en revue juste après en
+  // avoir joué une laisserait coachBuildContext()/gameCoachLinesOnCoachText
+  // continuer à lire l'ancienne partie interactive (activeModeGameState())
+  // au lieu de celle qu'on vient de charger.
+  if (typeof setActiveMode === "function") setActiveMode(null);
   // Autre partie chargée en revue de bibliothèque (issue #64) : l'historique
   // du chat envoyé à l'API repart de zéro, séparé à l'écran des échanges de
   // la partie précédemment revue.
@@ -845,6 +866,12 @@ function coachNewSegment(label) {
   }
   _coachSegmentStart     = _coachHistory.length;
   _coachSegmentStartedAt = new Date().toISOString();
+  // Tableau "Lignes du coach" des modes de partie/revue (issue #68) : vidé
+  // aux mêmes points de coupure que l'isolation du chat par partie
+  // (coachNewSegment est appelé au démarrage de chaque nouvelle partie/
+  // exercice et au chargement d'une autre partie en revue) — no-op en mode
+  // exercice (garde son propre tableau, exercise.js/_exerciseResetCoachLines).
+  if (typeof gameCoachLinesReset === "function") gameCoachLinesReset();
 }
 
 function coachClear() {
@@ -899,6 +926,18 @@ if (typeof socket !== "undefined") {
       // quand cette réponse arrive pendant un exercice actif — no-op pour
       // tout autre mode (fonction absente, ou exerciseActive faux).
       if (typeof exerciseOnCoachText === "function") exerciseOnCoachText(text);
+      // Idem pour le tableau des modes de partie/revue (issue #68) — no-op
+      // en mode exercice/éditeur ou si aucune partie/revue n'est chargée
+      // (cf. gameCoachLinesOnCoachText, game_coach_lines.js).
+      if (typeof gameCoachLinesOnCoachText === "function") gameCoachLinesOnCoachText(text);
+    }
+    // Bonus (issue #68 point 5) : ligne principale déjà calculée par la
+    // vérification Stockfish du bloc de faits pour cette partie (cf. app.py
+    // on_coach_ask/_enrich_context_with_game_facts), transmise avec sa
+    // position de départ réelle — jamais recalculée côté client, jamais
+    // ajoutée si absente/vide.
+    if (data && data.stockfish_line && typeof gameCoachLinesOnStockfishLine === "function") {
+      gameCoachLinesOnStockfishLine(data.stockfish_line);
     }
     _coachDone();
   });
@@ -1005,6 +1044,7 @@ if (typeof socket !== "undefined") {
       // page doit défiler jusqu'à elle sur mobile (issue #67).
       _coachRenderBubble("assistant", text, true);
       if (typeof exerciseOnCoachText === "function") exerciseOnCoachText(text);
+      if (typeof gameCoachLinesOnCoachText === "function") gameCoachLinesOnCoachText(text);
     }
   });
 
