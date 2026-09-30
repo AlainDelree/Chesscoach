@@ -233,6 +233,35 @@ _GAME_FACTS_ADDENDUM = (
     "présenté comme une cause plus précoce mais PAS comme un second "
     "tournant — ne le qualifie jamais de \"vrai tournant\" s'il est distinct "
     "du moment le plus grave ci-dessus, dont la perte est plus importante)."
+    "\n\n"
+    "Description mécanique de chaque coup cité, et pions perdus sans "
+    "reprise (issue #66) : dans la section \"Vérification Stockfish ciblée\", "
+    "chaque coup cité (\"Coup joué\", \"Meilleur coup selon Stockfish\", "
+    "\"Réponse jouée ensuite dans la partie\", \"Réponse anticipée par la "
+    "ligne principale\") est suivi d'une ligne calculée mécaniquement qui "
+    "précise déjà quelle pièce joue (type et case de départ), la case "
+    "d'arrivée, la pièce capturée le cas échéant (avec sa case, si elle "
+    "était défendue et par quoi, et le solde net réel après reprise), "
+    "l'échec/mat, et les pièces adverses désormais attaquées — RÈGLE "
+    "ABSOLUE : pour toute pièce ou case en lien avec UN de ces coups, ne "
+    "reprends QUE ce que cette ligne calculée (ou le reste du bloc, ou le "
+    "PGN) dit explicitement. Ne dis JAMAIS toi-même quelle pièce joue un "
+    "coup, où se trouve une pièce à ce moment de la partie, ni ce qu'un "
+    "coup attaque ou menace, si cette information n'apparaît pas "
+    "explicitement dans le bloc — même par déduction ou par ce qui te "
+    "semblerait logique. Une capture jamais qualifiée de \"gratuite\" ou "
+    "\"sans contrepartie\" si la ligne calculée indique qu'elle était "
+    "défendue et reprise (le solde net après reprise est alors le seul "
+    "résultat réel, cf. paragraphe \"Solde net après reprise\" ci-dessus). "
+    "Si un coup t'intéresse mais que la ligne calculée correspondante est "
+    "absente, cite ce coup uniquement en notation abrégée standard (par "
+    "exemple \"8...Bxe5\"), sans AUCUN commentaire sur la pièce qui joue, sa "
+    "case de départ, ce qu'elle capture ou ce qu'elle attaque. Le bloc "
+    "contient aussi, si la partie en a, une section \"Pions perdus sans "
+    "reprise\" (jusqu'à 3, les plus récents) : des pertes d'un seul pion, "
+    "sans reprise possible, trop mineures pour être des \"moments clés\" "
+    "mais réelles — signale-les si Alain demande un bilan complet de la "
+    "partie, sans jamais les présenter comme LE tournant."
 )
 
 # Complément de system prompt pour l'explication à la demande d'un coup
@@ -280,6 +309,21 @@ _ANALYSE_PARTIE_ADDENDUM = (
     "la partie\", \"le moment décisif\" ou équivalent — tu ne peux pas savoir "
     "d'ici s'il existe ailleurs dans la partie une perte plus importante "
     "pour Alain. Décris uniquement l'impact de ce coup précis."
+    "\n\n"
+    "Description mécanique du coup et du meilleur coup (issue #66) : quand "
+    "le contexte fournit une \"Description mécanique calculée\" pour ce coup "
+    "ou pour le meilleur coup, c'est ta SEULE source pour dire quelle pièce "
+    "joue, sa case de départ, la pièce capturée (et si elle était défendue, "
+    "avec le solde net réel après reprise), et ce que ce coup attaque "
+    "désormais. Ne dis JAMAIS toi-même quelle pièce joue un coup, où se "
+    "trouve une pièce, ni ce qu'un coup attaque ou menace si cette "
+    "description mécanique est absente ou ne le précise pas — cite alors le "
+    "coup uniquement en notation abrégée (par exemple \"8...Bxe5\"), sans "
+    "aucun commentaire sur la pièce ou la case. Ne qualifie jamais une "
+    "capture de \"gratuite\" si la description indique qu'elle était "
+    "défendue et reprise : c'est le solde net après reprise qui est le "
+    "résultat réel de l'échange, pas la valeur brute de la pièce prise en "
+    "premier."
 )
 
 _EXERCISE_SYSTEM_ADDENDUM = (
@@ -376,7 +420,22 @@ _MOVE_SELECTION_SYSTEM_PROMPT = (
     "réellement jouée ensuite dans la partie et sa conséquence matérielle "
     "immédiate — capture, perte nette, reprise possible ou non — ou null si "
     "ce coup est le dernier de la partie ou si la réponse suivante n'est pas "
-    "une capture). "
+    "une capture), description_mecanique et meilleur_coup_description (issue "
+    "#66, calculées mécaniquement : quelle pièce joue ce coup ou le "
+    "meilleur coup, sa case de départ, la pièce capturée éventuelle — "
+    "défendue ou non, avec le solde net réel après reprise — et ce qui est "
+    "désormais attaqué ; null si non calculable). "
+    "\n\n"
+    "RÈGLE ABSOLUE sur la pièce qui joue et les cases (issue #66) : pour "
+    "toute pièce ou case en lien avec un coup, ne reprends QUE ce que "
+    "description_mecanique ou meilleur_coup_description dit explicitement "
+    "pour ce coup précis. Ne dis JAMAIS toi-même quelle pièce joue un coup, "
+    "où se trouve une pièce, ni ce qu'un coup attaque, si le champ "
+    "correspondant est null — cite alors ce coup uniquement en notation "
+    "abrégée (san), sans aucun commentaire de position. Ne qualifie jamais "
+    "une capture de \"gratuite\" si sa description indique qu'elle était "
+    "défendue et reprise : le solde net après reprise (donné dans cette "
+    "description) est le seul résultat réel de l'échange."
     "\n\n"
     "RÈGLE ABSOLUE sur l'auteur d'un coup (issue #56) : un coup dont "
     "l'auteur ne contient pas \"Alain\" n'est JAMAIS un coup d'Alain — ne "
@@ -458,7 +517,12 @@ def get_move_explanations(flagged_moves, camp_alain, config):
                       d'origine. "reponse_suivante" (issue #62, calculée
                       mécaniquement par game_facts.describe_reponse_suivante)
                       : la réponse réellement jouée ensuite dans la partie et
-                      sa conséquence matérielle, ou None.
+                      sa conséquence matérielle, ou None. "description_mecanique"/
+                      "meilleur_coup_description" (issue #66, calculées par
+                      game_facts.describe_move_mechanically) : quelle pièce
+                      joue ce coup/le meilleur coup, sa case de départ, la
+                      pièce capturée (défendue ou non, solde net après
+                      reprise) et ce qui est désormais attaqué, ou None.
       camp_alain    : "blancs"/"noirs", ou "" si indéterminable pour cette
                       partie (issue #56 — ex. mode "partie libre" où les deux
                       camps peuvent être joués par Alain, ou partie importée
@@ -739,6 +803,17 @@ def _build_context_text(context) -> str:
     # ("le roque était préférable"), jamais la vraie raison (8...Nxf4 capture
     # la dame) : le modèle devait la deviner au lieu de la recevoir.
     reponse_suivante = (context.get("reponse_suivante") or "").strip()
+    # Description mécanique du coup flagué expliqué et de son meilleur coup
+    # (issue #66) : quelle pièce joue, sa case de départ, la pièce capturée
+    # éventuelle (défendue ou non, solde net après reprise) et ce qui est
+    # désormais attaqué — calculé mécaniquement (game_facts.
+    # describe_move_mechanically côté app.py), même risque et même correctif
+    # que le bloc de faits du chat coach (voir _GAME_FACTS_ADDENDUM) pour un
+    # coup unique expliqué hors de ce bloc.
+    coup_description_mecanique = (context.get("coup_description_mecanique") or "").strip()
+    meilleur_coup_description_mecanique = (
+        context.get("meilleur_coup_description_mecanique") or ""
+    ).strip()
     # Ligne (PV) réellement calculée par Stockfish pour le coup proposé et
     # pour le meilleur coup (issue #20), en SAN, depuis la même analyse à
     # depth=18 que verdict_qualite/meilleur_coup ci-dessus (cf. app.py,
@@ -904,6 +979,17 @@ def _build_context_text(context) -> str:
             f"Réfutation calculée mécaniquement de ce coup (issue #62), à "
             f"expliquer EN PREMIER, avant toute autre remarque stratégique : "
             f"{reponse_suivante}"
+        )
+    if coup_description_mecanique:
+        lines.append(
+            f"Description mécanique calculée de ce coup (issue #66), seule "
+            f"source fiable pour la pièce qui joue, sa case de départ et ce "
+            f"qu'elle capture ou attaque : {coup_description_mecanique}"
+        )
+    if meilleur_coup_description_mecanique:
+        lines.append(
+            f"Description mécanique calculée du meilleur coup ci-dessus "
+            f"(issue #66) : {meilleur_coup_description_mecanique}"
         )
     if reprise_recente:
         lines.append(
