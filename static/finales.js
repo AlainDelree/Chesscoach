@@ -378,7 +378,9 @@ function onFinaleBoardClick(e) {
   finaleFenAvantCoup = fenAvant;
   setFinaleInverserCampsDisabled(true);
   updateFinaleStatus();
-  _coachRenderBubble("user", `Travail de finales — je joue ${move.san}`);
+  // Masqué dans le chat sur mobile (issue #69 point 3) — purement présentationnel,
+  // cf. commentaire de _coachRenderBubble (board.js).
+  _coachRenderBubble("user", `Travail de finales — je joue ${move.san}`, false, "coach-bubble-auto-move");
   socket.emit("finale_move", {
     fen_avant: fenAvant,
     uci: move.from + move.to + (move.promotion || ""),

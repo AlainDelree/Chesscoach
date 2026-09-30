@@ -224,7 +224,9 @@ function onOpeningBoardClick(e) {
   openingFenAvantCoup    = fenAvant;
   openingInBookAvantCoup = openingInBook;
   updateOpeningStatus();
-  _coachRenderBubble("user", `Travail d'ouverture — je joue ${move.san}`);
+  // Masqué dans le chat sur mobile (issue #69 point 3) — purement présentationnel,
+  // cf. commentaire de _coachRenderBubble (board.js).
+  _coachRenderBubble("user", `Travail d'ouverture — je joue ${move.san}`, false, "coach-bubble-auto-move");
   socket.emit("opening_move", {
     fen_avant: fenAvant,
     uci: move.from + move.to + (move.promotion || ""),

@@ -255,6 +255,16 @@
     #board-file-column { display: flex; flex-direction: column; align-items: center; gap: 4px; }
     #coord-file { display: flex; justify-content: space-around; width: var(--bd-size); }
     .material-row { min-height: 22px; }
+    /* #board-sticky-wrap (issue #69 point 1) : même display:flex/align-items/
+       gap que #board-column, pour que ses enfants (mobile-pedagogic-start-slot,
+       bandeau de fin de partie, matériel, plateau, barre de lecture des
+       lignes) restent centrés individuellement exactement comme avant, qu'il
+       soit imbriqué dans #board-column (grand écran, position d'origine dans
+       le gabarit ci-dessous) ou déplacé au niveau de #app (mobile, cf. media
+       query et placeMobileRelocatablesForViewport/controls.js — le sticky a
+       besoin d'un ancêtre aussi haut que toute la page pour rester collé
+       jusqu'en bas, ce que #board-column, bien plus court, ne permet pas). */
+    #board-sticky-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
     #review-controls { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
     #historique-column {
       display: flex;
@@ -323,10 +333,30 @@
        (colonnes #historique/#board/#mode-tabs/#coach côte à côte) est
        inchangé (issue #63, disposition grand écran conservée). */
     @media (max-width: 900px) {
-      :root { --bd-size: min(76vh, 600px, calc(100vw - 76px)); }
+      /* Issue #69 point 1 : le plateau (avec matériel capturé et la nouvelle
+         barre de lecture des lignes, cf. #board-sticky-wrap plus bas) doit
+         tenir dans environ 42% de la hauteur d'écran ET dans la largeur
+         d'écran — 30vh laisse ~11-12vh de marge pour les deux rangées de
+         matériel + la barre de lecture quand elle est visible, cf. calcul
+         détaillé dans le rapport de clôture. calc(100vw - 76px) (inchangé
+         depuis l'issue #50) couvre la largeur : coord-rank + barre d'éval +
+         marges de chaque côté du plateau. */
+      :root { --bd-size: min(30vh, 420px, calc(100vw - 76px)); }
+
+      /* scroll-padding-top (issue #69 point 5) : le plateau collé
+         (#board-sticky-wrap) masquerait sinon le haut de toute cible visée
+         par un scrollIntoView (rapport d'analyse, réponse du coach à une
+         question posée — cf. _coachScrollReveal dans board.js) puisqu'il
+         reste affiché par-dessus au même niveau vertical. Réglé sur le
+         conteneur de défilement racine (comme scroll-padding le veut) plutôt
+         que d'ajouter scroll-margin-top à chaque cible une par une. 90px de
+         marge couvre les deux rangées de matériel (~44px) et la barre de
+         lecture des lignes (~40px) quand elle est affichée. */
+      :root { scroll-padding-top: calc(var(--bd-size) + 90px); }
 
       #app { flex-direction: column; flex-wrap: nowrap; padding: 8px; gap: 10px; padding-bottom: 84px; }
 
+      #board-sticky-wrap,
       #board-column,
       #coach-column,
       #mode-tabs-column,
@@ -334,15 +364,124 @@
         width: 100%;
         max-width: 100%;
       }
+      /* #board-sticky-wrap n'a pas besoin d'un "order" explicite : déplacé au
+         niveau de #app (cf. placeMobileRelocatablesForViewport, controls.js),
+         il garde son order par défaut (0), déjà inférieur aux valeurs
+         explicites ci-dessous — il s'affiche donc toujours en premier, quelle
+         que soit sa position réelle dans le DOM après déplacement. */
       #board-column   { order: 1; }
       #coach-column   { order: 2; }
       #mode-tabs-column { order: 3; }
       #historique-column { order: 4; }
+      /* Issue #69 point 2 : tout ce qui ne sert pas pendant la partie
+         (importation PGN, collection de parties, programme d'entraînement —
+         déplacés ici par JS, cf. _placeMobileRelocatablesForViewport dans
+         controls.js) atterrit après l'historique des coups. #mobile-bottom-slot
+         est display:contents (cf. <style> plus bas) — un "order" posé dessus
+         n'aurait AUCUN effet (un élément display:contents disparaît de l'arbre
+         de boîtes ; ce sont ses enfants qui deviennent directement des items
+         flex de #app) : l'order doit donc être posé sur les éléments déplacés
+         eux-mêmes, pas sur le slot qui les contient. */
+      #single-pgn-import-block,
+      #pgn-lib-browse-block,
+      #training-program-panel {
+        order: 5;
+        width: 100%;
+        /* box-sizing:border-box (même motif que #shared-mode-controls,
+           ci-dessous dans le gabarit) : #training-program-panel a la classe
+           .panel (padding: 14px 16px, board.css) — sans border-box,
+           width:100% s'ajoute à ce padding et déborde de l'écran (mesuré :
+           32px de débordement horizontal, soit exactement 2×16px). */
+        box-sizing: border-box;
+      }
 
-      /* Sans quoi la rangée de boutons Précédent/Suivant/Retourner/Meilleur
-         coup/Extraire le FEN dépasse la largeur de l'écran et provoque un
-         défilement horizontal de toute la page. */
-      #review-controls { flex-wrap: wrap; }
+      /* Issue #69 point 1 : le plateau (bandeau de fin de partie, matériel,
+         plateau+lettres, barre de lecture des lignes) reste collé en haut de
+         l'écran pendant que le reste défile dessous — remplace la sticky du
+         sélecteur de mode (issue #63, cf. #mobile-mode-bar-slot plus bas, qui
+         défile désormais normalement).
+         Structure vérifiée/adaptée (comme demandé) : #board-sticky-wrap est
+         imbriqué dans #board-column dans le gabarit (position d'origine,
+         utilisée telle quelle sur grand écran), mais #board-column n'est pas
+         assez haut (juste la rangée de navigation et les contrôles du mode
+         actif en dessous) pour que le sticky reste collé jusqu'au bas d'une
+         page mobile bien plus longue — un élément sticky ne peut pas dépasser
+         les limites de son propre parent. _placeMobileRelocatablesForViewport
+         (controls.js) déplace donc le NŒUD RÉEL de #board-sticky-wrap comme
+         enfant direct de #app sur mobile (qui, lui, s'étend sur toute la
+         hauteur de page, colonne #app oblige) — restauré dans #board-column
+         au repassage grand écran. Ni #app ni aucun de ses ancêtres n'a
+         d'overflow/position qui casserait ce sticky (vérifié) ; #coord-file/
+         #board restent alignés puisque #board-row et #board-file-column
+         voyagent ensemble avec #board-sticky-wrap, jamais séparés. */
+      #board-sticky-wrap {
+        position: sticky;
+        top: 0;
+        z-index: 25;
+        background: var(--cc-bg);
+        padding-bottom: 4px;
+      }
+
+      /* Issue #69 point 4 : petite barre de commande (Stop / "Revenir à la
+         partie") pour le tableau "Lignes du coach" des modes de partie/revue
+         (#game-coach-lines, game_coach_lines.js), affichée par
+         _updateBoardLinesCommandBar() pendant et juste après une lecture —
+         inutile de redescendre jusqu'au tableau, qui peut être loin en bas de
+         page. Masquée par défaut (et sur grand écran, cf. règle hors media
+         query plus bas), où le plateau est déjà visible en permanence. */
+      .board-lines-command-bar {
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        background: var(--cc-accent-2-200);
+        color: var(--cc-accent-2-800);
+        border-radius: var(--cc-radius-md);
+        padding: 6px 10px;
+        margin-top: 4px;
+        font-size: 0.78rem;
+      }
+      .board-lines-command-bar button { min-height: 0; padding: 6px 12px; font-size: 0.76rem; }
+
+      /* Issue #69 point 2 : rangée de navigation compacte sur une seule ligne
+         (remplace le "flex-wrap: wrap" de l'issue #50, qui la répartissait
+         sur 2-3 lignes et éloignait d'autant le reste du panneau). "Extraire
+         le FEN" sort de cette rangée vers un menu "..." (cf.
+         .review-more-menu ci-dessous) pour laisser de la place aux 4 boutons
+         réellement utiles pendant la partie. overflow-x:auto est un filet de
+         sécurité sur les tout petits écrans (~360px) plutôt qu'un débordement
+         de la PAGE entière : la barre elle-même peut glisser horizontalement,
+         jamais le corps de la page. */
+      #review-controls {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        gap: 3px;
+        /* min-width:0 (et non le "auto" implicite des éléments flex) : sans
+           ça, ce conteneur (enfant flex de #board-column, flex-direction:
+           column) refuse de se réduire sous la largeur naturelle cumulée de
+           ses boutons et déborde de l'écran — classique piège flexbox,
+           constaté à 360px (débordement horizontal mesuré de 6px) mais pas à
+           390px (juste assez large pour l'éviter par hasard). */
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      #review-controls button {
+        min-height: 40px;
+        padding: 6px 5px;
+        font-size: 0.72rem;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .review-fen-btn-full { display: none; }
+      /* #review-controls .review-more-menu (et non ".review-more-menu" seul) :
+         la règle par défaut ".review-more-menu { display:none }" (plus bas
+         dans ce même <style>, hors media query) a la même spécificité qu'un
+         simple sélecteur de classe — sans ce préfixe d'id, l'ordre de
+         cascade (cette règle-ci arrivant AVANT dans le fichier) la ferait
+         perdre face à la règle par défaut qui vient après. Un sélecteur plus
+         spécifique règle ça une bonne fois, sans dépendre de l'ordre. */
+      #review-controls .review-more-menu { display: inline-block; }
 
       /* Issue #65 point 4 : sur GSM, le titre (h1) et le sélecteur de
          modèle/compteur de tokens/lien "Coût API" côte à côte prenaient près
@@ -365,6 +504,17 @@
       .coach-drawer  { max-height: none; overflow-y: visible; }
       .coach-history { overflow-y: visible; }
 
+      /* Issue #69 point 3 : messages automatiques de coup joué ("Partie
+         pédagogique — je joue d4", pareil pour ouverture/finales — posés par
+         _coachRenderBubble avec la classe coach-bubble-auto-move, cf.
+         board.js/pedagogic.js/opening.js/finales.js) masqués dans le chat sur
+         mobile — purement présentationnel, _coachRenderBubble ne modifie ni
+         _coachHistory ni les données envoyées à l'API (contrairement au
+         message équivalent du mode exercice, qui lui alimente _coachHistory
+         et reste affiché partout, cf. exercise.js). Comportement grand écran
+         inchangé (cette classe n'a aucun effet hors media query). */
+      .coach-bubble.coach-bubble-auto-move { display: none; }
+
       /* Issue #65 point 6 : sur GSM, "Jouer les Blancs"/"Jouer les Noirs"
          (mode partie pédagogique) tout en bas du panneau à onglets, sous le
          plateau, étaient hors de vue tant qu'on ne défilait pas. Ce slot
@@ -381,19 +531,17 @@
          Les 7 boutons d'onglets existants (mode-tab-btn, switchModeTab dans
          controls.js — logique inchangée) sont déplacés par JS
          (placeModeTabBarForViewport, controls.js) dans #mobile-mode-bar-slot,
-         collé en haut de l'écran ; le reste de l'en-tête (sélecteur de
-         modèle, compteur de tokens, lien Coût API) défile normalement avec
-         la page. Fermé : seul le bouton .active est visible, habillé en
-         pastille avec chevron. Ouvert (classe .open, posée par le
-         gestionnaire de clic délégué de controls.js) : les 7 boutons
-         s'affichent en liste, celui actif surligné en vert clair — sans
-         aucune réécriture de switchModeTab/ensureModeSwitchClean. */
-      #mobile-mode-bar-slot {
-        position: sticky;
-        top: 0;
-        z-index: 40;
-        background: var(--cc-bg);
-      }
+         en haut de la page ; le reste de l'en-tête (sélecteur de modèle,
+         compteur de tokens, lien Coût API) défile normalement avec la page.
+         Fermé : seul le bouton .active est visible, habillé en pastille avec
+         chevron. Ouvert (classe .open, posée par le gestionnaire de clic
+         délégué de controls.js) : les 7 boutons s'affichent en liste, celui
+         actif surligné en vert clair — sans aucune réécriture de
+         switchModeTab/ensureModeSwitchClean.
+         Issue #69 point 1 : n'est plus collé (position:sticky retirée) — le
+         plateau reprend ce rôle (#board-sticky-wrap ci-dessus), ce sélecteur
+         "peut défiler normalement" comme demandé (aucun autre changement de
+         position : il reste tout en haut de la page, juste avant l'en-tête). */
       .mode-tab-bar {
         flex-wrap: nowrap;
         overflow-x: visible;
@@ -565,6 +713,32 @@
        mobile, cf. media query ci-dessus) — pas besoin de le conditionner à
        la media query, un slot vide sur grand écran ne change rien. */
     #mobile-pedagogic-start-slot { display: contents; }
+
+    /* Issue #69 : slots/composants mobiles supplémentaires — display:contents
+       tant qu'ils sont vides (aucun effet sur grand écran, où
+       placeGameAnalysisPanelForViewport/placeMobileBottomBlocksForViewport,
+       controls.js, ne les remplissent jamais), display:none par défaut pour
+       la barre de commande des lignes du coach et le menu "..." (rangée de
+       navigation), rendus visibles uniquement par la media query ci-dessus ou
+       par JS (_updateBoardLinesCommandBar, game_coach_lines.js). */
+    #mobile-bottom-slot { display: contents; }
+    #mobile-analysis-slot { display: contents; }
+    .board-lines-command-bar { display: none; }
+    .review-more-menu { display: none; position: relative; }
+    .review-more-dropdown {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 4px;
+      background: var(--cc-surface);
+      border-radius: var(--cc-radius-md);
+      box-shadow: var(--cc-shadow-md);
+      padding: 6px;
+      z-index: 20;
+      white-space: nowrap;
+    }
+    .review-more-dropdown.open { display: block; }
   </style>
 </head>
 <body>
@@ -623,48 +797,73 @@
 
     <!-- ── Colonne plateau ─────────────────────────────────────────────── -->
     <div id="board-column">
-      <!-- Issue #65 point 6 : reçoit par JS (placePedagogicStartButtonsForViewport,
-           pedagogic.js) les boutons "Jouer les Blancs/Noirs" du mode partie
-           pédagogique sur mobile, tant qu'aucune partie n'est en cours — vide
-           et sans effet sinon (display:contents, cf. <style>). -->
-      <div id="mobile-pedagogic-start-slot"></div>
-      <div id="game-over-banner" class="game-over-banner" style="display:none;"></div>
-      <div class="material-row"><span id="material-top"></span></div>
-      <div id="board-row">
-        <div id="coord-rank"></div>
-        <div class="eval-bar-wrap">
-          <div class="eval-score" id="eval-score">0.0</div>
-          <div class="eval-bar-track">
-            <div class="eval-fill-white" id="eval-white" style="height:50%;"></div>
-            <div class="eval-fill-black" id="eval-black" style="height:50%;"></div>
+      <!-- board-sticky-wrap (issue #69 point 1) : regroupe tout ce qui doit
+           rester visible en permanence sur mobile (plateau + matériel +
+           bandeau de fin de partie + barre de lecture des lignes du coach) —
+           collé en haut de l'écran via la media query <900px (cf. <style>),
+           sans effet sur grand écran (juste une div supplémentaire dans le
+           flux normal de #board-column). -->
+      <div id="board-sticky-wrap">
+        <!-- Issue #65 point 6 : reçoit par JS (placePedagogicStartButtonsForViewport,
+             pedagogic.js) les boutons "Jouer les Blancs/Noirs" du mode partie
+             pédagogique sur mobile, tant qu'aucune partie n'est en cours — vide
+             et sans effet sinon (display:contents, cf. <style>). -->
+        <div id="mobile-pedagogic-start-slot"></div>
+        <div id="game-over-banner" class="game-over-banner" style="display:none;"></div>
+        <div class="material-row"><span id="material-top"></span></div>
+        <div id="board-row">
+          <div id="coord-rank"></div>
+          <div class="eval-bar-wrap">
+            <div class="eval-score" id="eval-score">0.0</div>
+            <div class="eval-bar-track">
+              <div class="eval-fill-white" id="eval-white" style="height:50%;"></div>
+              <div class="eval-fill-black" id="eval-black" style="height:50%;"></div>
+            </div>
+          </div>
+          <!-- #board-file-column (issue #65 point 1) : regroupe #board-wrapper
+               et #coord-file dans une même colonne centrée pour qu'ils
+               partagent le même repère horizontal — cf. commentaire détaillé
+               sur les règles CSS correspondantes ci-dessus. -->
+          <div id="board-file-column">
+            <div id="board-wrapper">
+              <div id="board"></div>
+              <svg id="arrows-svg">
+                <defs>
+                  <marker id="arrowhead" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
+                    <path d="M0,0 L4,2 L0,4 Z" fill="rgba(232,69,96,0.75)"></path>
+                  </marker>
+                </defs>
+              </svg>
+            </div>
+            <div id="coord-file"></div>
           </div>
         </div>
-        <!-- #board-file-column (issue #65 point 1) : regroupe #board-wrapper
-             et #coord-file dans une même colonne centrée pour qu'ils
-             partagent le même repère horizontal — cf. commentaire détaillé
-             sur les règles CSS correspondantes ci-dessus. -->
-        <div id="board-file-column">
-          <div id="board-wrapper">
-            <div id="board"></div>
-            <svg id="arrows-svg">
-              <defs>
-                <marker id="arrowhead" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
-                  <path d="M0,0 L4,2 L0,4 Z" fill="rgba(232,69,96,0.75)"></path>
-                </marker>
-              </defs>
-            </svg>
-          </div>
-          <div id="coord-file"></div>
-        </div>
+        <div class="material-row"><span id="material-bottom"></span></div>
+
+        <!-- Issue #69 point 4 : barre Stop/"Revenir à la partie" pour la
+             lecture d'une ligne du tableau "Lignes du coach" des modes de
+             partie/revue — remplie par _updateBoardLinesCommandBar()
+             (game_coach_lines.js), masquée en dehors d'une lecture/preview et
+             sur grand écran (cf. <style>). -->
+        <div id="board-lines-command-bar" class="board-lines-command-bar"></div>
       </div>
-      <div class="material-row"><span id="material-bottom"></span></div>
 
       <div id="review-controls">
         <button id="review-prev-btn" onclick="reviewPrev()">◀ Précédent</button>
         <button id="review-next-btn" onclick="reviewNext()">Suivant ▶</button>
         <button id="review-flip-btn" onclick="flipBoard()">Retourner</button>
         <button id="review-bestmove-btn" onclick="showReviewBestMove()">Meilleur coup</button>
-        <button onclick="extraireFen()">Extraire le FEN</button>
+        <button class="review-fen-btn-full" onclick="extraireFen()">Extraire le FEN</button>
+        <!-- Issue #69 point 2 : "Extraire le FEN" part dans ce menu "..." sur
+             mobile (cf. media query, <style>) — même extraireFen(), aucune
+             logique dupliquée, seul le déclencheur visible change selon la
+             largeur d'écran. -->
+        <div class="review-more-menu" id="review-more-menu">
+          <button type="button" id="review-more-btn" onclick="toggleReviewMoreMenu()">⋯</button>
+          <div class="review-more-dropdown" id="review-more-dropdown">
+            <button type="button" onclick="extraireFen(); closeReviewMoreMenu();">Extraire le FEN</button>
+          </div>
+        </div>
       </div>
       <div>
         <span id="review-move-info"></span>
@@ -672,7 +871,11 @@
         <span id="review-best-move-san" style="display:none; color:#1a9bc0;"></span>
       </div>
       <div id="fen-extract-status" style="font-size:0.78rem; color:var(--cc-text-muted); word-break:break-all;"></div>
-      <div>
+      <!-- Issue #69 point 2 : déplacé en bas de page sur mobile par JS
+           (placeMobileBottomBlocksForViewport, controls.js) — ne sert pas
+           pendant la partie ; emplacement et logique (loadPgnFile) inchangés
+           sur grand écran. -->
+      <div id="single-pgn-import-block">
         <label style="font-size:0.82rem;">Importer un PGN :
           <input type="file" accept=".pgn,.txt" onchange="loadPgnFile(event)">
         </label>
@@ -720,31 +923,38 @@
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-library">
-          <div style="display:flex; gap:4px; margin-bottom:6px;">
-            <select id="pgn-lib-collection-select" style="flex:1;" onchange="pgnLibOnCollectionChange()"></select>
+          <!-- Issue #69 point 2 : bloc "navigation dans la collection" (pas
+               utile pendant la partie) déplacé en bas de page sur mobile par
+               JS (placeMobileBottomBlocksForViewport, controls.js) — inchangé
+               sur grand écran, aucune logique dupliquée (pgn_library.js
+               retrouve ses éléments par id, peu importe leur parent réel). -->
+          <div id="pgn-lib-browse-block">
+            <div style="display:flex; gap:4px; margin-bottom:6px;">
+              <select id="pgn-lib-collection-select" style="flex:1;" onchange="pgnLibOnCollectionChange()"></select>
+            </div>
+            <div style="display:flex; gap:4px; margin-bottom:6px;">
+              <input id="pgn-lib-new-name" type="text" placeholder="Nouvelle collection" style="flex:1;">
+              <button onclick="pgnLibCreateCollection()">+</button>
+            </div>
+            <div style="display:flex; gap:4px; margin-bottom:6px;">
+              <input id="pgn-lib-search" type="text" placeholder="Rechercher un adversaire..." style="flex:1;" oninput="pgnLibApplyFilters()">
+            </div>
+            <div style="display:flex; gap:4px; margin-bottom:6px;">
+              <select id="pgn-lib-result-filter" style="flex:1;" onchange="pgnLibApplyFilters()">
+                <option value="">Tous les résultats</option>
+                <option value="victoire">Victoires (Alain)</option>
+                <option value="defaite">Défaites (Alain)</option>
+                <option value="nulle">Nulles</option>
+              </select>
+            </div>
+            <ul id="pgn-lib-games"></ul>
+            <div style="margin-top:6px;">
+              <label style="font-size:0.82rem;">Importer un PGN dans la collection :
+                <input type="file" accept=".pgn,.txt" onchange="pgnLibImportFile(event)">
+              </label>
+            </div>
+            <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:var(--cc-text-muted); margin-top:4px;"></div>
           </div>
-          <div style="display:flex; gap:4px; margin-bottom:6px;">
-            <input id="pgn-lib-new-name" type="text" placeholder="Nouvelle collection" style="flex:1;">
-            <button onclick="pgnLibCreateCollection()">+</button>
-          </div>
-          <div style="display:flex; gap:4px; margin-bottom:6px;">
-            <input id="pgn-lib-search" type="text" placeholder="Rechercher un adversaire..." style="flex:1;" oninput="pgnLibApplyFilters()">
-          </div>
-          <div style="display:flex; gap:4px; margin-bottom:6px;">
-            <select id="pgn-lib-result-filter" style="flex:1;" onchange="pgnLibApplyFilters()">
-              <option value="">Tous les résultats</option>
-              <option value="victoire">Victoires (Alain)</option>
-              <option value="defaite">Défaites (Alain)</option>
-              <option value="nulle">Nulles</option>
-            </select>
-          </div>
-          <ul id="pgn-lib-games"></ul>
-          <div style="margin-top:6px;">
-            <label style="font-size:0.82rem;">Importer un PGN dans la collection :
-              <input type="file" accept=".pgn,.txt" onchange="pgnLibImportFile(event)">
-            </label>
-          </div>
-          <div id="pgn-lib-loaded-label" style="font-size:0.8rem; color:var(--cc-text-muted); margin-top:4px;"></div>
 
           <!-- ── Analyse post-partie complète (issues #41/#42) ───────────
                Repère mécaniquement (delta_cp/qualite) les coups en perte
@@ -967,8 +1177,15 @@
             ◀ Revenir à la partie
           </button>
         </div>
+        <!-- Issue #69 point 2 : reçoit #game-analysis-panel (onglet
+             Bibliothèque/Revue) sur mobile par JS
+             (placeGameAnalysisPanelForViewport, controls.js), pour qu'il
+             suive juste après le tableau "Lignes du coach" ci-dessus au lieu
+             de rester sous la liste des parties importées — vide et sans
+             effet ailleurs (display:contents). -->
+        <div id="mobile-analysis-slot"></div>
       </div>
-      <div class="panel">
+      <div class="panel" id="training-program-panel">
         <h2>Programme d'entraînement</h2>
         <ul id="training-program-list" style="margin:0 0 6px; padding-left:18px; font-size:0.85rem;">
           {% for objectif in objectifs_courants %}
@@ -981,6 +1198,13 @@
         <div id="training-program-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
       </div>
     </div>
+
+    <!-- Issue #69 point 2 : reçoit sur mobile, par JS
+         (placeMobileBottomBlocksForViewport, controls.js), ce qui ne sert pas
+         pendant la partie — importation PGN, navigation dans la collection,
+         programme d'entraînement — après l'historique des coups. Vide et
+         sans effet sur grand écran (display:contents, cf. <style>). -->
+    <div id="mobile-bottom-slot"></div>
 
   </div>
 

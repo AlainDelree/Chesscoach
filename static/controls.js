@@ -151,6 +151,86 @@ document.addEventListener("click", (e) => {
   if (!bar.contains(e.target)) bar.classList.remove("open");
 });
 
+// ── Repositionnement de blocs secondaires sur mobile (issue #69) ───────────
+// Même mécanique que placeModeTabBarForViewport ci-dessus (déplacement du
+// nœud DOM réel entre son emplacement d'origine et un slot dédié, jamais de
+// duplication ni de réécriture de la logique — pgn_library.js/game_analysis.js
+// and co. retrouvent leurs éléments par id, peu importe leur parent réel) —
+// généralisée ici pour les quelques blocs qui changent de place dans la
+// réorganisation mobile de l'issue #69 : ce qui ne sert pas pendant la partie
+// (importation PGN, navigation dans la collection, programme d'entraînement)
+// vers #mobile-bottom-slot (après l'historique des coups), et le panneau
+// d'analyse de partie vers #mobile-analysis-slot (juste après le tableau
+// "Lignes du coach", dans le panneau du coach).
+const _mobileRelocatables = [];
+
+function _registerMobileRelocatable(id, slotId) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  _mobileRelocatables.push({ id, slotId, homeParent: el.parentElement, homeNextSibling: el.nextSibling });
+}
+
+function _placeMobileRelocatablesForViewport(isMobile) {
+  _mobileRelocatables.forEach(({ id, slotId, homeParent, homeNextSibling }) => {
+    const el = document.getElementById(id);
+    const slot = document.getElementById(slotId);
+    if (!el || !slot) return;
+    if (isMobile) {
+      if (el.parentElement !== slot) slot.appendChild(el);
+    } else if (el.parentElement !== homeParent) {
+      homeParent.insertBefore(el, homeNextSibling);
+    }
+  });
+}
+
+// ── scroll-padding-top dynamique (issue #69 point 5) ────────────────────────
+// Le scroll-padding-top statique posé en CSS (calc(--bd-size + 90px), cf.
+// templates/index.html) suppose une hauteur "normale" de #board-sticky-wrap —
+// mais elle varie aussi avec le bandeau de fin de partie, les boutons
+// "Jouer les Blancs/Noirs" du mode pédagogique tant qu'aucune partie n'est en
+// cours (issue #65 point 6) et la barre de lecture des lignes du coach
+// (issue #69 point 4). Un ResizeObserver la resynchronise sur la hauteur
+// RÉELLEMENT rendue en toute circonstance, sans avoir à rappeler cette mise à
+// jour à chaque bascule de ces éléments — remplace (déborde, en priorité par
+// spécificité de style en ligne) la valeur statique dès que ce fichier
+// s'exécute ; celle-ci reste un filet de sécurité pour le tout premier rendu
+// ou si ResizeObserver est indisponible.
+function _updateStickyScrollPadding() {
+  const wrap = document.getElementById("board-sticky-wrap");
+  if (!wrap || !_mobileModeBarQuery.matches) {
+    document.documentElement.style.scrollPaddingTop = "";
+    return;
+  }
+  document.documentElement.style.scrollPaddingTop = `${Math.ceil(wrap.getBoundingClientRect().height) + 12}px`;
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const wrap = document.getElementById("board-sticky-wrap");
+  if (wrap && typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(_updateStickyScrollPadding).observe(wrap);
+  }
+  _updateStickyScrollPadding();
+});
+_mobileModeBarQuery.addEventListener("change", _updateStickyScrollPadding);
+
+// ── Menu "..." de la rangée de navigation (issue #69 point 2) ──────────────
+// "Extraire le FEN" reste un seul bouton (extraireFen(), inchangé) — seul son
+// déclencheur diffère selon la largeur d'écran (cf. .review-fen-btn-full/
+// .review-more-menu, templates/index.html). Fermeture au clic ailleurs, même
+// principe que le menu déroulant du sélecteur de mode ci-dessus.
+function toggleReviewMoreMenu() {
+  const dd = document.getElementById("review-more-dropdown");
+  if (dd) dd.classList.toggle("open");
+}
+function closeReviewMoreMenu() {
+  const dd = document.getElementById("review-more-dropdown");
+  if (dd) dd.classList.remove("open");
+}
+document.addEventListener("click", (e) => {
+  const menu = document.getElementById("review-more-menu");
+  if (!menu) return;
+  if (!menu.contains(e.target)) closeReviewMoreMenu();
+});
+
 // ── Bascule propre entre modes (issue #23) ──────────────────────────────────
 // Si un mode interactif est déjà actif (activeMode) et qu'un autre onglet
 // démarre une nouvelle partie/exercice/revue, termine proprement l'ancien
@@ -365,17 +445,36 @@ document.addEventListener("DOMContentLoaded", () => {
     _modeTabBarHomeParent = bar.parentElement;
     _modeTabBarHomeNextSibling = bar.nextSibling;
     placeModeTabBarForViewport(_mobileModeBarQuery.matches);
-    // updateSharedControlBar() en plus de placeModeTabBarForViewport() :
-    // issue #65 point 5, le doublon "Reprendre mon coup" en mode exercice ne
-    // dépend pas seulement du mode actif mais aussi du franchissement du
-    // seuil mobile (rotation d'écran, redimensionnement d'une fenêtre
-    // desktop) — sans cet appel, resterait affiché jusqu'au prochain
-    // changement de mode.
-    _mobileModeBarQuery.addEventListener("change", (e) => {
-      placeModeTabBarForViewport(e.matches);
-      updateSharedControlBar();
-    });
   }
+
+  // Issue #69 point 2 : mêmes points de coupure (chargement initial +
+  // franchissement du seuil mobile) que le sélecteur de mode ci-dessus, pour
+  // les blocs secondaires déplacés sur mobile.
+  // board-sticky-wrap -> #app directement (pas un slot dédié) : un sticky a
+  // besoin d'un parent aussi haut que toute la page pour rester collé jusqu'en
+  // bas (cf. commentaire détaillé dans templates/index.html) — #app, colonne
+  // qui contient tout le reste, convient ; son order CSS par défaut (0) le
+  // place avant #board-column/#coach-column/etc (order 1-5) quel que soit son
+  // rang réel dans le DOM après déplacement.
+  _registerMobileRelocatable("board-sticky-wrap", "app");
+  _registerMobileRelocatable("single-pgn-import-block", "mobile-bottom-slot");
+  _registerMobileRelocatable("pgn-lib-browse-block",    "mobile-bottom-slot");
+  _registerMobileRelocatable("training-program-panel",  "mobile-bottom-slot");
+  _registerMobileRelocatable("game-analysis-panel",     "mobile-analysis-slot");
+  _placeMobileRelocatablesForViewport(_mobileModeBarQuery.matches);
+  if (typeof _updateBoardLinesCommandBar === "function") _updateBoardLinesCommandBar();
+
+  // updateSharedControlBar() en plus de placeModeTabBarForViewport() : issue
+  // #65 point 5, le doublon "Reprendre mon coup" en mode exercice ne dépend
+  // pas seulement du mode actif mais aussi du franchissement du seuil mobile
+  // (rotation d'écran, redimensionnement d'une fenêtre desktop) — sans cet
+  // appel, resterait affiché jusqu'au prochain changement de mode.
+  _mobileModeBarQuery.addEventListener("change", (e) => {
+    placeModeTabBarForViewport(e.matches);
+    _placeMobileRelocatablesForViewport(e.matches);
+    if (typeof _updateBoardLinesCommandBar === "function") _updateBoardLinesCommandBar();
+    updateSharedControlBar();
+  });
 
   // Replié par défaut sur mobile seulement (issue #63) — sur grand écran,
   // l'historique reste dépliable mais visible d'entrée comme avant. Le

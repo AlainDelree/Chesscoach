@@ -222,7 +222,9 @@ function onPedagogicBoardClick(e) {
   pedagogicWaiting = true;
   pedagogicFenAvantCoup = fenAvant;
   updatePedagogicStatus();
-  _coachRenderBubble("user", `Partie pédagogique — je joue ${move.san}`);
+  // Masqué dans le chat sur mobile (issue #69 point 3) — purement présentationnel,
+  // cf. commentaire de _coachRenderBubble (board.js).
+  _coachRenderBubble("user", `Partie pédagogique — je joue ${move.san}`, false, "coach-bubble-auto-move");
   socket.emit("pedagogic_move", {
     fen_avant: fenAvant,
     uci: move.from + move.to + (move.promotion || ""),

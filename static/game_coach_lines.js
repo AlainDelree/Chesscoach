@@ -195,10 +195,53 @@ function gameCoachLinesOnStockfishLine(info) {
 
 // ── Rendu du tableau ─────────────────────────────────────────────────────
 
+// ── Barre de commande sous le plateau collé (issue #69 point 4) ────────────
+// Sur mobile, le plateau reste visible en permanence (#board-sticky-wrap,
+// templates/index.html) — inutile de redescendre jusqu'au tableau "Lignes du
+// coach", qui peut être loin en bas de page, pour arrêter une lecture ou
+// revenir à la partie. Reprend telles quelles les fonctions déjà existantes
+// (gameLineToggle/gameLinesRestore) plutôt que de dupliquer leur logique ;
+// sans effet sur grand écran (_mobileModeBarQuery, controls.js — chargé avant
+// ce fichier, mais seulement référencé ici au moment de l'appel, une fois le
+// DOM chargé).
+function _updateBoardLinesCommandBar() {
+  const bar = document.getElementById("board-lines-command-bar");
+  if (!bar) return;
+  const isMobile = typeof _mobileModeBarQuery !== "undefined" && _mobileModeBarQuery.matches;
+  bar.innerHTML = "";
+  if (!isMobile) {
+    bar.style.display = "none";
+    return;
+  }
+  if (gameCoachLinesPlayingIdx !== null) {
+    bar.style.display = "flex";
+    const span = document.createElement("span");
+    span.textContent = "Lecture d'une ligne du coach…";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Stop";
+    btn.onclick = () => gameLineToggle(gameCoachLinesPlayingIdx);
+    bar.appendChild(span);
+    bar.appendChild(btn);
+  } else if (gameCoachLinesPreviewActive) {
+    bar.style.display = "flex";
+    const span = document.createElement("span");
+    span.textContent = "Ligne du coach affichée.";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "◀ Revenir à la partie";
+    btn.onclick = () => gameLinesRestore();
+    bar.appendChild(span);
+    bar.appendChild(btn);
+  } else {
+    bar.style.display = "none";
+  }
+}
+
 function renderGameCoachLinesTable() {
   const wrap = document.getElementById("game-coach-lines");
   const body = document.getElementById("game-coach-lines-body");
-  if (!wrap || !body) return;
+  if (!wrap || !body) { _updateBoardLinesCommandBar(); return; }
   // Non applicable en mode exercice (son propre tableau, exercise.js) ni en
   // mode éditeur (pas de partie) — masqué immédiatement au changement de
   // mode (cf. setActiveMode, controls.js), même si des lignes restaient
@@ -208,6 +251,7 @@ function renderGameCoachLinesTable() {
   if (!modeOk || !gameCoachLines.length) {
     wrap.style.display = "none";
     body.innerHTML = "";
+    _updateBoardLinesCommandBar();
     return;
   }
   wrap.style.display = "block";
@@ -241,6 +285,7 @@ function renderGameCoachLinesTable() {
 
     body.appendChild(tr);
   });
+  _updateBoardLinesCommandBar();
 }
 
 // Redessine le plateau réel du mode actif (ou de la revue) — aucune des

@@ -799,14 +799,19 @@ function _coachScrollReveal(history, el, toStart, allowPageScroll) {
 // les réponses qu'Alain attend activement (réponse à une question tapée,
 // réponse à "Demander l'avis du coach") — pas pour les messages automatiques
 // ("je joue ...", commentaires, info, erreur). Cf. _coachScrollReveal.
-function _coachRenderBubble(role, text, allowPageScroll) {
+// `extraClass` (issue #69 point 3, optionnel) : classe CSS ajoutée à la bulle
+// — sert à "coach-bubble-auto-move" (message "je joue ..." des modes
+// pédagogique/ouverture/finales, masqué dans le chat sur mobile par CSS
+// uniquement, cf. templates/index.html) sans dupliquer ni changer les données
+// envoyées à l'API (cette fonction ne touche jamais _coachHistory/socket.emit).
+function _coachRenderBubble(role, text, allowPageScroll, extraClass) {
   const history = document.getElementById("coach-history");
   if (!history) return;
   const empty = document.getElementById("coach-empty");
   if (empty) empty.style.display = "none";
   const bubble = document.createElement("div");
   const isUser = role === "user";
-  bubble.className = "coach-bubble " + (isUser ? "user" : "assistant");
+  bubble.className = "coach-bubble " + (isUser ? "user" : "assistant") + (extraClass ? " " + extraClass : "");
   bubble.textContent = text;
   history.appendChild(bubble);
   // Message d'Alain : comportement inchangé, on descend tout en bas (voir
