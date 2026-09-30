@@ -247,6 +247,9 @@ function activeModeGameState() {
     pgn: game.pgn(),
     move: history.length ? history[history.length - 1] : "",
     abandonne: _activeModeAbandoned(),
+    // Nombre de coups déjà joués dans cette partie (issue #64 point 3),
+    // transmis au contexte du coach comme identifiant de la partie en cours.
+    nbCoups: history.length,
   };
 }
 

@@ -328,6 +328,30 @@
 }
 .coach-bubble.error a { color: #5a1a1a; text-decoration: underline; display: inline-block; margin-top: 4px; }
 
+/* Séparateur discret entre deux parties/exercices dans le chat (issue #64) —
+   les anciens échanges restent visibles à l'écran, seulement démarqués de la
+   partie/exercice courant(e) plutôt qu'effacés (coachClear() garde son effet
+   actuel, appelé uniquement par le bouton "Effacer"). */
+.coach-separator {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 90%;
+  color: var(--cc-text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 6px 0;
+}
+.coach-separator::before,
+.coach-separator::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--cc-neutral-200);
+}
+
 @keyframes spin { to { transform: rotate(360deg); } }
 .coach-spinner {
   display: none;

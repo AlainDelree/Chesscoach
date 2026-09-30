@@ -197,6 +197,9 @@ function loadSelectedFinale(id) {
   if (descEl) descEl.textContent = entry ? entry.description : "";
 
   ensureModeSwitchClean("finale");
+  // Nouvelle partie (issue #64) : l'historique du chat envoyé à l'API repart
+  // de zéro, séparé à l'écran des échanges de la finale précédente.
+  if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
   hideGameOverBanner();
   finaleWaiting  = true;
   finaleGameOver = false;
@@ -225,6 +228,9 @@ function startFinaleDemo() {
   if (descEl) descEl.textContent = entry ? entry.description : "";
 
   ensureModeSwitchClean("finale");
+  // Nouvelle démonstration (issue #64) : l'historique du chat envoyé à
+  // l'API repart de zéro, séparé à l'écran des échanges précédents.
+  if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
   hideGameOverBanner();
   finaleWaiting  = true;
   finaleGameOver = false;

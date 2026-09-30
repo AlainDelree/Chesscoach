@@ -68,6 +68,19 @@ _SYSTEM_PROMPT = (
     "dans sa mémoire de progression, garde ces priorités à l'esprit et "
     "relie tes réponses à ces objectifs quand c'est pertinent. "
     "Réponds en français."
+    "\n\n"
+    "Isolation stricte d'une partie à l'autre (issue #64) : l'historique de "
+    "conversation qui t'est transmis peut, à l'écran d'Alain, afficher aussi "
+    "des échanges sur une partie ou un exercice précédent, séparés par un "
+    "trait \"Nouvelle partie\"/\"Nouvel exercice\" — mais seuls les messages "
+    "envoyés dans CET appel portent sur la partie actuellement identifiée "
+    "ci-dessous. Ne reprends jamais un coup, un numéro de coup ou une "
+    "situation qui ne figurent pas explicitement dans le PGN ou le bloc de "
+    "faits fournis pour CETTE partie, même s'ils ont été mentionnés dans un "
+    "message antérieur de la conversation. Si la question d'Alain évoque un "
+    "coup, un événement ou un numéro de coup absent de cette partie-ci, "
+    "dis-le clairement plutôt que d'improviser une réponse construite sur "
+    "une autre partie."
 )
 
 # Complément de system prompt partagé (issue #26), ajouté dès qu'un verdict
@@ -778,7 +791,34 @@ def _build_context_text(context) -> str:
     # au modèle, source directe de coups attribués au mauvais camp ou
     # d'échanges inventés (voir _GAME_FACTS_ADDENDUM plus haut).
     faits_calcules = (context.get("faits_calcules") or "").strip()
+    # Identification de la partie/l'exercice actuellement discuté(e) (issue
+    # #64 point 3) : mode, nombre de coups déjà joués et heure de début du
+    # segment de conversation courant (cf. board.js coachNewSegment) —
+    # complète l'isolation de l'historique déjà faite côté client
+    # (coachSend() ne renvoie que les messages depuis le dernier début de
+    # partie/exercice) par un signal explicite dans le contexte lui-même,
+    # pour que le modèle distingue sans ambiguïté cette partie-ci d'une autre
+    # qu'un message affiché plus haut à l'écran pourrait encore évoquer.
+    mode_origine_ctx = (context.get("mode_origine") or "").strip()
+    nb_coups = context.get("nb_coups")
+    debut_partie = (context.get("debut_partie") or "").strip()
     lines = []
+    identification = []
+    if mode_origine_ctx:
+        identification.append(f"mode {mode_origine_ctx}")
+    if isinstance(nb_coups, int):
+        identification.append(f"{nb_coups} coup(s) déjà joué(s)")
+    if debut_partie:
+        identification.append(f"partie/exercice commencé(e) à {debut_partie}")
+    if identification:
+        lines.append(
+            "Identification de la partie/l'exercice actuellement discuté(e) : "
+            + ", ".join(identification) + ". Si un message affiché plus haut "
+            "dans cette conversation évoque une partie différente (mode, "
+            "camp, nombre de coups ou heure de début différents de ceux "
+            "ci-dessus), ignore-le complètement : base-toi uniquement sur les "
+            "données ci-dessous pour cette partie-ci."
+        )
     if camp_alain in ("blancs", "noirs"):
         camp_txt = "Blancs" if camp_alain == "blancs" else "Noirs"
         lines.append(f"Alain (le joueur que tu coaches) joue les {camp_txt} dans cette partie.")

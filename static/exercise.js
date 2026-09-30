@@ -188,9 +188,12 @@ function startExercise() {
   _exerciseResetTentative();
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
-  // Nouvel exercice : le chat libre repart sans l'historique de l'exercice
-  // précédent, qui n'a plus rien à voir avec la position/le coup en cours.
-  if (typeof coachClear === "function") coachClear();
+  // Nouvel exercice (issue #64) : l'historique envoyé à l'API repart de
+  // zéro (celui de l'exercice précédent n'a plus rien à voir avec la
+  // position/le coup en cours), mais reste visible à l'écran, seulement
+  // démarqué par un trait discret — coachClear() (bouton "Effacer") reste le
+  // seul moyen de vider entièrement l'affichage.
+  if (typeof coachNewSegment === "function") coachNewSegment("Nouvel exercice");
   const statusEl = document.getElementById("exercise-status");
   if (statusEl) statusEl.textContent = "Chargement d'une position...";
   socket.emit("exercise_new", { phase: exercisePhaseFiltre() });

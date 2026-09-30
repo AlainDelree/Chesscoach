@@ -32,6 +32,9 @@ function pedagogicCommenterChaqueCoup() {
 
 function startPedagogicGame(camp) {
   ensureModeSwitchClean("pedagogic");
+  // Nouvelle partie (issue #64) : l'historique du chat envoyé à l'API repart
+  // de zéro, séparé à l'écran des échanges de la partie précédente.
+  if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
   hideGameOverBanner();
   pedagogicCampAlain = (camp === "noirs") ? "noirs" : "blancs";
   pedagogicWaiting   = true;

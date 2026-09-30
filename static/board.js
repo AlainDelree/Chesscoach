@@ -516,6 +516,10 @@ function parsePgn(pgn, onLoaded) {
   // (issue #23, ensureModeSwitchClean dans controls.js) plutôt que de laisser
   // deux modes "actifs" en même temps sur le même plateau.
   if (typeof ensureModeSwitchClean === "function") ensureModeSwitchClean("library");
+  // Autre partie chargée en revue de bibliothèque (issue #64) : l'historique
+  // du chat envoyé à l'API repart de zéro, séparé à l'écran des échanges de
+  // la partie précédemment revue.
+  if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
   try {
     const chess = new Chess();
     if (!chess.load_pgn(pgn)) {
@@ -579,6 +583,19 @@ function lancerAnalyse(movesUci, seqMoves) {
 
 let _coachHistory = [];
 let _coachBusy    = false;
+
+// Isolation de l'historique envoyé à l'API d'une partie/exercice à l'autre
+// (issue #64) : _coachHistory garde tous les messages affichés à l'écran
+// depuis le dernier clic sur "Effacer" (coachClear), mais seuls ceux depuis
+// _coachSegmentStart sont renvoyés à l'API par coachSend() — sans cette
+// coupure, le modèle recevait encore les questions/réponses d'une partie
+// terminée en même temps que le contexte (PGN/faits) de la partie suivante,
+// et mélangeait les deux (constat en usage réel, GSM/Haiku, deux parties
+// jouées à la suite sans effacer le chat). _coachSegmentStartedAt (issue #64
+// point 3) donne au coach une heure de début pour la partie/l'exercice
+// actuellement discuté(e), transmise dans le contexte (coachBuildContext).
+let _coachSegmentStart      = 0;
+let _coachSegmentStartedAt  = null;
 
 // Correspondance activeMode (controls.js) → mode_origine attendu côté
 // serveur pour le logging coach_calls.log (issue #26, part. 3) — partagée
@@ -647,6 +664,12 @@ function coachBuildContext() {
         pgn: avecHistorique ? (state.pgn || "") : "",
         camp_alain: state.campAlain || "",
         mode_origine: modeOrigine,
+        // Identification de la partie/l'exercice en cours (issue #64 point
+        // 3) : donne au coach de quoi distinguer explicitement cette
+        // partie-ci d'une autre mentionnée plus tôt dans la conversation
+        // affichée, en plus de l'isolation de l'historique côté coachSend().
+        nb_coups: state.nbCoups || 0,
+        debut_partie: _coachSegmentStartedAt || "",
       };
       // Coups flagués par une analyse mécanique Stockfish déjà effectuée
       // cette session (bouton "Analyser cette partie", issue #55 point 4) :
@@ -689,7 +712,13 @@ function coachBuildContext() {
     if (m.color === "white") pgn += `${Math.floor(i / 2) + 1}. `;
     pgn += `${m.san} `;
   }
-  return { fen, move: move.trim(), pgn: pgn.trim(), mode_origine: "chat_libre" };
+  return {
+    fen, move: move.trim(), pgn: pgn.trim(), mode_origine: "chat_libre",
+    // Identification de la partie en revue (issue #64 point 3), même
+    // logique que la branche mode interactif ci-dessus.
+    nb_coups: reviewMoves.length,
+    debut_partie: _coachSegmentStartedAt || "",
+  };
 }
 
 function stripMarkdownForChat(text) {
@@ -764,8 +793,33 @@ function _coachRenderCreditInsuffisant() {
   history.scrollTop = history.scrollHeight;
 }
 
+// Point de coupure d'un nouveau segment de conversation (issue #64) : appelé
+// au démarrage effectif d'une nouvelle partie/exercice (partie libre,
+// pédagogique, ouverture, finales, exercice) ou au chargement d'une autre
+// partie en revue de bibliothèque — jamais lors d'une simple navigation
+// entre onglets. `label` est affiché comme séparateur discret ("Nouvelle
+// partie"/"Nouvel exercice") uniquement s'il y a déjà des messages dans le
+// segment précédent — pas de séparateur vide au tout premier segment, ni de
+// séparateurs empilés si aucune question n'a été posée depuis le précédent.
+function coachNewSegment(label) {
+  if (_coachHistory.length > _coachSegmentStart) {
+    const history = document.getElementById("coach-history");
+    if (history) {
+      const sep = document.createElement("div");
+      sep.className = "coach-separator";
+      sep.textContent = label || "Nouvelle partie";
+      history.appendChild(sep);
+      history.scrollTop = history.scrollHeight;
+    }
+  }
+  _coachSegmentStart     = _coachHistory.length;
+  _coachSegmentStartedAt = new Date().toISOString();
+}
+
 function coachClear() {
   _coachHistory = [];
+  _coachSegmentStart     = 0;
+  _coachSegmentStartedAt = null;
   const history = document.getElementById("coach-history");
   if (history) history.innerHTML = '<div id="coach-empty" style="color:#778; font-size:0.82rem; text-align:center; padding:20px 8px;">Posez une question sur la position affichée.</div>';
 }
@@ -786,7 +840,10 @@ function coachSend() {
   if (spinner) spinner.style.display = "flex";
 
   socket.emit("coach_ask", {
-    messages: _coachHistory,
+    // Seuls les messages du segment courant (issue #64) — pas tout
+    // _coachHistory, qui garde à l'écran les échanges des parties/exercices
+    // précédents jusqu'au prochain "Effacer".
+    messages: _coachHistory.slice(_coachSegmentStart),
     context: coachBuildContext(),
   });
 }

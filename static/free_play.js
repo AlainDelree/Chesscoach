@@ -67,6 +67,9 @@ function startFreeGame() {
 // inchangé de startFreeGame().
 function startFreeGameFromFen(fen) {
   ensureModeSwitchClean("free");
+  // Nouvelle partie (issue #64) : l'historique du chat envoyé à l'API repart
+  // de zéro, séparé à l'écran des échanges de la partie précédente.
+  if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
   hideGameOverBanner();
   freeGame           = fen ? new Chess(fen) : new Chess();
   freePlayActive     = true;
