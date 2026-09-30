@@ -79,6 +79,43 @@ function exercisePhaseFiltre() {
   return sel ? sel.value : "toutes";
 }
 
+// ── Feuille "Nouvel exercice" (mobile, issue #63) ───────────────────────────
+// Pilote le <select id="exercise-phase-select"> existant (source de vérité,
+// lu par exercisePhaseFiltre() ci-dessus) au lieu de dupliquer le filtre de
+// phase ; "Lancer l'exercice" appelle startExercise() sans le réécrire.
+// Sans effet visuel au-dessus de 900px (cf. media query, templates/
+// index.html) — la sélection/bouton d'origine dans l'onglet Exercice reste
+// utilisable en toutes circonstances.
+
+function exercisePhaseSheetPick(phase) {
+  const sel = document.getElementById("exercise-phase-select");
+  if (sel) sel.value = phase;
+  document.querySelectorAll("#exercise-phase-options .phase-pill").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.phase === phase);
+  });
+}
+
+function openExercisePhaseSheet() {
+  const sel = document.getElementById("exercise-phase-select");
+  exercisePhaseSheetPick(sel ? sel.value : "toutes");
+  const sheet = document.getElementById("exercise-phase-sheet");
+  const backdrop = document.getElementById("exercise-phase-sheet-backdrop");
+  if (sheet) sheet.classList.add("open");
+  if (backdrop) backdrop.classList.add("open");
+}
+
+function closeExercisePhaseSheet() {
+  const sheet = document.getElementById("exercise-phase-sheet");
+  const backdrop = document.getElementById("exercise-phase-sheet-backdrop");
+  if (sheet) sheet.classList.remove("open");
+  if (backdrop) backdrop.classList.remove("open");
+}
+
+function launchExerciseFromSheet() {
+  closeExercisePhaseSheet();
+  startExercise();
+}
+
 function _exerciseResetTentative() {
   // Réinitialise l'état de la tentative en cours (issue #17), utilisé au
   // démarrage d'un nouvel exercice comme à un "Reprendre mon coup" — sans ça,
@@ -294,31 +331,26 @@ function renderExerciseCoachLinesTable() {
   body.innerHTML = "";
   exerciseCoachLines.forEach((line, idx) => {
     const tr = document.createElement("tr");
-    tr.style.borderTop = "1px solid #e0e6ec";
 
     const tdText = document.createElement("td");
-    tdText.style.cssText = "padding:6px 4px; vertical-align:top; word-break:break-word;";
+    tdText.className = "coach-line-text";
     tdText.textContent = line.displayText;
     tr.appendChild(tdText);
 
     const tdLabel = document.createElement("td");
-    tdLabel.style.cssText = "padding:6px 4px; vertical-align:top; white-space:nowrap; color:#667; font-size:0.74rem;";
-    if (line.resolved) {
-      tdLabel.textContent = line.resolved.label;
-    } else {
-      tdLabel.textContent = "ligne non jouable";
-      tdLabel.style.fontStyle = "italic";
-    }
+    tdLabel.className = "coach-line-label" + (line.resolved ? "" : " unresolved");
+    tdLabel.textContent = line.resolved ? line.resolved.label : "ligne non jouable";
     tr.appendChild(tdLabel);
 
     const tdBtn = document.createElement("td");
-    tdBtn.style.cssText = "padding:6px 4px; vertical-align:top; text-align:right;";
+    tdBtn.className = "coach-line-btn-cell";
     if (line.resolved) {
+      const playing = exercisePlayingIdx === idx;
       const btn = document.createElement("button");
       btn.type = "button";
       btn.id = `exercise-line-btn-${idx}`;
-      btn.style.cssText = "padding:8px 12px; font-size:0.78rem; min-width:52px;";
-      btn.textContent = (exercisePlayingIdx === idx) ? "Stop" : "Play";
+      btn.className = "coach-line-play-btn" + (playing ? " playing" : "");
+      btn.textContent = playing ? "Stop" : "▶ Play";
       btn.onclick = () => exerciseLineToggle(idx);
       tdBtn.appendChild(btn);
     }

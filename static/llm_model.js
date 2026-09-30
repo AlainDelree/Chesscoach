@@ -33,7 +33,7 @@ function _llmModelRenderIndisponible(modeleRefuse, nouveauLabel) {
   const empty = document.getElementById("coach-empty");
   if (empty) empty.style.display = "none";
   const bubble = document.createElement("div");
-  bubble.style.cssText = "background:#f8d7da; border-radius:8px; padding:8px 12px; align-self:flex-start; max-width:88%; font-size:1.05rem; line-height:1.45; color:#5a1a1a;";
+  bubble.className = "coach-bubble error";
   bubble.textContent = `Le modèle "${modeleRefuse}" n'est pas disponible actuellement — retour automatique sur ${nouveauLabel}.`;
   history.appendChild(bubble);
   history.scrollTop = history.scrollHeight;
