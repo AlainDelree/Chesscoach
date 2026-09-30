@@ -167,7 +167,12 @@ function gameCoachLinesOnCoachText(text) {
     gameCoachLines.push({ key, displayText: key, resolved, special: null });
     added = true;
   });
-  if (added) renderGameCoachLinesTable();
+  if (added) {
+    renderGameCoachLinesTable();
+    // Point de nouveauté (issue #70 point 7) : no-op si mobile_game.js n'est
+    // pas chargé ou si l'onglet Lignes est déjà affiché.
+    if (typeof _gameTabMarkNovelty === "function") _gameTabMarkNovelty("lignes");
+  }
 }
 
 function _stockfishLineLabel(info) {
@@ -191,6 +196,7 @@ function gameCoachLinesOnStockfishLine(info) {
   const resolved = resolveCoachLineStart([{ fen: info.fen_avant, label: _stockfishLineLabel(info) }], moveTokens);
   gameCoachLines.unshift({ key, displayText: "Ligne de Stockfish : " + key, resolved, special: "stockfish" });
   renderGameCoachLinesTable();
+  if (typeof _gameTabMarkNovelty === "function") _gameTabMarkNovelty("lignes");
 }
 
 // ── Rendu du tableau ─────────────────────────────────────────────────────
@@ -204,6 +210,19 @@ function gameCoachLinesOnStockfishLine(info) {
 // sans effet sur grand écran (_mobileModeBarQuery, controls.js — chargé avant
 // ce fichier, mais seulement référencé ici au moment de l'appel, une fois le
 // DOM chargé).
+// Issue #70 point 6 : sur mobile en mode jeu (free/pedagogic/opening/
+// finale), cette barre REMPLACE visuellement la rangée de navigation
+// pendant la lecture/preview d'une ligne — masquée/réaffichée ici plutôt que
+// simplement superposée, pour coller au comportement de la maquette. Sans
+// effet en dehors du mode jeu (bibliothèque/revue comprise, où la barre de
+// navigation reste affichée à côté, comportement inchangé).
+function _setReviewControlsHiddenForLinePlayback(hidden) {
+  const reviewControls = document.getElementById("review-controls");
+  if (!reviewControls) return;
+  const gameUiActive = document.body.classList.contains("mobile-game-active");
+  reviewControls.style.display = (gameUiActive && hidden) ? "none" : "";
+}
+
 function _updateBoardLinesCommandBar() {
   const bar = document.getElementById("board-lines-command-bar");
   if (!bar) return;
@@ -211,10 +230,12 @@ function _updateBoardLinesCommandBar() {
   bar.innerHTML = "";
   if (!isMobile) {
     bar.style.display = "none";
+    _setReviewControlsHiddenForLinePlayback(false);
     return;
   }
   if (gameCoachLinesPlayingIdx !== null) {
     bar.style.display = "flex";
+    _setReviewControlsHiddenForLinePlayback(true);
     const span = document.createElement("span");
     span.textContent = "Lecture d'une ligne du coach…";
     const btn = document.createElement("button");
@@ -225,6 +246,7 @@ function _updateBoardLinesCommandBar() {
     bar.appendChild(btn);
   } else if (gameCoachLinesPreviewActive) {
     bar.style.display = "flex";
+    _setReviewControlsHiddenForLinePlayback(true);
     const span = document.createElement("span");
     span.textContent = "Ligne du coach affichée.";
     const btn = document.createElement("button");
@@ -235,6 +257,7 @@ function _updateBoardLinesCommandBar() {
     bar.appendChild(btn);
   } else {
     bar.style.display = "none";
+    _setReviewControlsHiddenForLinePlayback(false);
   }
 }
 

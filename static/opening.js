@@ -25,6 +25,41 @@ let openingAbandonne  = false; // fin de partie spécifiquement par "Abandonner"
 let openingFenAvantCoup     = null;  // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 let openingInBookAvantCoup  = false; // valeur de openingInBook avant ce même coup
 
+// ── Boutons "Jouer les Blancs/Noirs" déplacés avant le plateau sur mobile
+// (issue #70 point 4, généralise placePedagogicStartButtonsForViewport de
+// pedagogic.js au mode ouverture — même choix de camp) ───────────────────
+// Contrairement à pedagogic.js, en plus de "mobile + pas de partie en
+// cours", ce déplacement exige aussi que l'onglet de mode affiché soit bien
+// "opening" (currentModeTab, controls.js) : ces boutons ne doivent apparaître
+// dans la bande avant-partie que lorsqu'on regarde vraiment ce mode.
+let _openingStartHomeParent      = null;
+let _openingStartHomeNextSibling = null;
+const _openingMobileQuery = window.matchMedia("(max-width: 900px)");
+
+function placeOpeningStartButtonsForViewport() {
+  const btns = document.getElementById("opening-start-buttons");
+  const slot = document.getElementById("mobile-opening-start-slot");
+  if (!btns || !slot || !_openingStartHomeParent) return;
+  const gameEnCours = openingActive && !openingGameOver;
+  const onOpeningTab = typeof currentModeTab === "undefined" || currentModeTab === "opening";
+  const showInSlot = _openingMobileQuery.matches && onOpeningTab && !gameEnCours;
+  if (showInSlot) {
+    if (btns.parentElement !== slot) slot.appendChild(btns);
+  } else if (btns.parentElement !== _openingStartHomeParent) {
+    _openingStartHomeParent.insertBefore(btns, _openingStartHomeNextSibling);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const btns = document.getElementById("opening-start-buttons");
+  if (btns) {
+    _openingStartHomeParent      = btns.parentElement;
+    _openingStartHomeNextSibling = btns.nextSibling;
+    placeOpeningStartButtonsForViewport();
+  }
+  _openingMobileQuery.addEventListener("change", () => placeOpeningStartButtonsForViewport());
+});
+
 // ── Suggestions rapides d'ouvertures populaires (issue #27) ────────────────
 // Coups les plus pondérés du livre Polyglot gm2001.bin à la position de
 // départ (opening_book.get_starting_suggestions côté serveur), en plus du
@@ -97,6 +132,7 @@ function abandonOpeningGame() {
   // Issue #65 point 5 : grise "Demander l'avis du coach" (askCoachAvailable,
   // controls.js) dès l'abandon.
   if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+  if (typeof placeOpeningStartButtonsForViewport === "function") placeOpeningStartButtonsForViewport();
 }
 
 function reprendreOpeningCoup() {
@@ -117,6 +153,7 @@ function reprendreOpeningCoup() {
   // Issue #65 point 5 : la partie redevient en cours — réactive "Demander
   // l'avis du coach".
   if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+  if (typeof placeOpeningStartButtonsForViewport === "function") placeOpeningStartButtonsForViewport();
 }
 
 function askOpeningCoach() {
@@ -250,6 +287,7 @@ if (typeof socket !== "undefined") {
     openingCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     openingInBook    = !!data.in_book;
     setActiveMode("opening");
+    if (typeof placeOpeningStartButtonsForViewport === "function") placeOpeningStartButtonsForViewport();
 
     _boardFlipped = (openingCampAlain === "noirs");
     buildBoard();
@@ -289,6 +327,7 @@ if (typeof socket !== "undefined") {
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       showGameOverBanner(data.game_over_info, openingCampAlain);
       if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+      if (typeof placeOpeningStartButtonsForViewport === "function") placeOpeningStartButtonsForViewport();
       return;
     }
     updateOpeningStatus();

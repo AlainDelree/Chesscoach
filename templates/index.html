@@ -219,6 +219,21 @@
       #llm-model-selector .llm-model-btn:hover:not(:disabled) { background: var(--cc-neutral-200); color: var(--cc-accent-strong); }
     }
 
+    /* overflow-anchor:none (issue #70 point 5) : sans ça, Chromium/Firefox
+       essaient de compenser le rétrécissement brutal de #board-sticky-wrap
+       (position:sticky) au passage en bande compacte du mode jeu mobile en
+       ajustant le défilement de la page ("scroll anchoring") — la
+       compensation peut dépasser la position de défilement courante et la
+       ramène alors à 0, renvoyant l'utilisateur en haut de la page au moment
+       même où elle défile. Bug diagnostiqué avec Playwright (cf. rapport de
+       clôture) ; l'ancre choisie par le navigateur pouvant être n'importe
+       quel enfant de la page (la propriété overflow-anchor ne s'hérite pas),
+       la règle doit être globale (document entier), pas seulement posée sur
+       #board-sticky-wrap. Non supporté par Safari, qui garde ce comportement
+       natif — limite documentée, sans effet ailleurs (propriété sans risque
+       de régression, purement une désactivation d'une heuristique de confort
+       de défilement). */
+    html { overflow-anchor: none; }
     #app {
       display: flex;
       gap: 16px;
@@ -739,6 +754,315 @@
       white-space: nowrap;
     }
     .review-more-dropdown.open { display: block; }
+
+    /* ── Issue #70 : écran de partie mobile (plateau fixe, onglets, bande
+       compacte) — d'après la maquette design/partie_mobile/ (Claude Design,
+       référence de disposition/comportement, pas de code ni de couleurs).
+       Tout ce qui suit n'est actif que sous <body class="mobile-game-active">
+       (posée par mobile_game.js : <900px ET onglet de mode parmi
+       free/pedagogic/opening/finale) — les modes exercice/bibliothèque/
+       éditeur et le grand écran gardent la disposition existante (issues
+       #50/#63/#65/#69), entièrement inchangée en dehors de cette classe. */
+    @media (max-width: 900px) {
+      /* En-tête combiné (point 1) : sélecteur de mode existant + pastille de
+         modèle + menu "..." sur une seule ligne, dans #mobile-mode-bar-slot
+         (qui reçoit déjà .mode-tab-bar par JS, cf. placeModeTabBarForViewport
+         controls.js) — remplace la rangée <header> d'origine (masquée),
+         dont le contenu (sélecteur de modèle complet, compteur de jetons,
+         lien Coût API) est déplacé dans le menu/la pastille par JS
+         (mobile_game.js), sans dupliquer leur logique (llm_model.js/
+         usage_tokens.js retrouvent leurs éléments par id, peu importe leur
+         parent réel — même principe que placeModeTabBarForViewport). */
+      body.mobile-game-active header { display: none; }
+      body.mobile-game-active #mobile-mode-bar-slot {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 8px 8px;
+        /* position:relative (issue #70) : ancre #game-model-popup/
+           #game-menu-dropdown (position:absolute, top:100%) juste sous cette
+           rangée — sans ça, ils se positionnent par rapport au prochain
+           ancêtre positionné (ou à défaut la racine), bien plus bas que
+           l'écran. */
+        position: relative;
+      }
+      body.mobile-game-active #mobile-mode-bar-slot .mode-tab-bar {
+        order: 1;
+        flex: 1;
+        min-width: 0;
+        padding: 0;
+      }
+      #game-model-pill, #game-menu-btn { display: none; }
+      body.mobile-game-active #game-model-pill {
+        display: inline-flex;
+        order: 2;
+        flex-shrink: 0;
+        padding: 8px 12px;
+        min-height: 0;
+      }
+      body.mobile-game-active #game-menu-btn {
+        display: inline-flex;
+        order: 3;
+        flex-shrink: 0;
+        padding: 8px 10px;
+        min-height: 0;
+      }
+      #game-model-popup, #game-menu-dropdown { display: none; }
+      #game-model-popup.open, #game-menu-dropdown.open { display: block; }
+      body.mobile-game-active #game-model-popup,
+      body.mobile-game-active #game-menu-dropdown {
+        position: absolute;
+        right: 8px;
+        top: 100%;
+        margin-top: 4px;
+        background: var(--cc-surface);
+        border-radius: var(--cc-radius-md);
+        box-shadow: var(--cc-shadow-lg);
+        padding: 10px;
+        z-index: 40;
+        min-width: 210px;
+        max-width: calc(100vw - 16px);
+        box-sizing: border-box;
+      }
+      body.mobile-game-active #game-model-popup #llm-model-selector { width: 100%; justify-content: center; }
+      .game-menu-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: none;
+        border: none;
+        color: var(--cc-accent-strong);
+        font-weight: 600;
+        padding: 10px 6px;
+        min-height: 0;
+        border-bottom: 1px solid var(--cc-divider);
+        box-sizing: border-box;
+      }
+      .game-menu-item:last-child { border-bottom: none; }
+      .game-menu-section-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--cc-text-muted); padding: 8px 6px 2px; }
+      #game-menu-usage { font-size: 0.78rem; color: var(--cc-text-muted); padding: 6px; }
+      #game-menu-mode-extra:empty { display: none; }
+
+      /* Plateau fixe ~40% d'écran au maximum (point 10 : dvh, hauteur
+         dynamique, pour tenir compte de la barre d'adresse mobile) —
+         remplace la valeur générale 30vh (issue #69) dans ce contexte
+         précis uniquement, jamais plus large que l'écran (calc(100vw-76px)
+         inchangé). */
+      body.mobile-game-active { --bd-size: min(36dvh, 400px, calc(100vw - 76px)); }
+
+      body.mobile-game-active #board-full-view { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; }
+      #board-compact-strip { display: none; }
+      body.mobile-game-active #board-sticky-wrap.board-compact #board-full-view { display: none; }
+      body.mobile-game-active #board-sticky-wrap.board-compact #board-compact-strip {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        min-height: 56px;
+        padding: 6px 10px;
+        box-sizing: border-box;
+        background: var(--cc-surface);
+        border-radius: var(--cc-radius-md);
+        cursor: pointer;
+      }
+      #board-compact-strip .board-compact-move { font-weight: 700; font-size: 0.86rem; color: var(--cc-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #board-compact-strip .board-compact-material { font-size: 0.76rem; color: var(--cc-text-muted); }
+      #board-compact-strip .board-compact-info { flex: 1; min-width: 0; }
+      #board-compact-strip .board-compact-chevron { color: var(--cc-accent-strong); font-size: 1.1rem; flex-shrink: 0; }
+
+      /* Ligne d'état discrète (point 1) : "Coup N · coup" à gauche, matériel
+         capturé + pastille de couleur du camp en avance à droite, camp au
+         trait. */
+      #game-status-line { display: none; }
+      body.mobile-game-active #game-status-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        font-size: 0.78rem;
+        color: var(--cc-text-muted);
+        padding: 2px 2px 0;
+        box-sizing: border-box;
+      }
+      #game-status-line .game-status-move { color: var(--cc-text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #game-status-line .game-status-right { display: flex; align-items: center; gap: 6px; white-space: nowrap; flex-shrink: 0; }
+      .game-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+      .game-status-dot.white { background: var(--cc-neutral-200); border: 1px solid var(--cc-accent-strong); }
+      .game-status-dot.black { background: var(--cc-neutral-800); }
+
+      /* Ligne "Coup N"/meilleur coup (#review-move-info-row) et statut
+         d'extraction du FEN (#fen-extract-status) : remplacées par
+         #game-status-line (ci-dessus) et par le menu "..." (Extraire le FEN
+         y affiche le résultat via une alerte native du presse-papiers,
+         extraireFen() inchangée) — masquées ici pour ne pas doublonner
+         l'information sous le plateau. */
+      body.mobile-game-active #review-move-info-row,
+      body.mobile-game-active #fen-extract-status {
+        display: none;
+      }
+
+      /* Barre de navigation (déjà compacte, issue #69) / barre d'actions :
+         ajustements mineurs pour le mode jeu (pas de titre ni de texte de
+         statut, comme la maquette). Déplacées par JS (mobile_game.js) comme
+         enfants de #board-sticky-wrap (cf. commentaire sur #game-tab-bar,
+         gabarit) pour rester fixes avec le plateau — masquées avec lui en
+         bande compacte (point 5 : "le plateau complet ET les deux barres de
+         boutons sont remplacés par une bande"), !important nécessaire car
+         #shared-mode-controls garde un style.display posé par JS
+         (_updateActionBarState, mobile_game.js) que cette règle doit
+         prévaloir. */
+      body.mobile-game-active #board-sticky-wrap.board-compact #review-controls,
+      body.mobile-game-active #board-sticky-wrap.board-compact #shared-mode-controls,
+      body.mobile-game-active #board-sticky-wrap.board-compact .mode-start-slot,
+      body.mobile-game-active #board-sticky-wrap.board-compact #mobile-game-idle-msg {
+        display: none !important;
+      }
+      body.mobile-game-active #shared-mode-controls { margin-top: 6px; padding: 8px; }
+      body.mobile-game-active #shared-mode-controls h2,
+      body.mobile-game-active #shared-mode-controls #shared-mode-status,
+      body.mobile-game-active #shared-mode-controls #shared-ask-coach-help {
+        display: none;
+      }
+      body.mobile-game-active #shared-mode-controls > div:not(#shared-mode-status) { margin: 0; }
+      body.mobile-game-active #shared-mode-controls button { flex: 1; }
+
+      /* États avant/pendant/après partie (point 4). */
+      .mode-start-slot { display: contents; }
+      body.mobile-game-active .mode-start-buttons {
+        display: flex; gap: 8px; width: 100%; margin-top: 6px;
+      }
+      body.mobile-game-active .mode-start-buttons button {
+        flex: 1;
+        background: var(--cc-accent);
+        color: var(--cc-bg);
+        border: none;
+        font-family: var(--cc-font-heading);
+        font-weight: 400;
+        font-size: 0.92rem;
+        padding: 14px 8px;
+        min-height: 0;
+      }
+      .mode-start-hint { display: none; }
+      body.mobile-game-active .mode-start-hint {
+        display: block; flex-basis: 100%; text-align: center; font-size: 0.76rem; color: var(--cc-text-muted); margin-top: 4px;
+      }
+      #mobile-game-idle-msg { display: none; }
+      body.mobile-game-active #mobile-game-idle-msg.show {
+        display: block; font-size: 0.8rem; color: var(--cc-text-muted); text-align: center; padding: 10px 6px; margin-top: 6px;
+      }
+      /* Bandeau de résultat (issue #31, #game-over-banner, déjà au-dessus du
+         plateau) remplace la barre d'actions/le bandeau avant-partie (point 4)
+         plutôt que de les superposer — classe posée par showGameOverBanner/
+         hideGameOverBanner (board.js). */
+      body.game-over-active.mobile-game-active #shared-mode-controls,
+      body.game-over-active.mobile-game-active .mode-start-slot,
+      body.game-over-active.mobile-game-active #mobile-game-idle-msg {
+        display: none !important;
+      }
+
+      /* Onglets Coach / Lignes / Analyse / Coups (point 1) — un seul panneau
+         visible à la fois, seule cette zone défile (le reste, plus haut,
+         reste fixe grâce à #board-sticky-wrap déjà collé, issue #69). */
+      #game-tabs-column { display: none; }
+      body.mobile-game-active #game-tabs-column {
+        display: block;
+        order: 2;
+        width: 100%;
+        max-width: 100%;
+      }
+      body.mobile-game-active #board-column { order: 1; }
+      /* min-height (issue #70 point 5) : garantit assez de hauteur de page
+         pour que la bascule plateau complet/bande compacte (qui rétrécit
+         #board-sticky-wrap d'environ 500px) ne fasse jamais passer la page
+         SOUS la hauteur de la fenêtre — sinon le navigateur ramène le
+         défilement à 0 (plus rien à défiler), ce qui annule aussitôt la
+         bascule qui vient de se produire (onglet Coach vide juste après le
+         début d'une partie, avant tout message). Repéré avec Playwright (cf.
+         rapport de clôture) ; 160dvh couvre confortablement ce rétrécissement
+         même sur un petit téléphone (~640px de haut). */
+      body.mobile-game-active #app { min-height: 160dvh; }
+      /* Contenu réel déplacé dans les nouveaux onglets par JS (mobile_game.js,
+         même principe de déplacement de nœud DOM que placeModeTabBarForViewport
+         ci-dessus) — ces colonnes d'origine restent donc vides le temps que le
+         mode jeu est actif, masquées plutôt que superposées au reste. */
+      body.mobile-game-active #coach-column,
+      body.mobile-game-active #mode-tabs-column,
+      body.mobile-game-active #historique-column {
+        display: none;
+      }
+      /* Issue #70 point 3 : la collection de parties, le programme
+         d'entraînement et les parties enregistrées ne figurent plus sur
+         l'écran de partie (ils restent dans la Bibliothèque) — "Importer un
+         PGN" y est remplacé par l'entrée du menu "...". Ce slot continue de
+         recevoir ces blocs par _placeMobileRelocatablesForViewport
+         (controls.js, issue #69, inchangé) pour les autres modes mobiles ;
+         masqué ici uniquement le temps que le mode jeu est actif. */
+      body.mobile-game-active #mobile-bottom-slot { display: none; }
+      .game-tab-bar {
+        display: flex;
+        gap: 2px;
+        margin-bottom: 0;
+        border-bottom: 1px solid var(--cc-divider);
+      }
+      .game-tab-btn {
+        position: relative;
+        flex: 1;
+        background: none;
+        border: none;
+        border-bottom: 3px solid transparent;
+        border-radius: 0;
+        padding: 10px 4px;
+        min-height: 0;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--cc-text-muted);
+      }
+      .game-tab-btn.active { color: var(--cc-accent-strong); border-bottom-color: var(--cc-accent); }
+      .game-tab-dot {
+        position: absolute;
+        top: 6px;
+        right: 14px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--cc-accent-strong);
+        display: none;
+      }
+      .game-tab-btn.has-novelty .game-tab-dot { display: block; }
+      .game-tab-panel { display: none; padding: 10px 2px 32px; }
+      .game-tab-panel.active { display: block; }
+      #game-tab-panel-coach .coach-drawer { max-height: none; overflow: visible; }
+      #game-tab-panel-coups table { width: 100%; }
+
+      /* Indicateur d'attente pendant l'analyse (point 4), sans compteur —
+         animation neutralisée si le système demande moins de mouvement
+         (prefers-reduced-motion), cf. règle dédiée plus bas. */
+      .game-analysis-progress { display: none; }
+      .game-analysis-progress.show {
+        display: block;
+        height: 4px;
+        border-radius: var(--cc-radius-sm);
+        margin-top: 6px;
+        background: var(--cc-neutral-200);
+        overflow: hidden;
+      }
+      .game-analysis-progress.show::after {
+        content: "";
+        display: block;
+        height: 100%;
+        width: 40%;
+        background: var(--cc-accent);
+        animation: game-analysis-indeterminate 1.1s ease-in-out infinite;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .game-analysis-progress.show::after { animation: none; width: 100%; opacity: 0.6; }
+      }
+    }
+    @keyframes game-analysis-indeterminate {
+      0%   { transform: translateX(-120%); }
+      100% { transform: translateX(350%); }
+    }
   </style>
 </head>
 <body>
@@ -747,7 +1071,32 @@
        placeModeTabBarForViewport, controls.js) et le rend collé en haut de
        l'écran sur GSM (<900px, cf. media query ci-dessus) — les 7 boutons
        d'onglets existants (switchModeTab) ne sont jamais dupliqués. -->
-  <div id="mobile-mode-bar-slot"></div>
+  <div id="mobile-mode-bar-slot">
+    <!-- Pastille de modèle actif + menu "..." (issue #70, point 1) : posés
+         ici (à côté de .mode-tab-bar, déplacé par JS dans ce même slot,
+         cf. placeModeTabBarForViewport ci-dessus) pour former l'en-tête
+         combiné sur une seule ligne des modes de partie — sans effet tant
+         que <body> n'a pas la classe "mobile-game-active" (mobile_game.js).
+         La pastille reflète le modèle actif (#llm-model-selector reste la
+         source de vérité, déplacé tel quel dans le popup au clic — issue
+         #61, llm_model.js inchangé) ; "..." regroupe Extraire le FEN,
+         Importer un PGN, Bibliothèque, les contrôles propres au mode actif
+         (ouverture/finales) et ce qui ne sert pas pendant la partie
+         (compteur de jetons, lien Coût API — issue #54/#69). -->
+    <button type="button" id="game-model-pill" onclick="gameMenuToggleModelPopup()" title="Modèle Claude actif">{{ llm_model_choices[llm_model_actif].split(' ')[0] }}</button>
+    <div id="game-model-popup"></div>
+    <button type="button" id="game-menu-btn" onclick="gameMenuToggleDropdown()">⋯</button>
+    <div id="game-menu-dropdown">
+      <button type="button" class="game-menu-item" onclick="extraireFen(); gameMenuClose();">Extraire le FEN</button>
+      <label class="game-menu-item" style="cursor:pointer;">Importer un PGN
+        <input type="file" accept=".pgn,.txt" style="display:block; margin-top:4px; font-size:0.78rem;" onchange="loadPgnFile(event); gameMenuClose();">
+      </label>
+      <button type="button" class="game-menu-item" onclick="switchModeTab('library'); gameMenuClose();">Bibliothèque</button>
+      <div id="game-menu-mode-extra"></div>
+      <div id="game-menu-usage"></div>
+      <a class="game-menu-item" id="game-menu-cost-link" href="https://platform.claude.com/cost" target="_blank" rel="noopener noreferrer">Coût API</a>
+    </div>
+  </div>
   <header>
     <h1>ChessCoach — plateau &amp; revue de partie</h1>
     <div class="header-actions">
@@ -804,47 +1153,68 @@
            sans effet sur grand écran (juste une div supplémentaire dans le
            flux normal de #board-column). -->
       <div id="board-sticky-wrap">
-        <!-- Issue #65 point 6 : reçoit par JS (placePedagogicStartButtonsForViewport,
-             pedagogic.js) les boutons "Jouer les Blancs/Noirs" du mode partie
-             pédagogique sur mobile, tant qu'aucune partie n'est en cours — vide
-             et sans effet sinon (display:contents, cf. <style>). -->
-        <div id="mobile-pedagogic-start-slot"></div>
         <div id="game-over-banner" class="game-over-banner" style="display:none;"></div>
-        <div class="material-row"><span id="material-top"></span></div>
-        <div id="board-row">
-          <div id="coord-rank"></div>
-          <div class="eval-bar-wrap">
-            <div class="eval-score" id="eval-score">0.0</div>
-            <div class="eval-bar-track">
-              <div class="eval-fill-white" id="eval-white" style="height:50%;"></div>
-              <div class="eval-fill-black" id="eval-black" style="height:50%;"></div>
+        <!-- #board-full-view/#board-compact-strip (issue #70 point 5) : sur
+             mobile, en mode jeu (mobile-game-active), le plateau complet est
+             remplacé par une bande compacte pendant le défilement de la zone
+             à onglets ou quand le champ de question a le focus (clavier
+             ouvert) — bascule de classe "board-compact" sur #board-sticky-wrap
+             pilotée par mobile_game.js. Sans effet ailleurs (display:contents/
+             none par défaut, cf. <style>). -->
+        <div id="board-full-view">
+          <div class="material-row"><span id="material-top"></span></div>
+          <div id="board-row">
+            <div id="coord-rank"></div>
+            <div class="eval-bar-wrap">
+              <div class="eval-score" id="eval-score">0.0</div>
+              <div class="eval-bar-track">
+                <div class="eval-fill-white" id="eval-white" style="height:50%;"></div>
+                <div class="eval-fill-black" id="eval-black" style="height:50%;"></div>
+              </div>
+            </div>
+            <!-- #board-file-column (issue #65 point 1) : regroupe #board-wrapper
+                 et #coord-file dans une même colonne centrée pour qu'ils
+                 partagent le même repère horizontal — cf. commentaire détaillé
+                 sur les règles CSS correspondantes ci-dessus. -->
+            <div id="board-file-column">
+              <div id="board-wrapper">
+                <div id="board"></div>
+                <svg id="arrows-svg">
+                  <defs>
+                    <marker id="arrowhead" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
+                      <path d="M0,0 L4,2 L0,4 Z" fill="rgba(232,69,96,0.75)"></path>
+                    </marker>
+                  </defs>
+                </svg>
+              </div>
+              <div id="coord-file"></div>
             </div>
           </div>
-          <!-- #board-file-column (issue #65 point 1) : regroupe #board-wrapper
-               et #coord-file dans une même colonne centrée pour qu'ils
-               partagent le même repère horizontal — cf. commentaire détaillé
-               sur les règles CSS correspondantes ci-dessus. -->
-          <div id="board-file-column">
-            <div id="board-wrapper">
-              <div id="board"></div>
-              <svg id="arrows-svg">
-                <defs>
-                  <marker id="arrowhead" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
-                    <path d="M0,0 L4,2 L0,4 Z" fill="rgba(232,69,96,0.75)"></path>
-                  </marker>
-                </defs>
-              </svg>
-            </div>
-            <div id="coord-file"></div>
+          <div class="material-row"><span id="material-bottom"></span></div>
+          <!-- Ligne d'état discrète (issue #70 point 1) : "Coup N · coup" à
+               gauche, matériel capturé condensé + camp au trait à droite —
+               remplie par updateGameStatusLine() (board.js), appelée depuis
+               renderHistory() (déjà appelé après chaque coup, tous modes). -->
+          <div id="game-status-line">
+            <span class="game-status-move" id="game-status-move"></span>
+            <span class="game-status-right" id="game-status-right"></span>
           </div>
         </div>
-        <div class="material-row"><span id="material-bottom"></span></div>
+        <div id="board-compact-strip" onclick="boardCompactExpand()">
+          <div class="board-compact-info">
+            <div class="board-compact-move" id="board-compact-move"></div>
+            <div class="board-compact-material" id="board-compact-material"></div>
+          </div>
+          <span class="board-compact-chevron">▾</span>
+        </div>
 
         <!-- Issue #69 point 4 : barre Stop/"Revenir à la partie" pour la
              lecture d'une ligne du tableau "Lignes du coach" des modes de
              partie/revue — remplie par _updateBoardLinesCommandBar()
              (game_coach_lines.js), masquée en dehors d'une lecture/preview et
-             sur grand écran (cf. <style>). -->
+             sur grand écran (cf. <style>). Issue #70 point 6 : sur mobile en
+             mode jeu, remplace visuellement la barre de navigation
+             (#review-controls masqué pendant ce temps par la même fonction). -->
         <div id="board-lines-command-bar" class="board-lines-command-bar"></div>
       </div>
 
@@ -865,7 +1235,7 @@
           </div>
         </div>
       </div>
-      <div>
+      <div id="review-move-info-row">
         <span id="review-move-info"></span>
         <strong id="review-move-san"></strong>
         <span id="review-best-move-san" style="display:none; color:#1a9bc0;"></span>
@@ -901,6 +1271,48 @@
         <div id="shared-ask-coach-help" style="font-size:0.76rem; color:var(--cc-text-muted); margin-top:2px; font-style:italic; display:none;"></div>
       </div>
 
+      <!-- États avant-partie (issue #70 point 4) : sur mobile, en mode jeu,
+           remplacent #shared-mode-controls ci-dessus tant qu'aucune partie
+           n'est en cours. Pédagogique/ouverture ont un choix de camp (deux
+           gros boutons, comme la maquette) ; partie libre (les deux camps
+           sont joués librement) et finales (le camp est fixé par la
+           position-type, "camps inversés" en tient lieu) n'ont pas ce choix
+           — #mobile-game-idle-msg les remplace pour ces deux modes (écart
+           documenté dans le rapport de clôture). -->
+      <div id="mobile-pedagogic-start-slot" class="mode-start-slot"></div>
+      <div id="mobile-opening-start-slot" class="mode-start-slot"></div>
+      <div id="mobile-game-idle-msg">Utilisez le menu ⋯ pour démarrer une partie.</div>
+    </div>
+
+    <!-- ── Onglets Coach / Lignes / Analyse / Coups (issue #70, mobile
+         uniquement, modes partie libre/pédagogique/ouverture/finales) ───────
+         Panneaux remplis par déplacement des blocs existants (mobile_game.js,
+         même principe que placeModeTabBarForViewport/_placeMobileRelocatablesForViewport
+         ci-dessus) : aucune logique dupliquée ni réécrite. Sans effet sur
+         grand écran ni sur les modes exercice/bibliothèque/éditeur (cf.
+         <style>, classe "mobile-game-active"). -->
+    <div id="game-tabs-column">
+      <!-- #game-tab-bar (issue #70 point 1) : déplacé par JS (mobile_game.js)
+           comme dernier enfant de #board-sticky-wrap (déjà collé en haut de
+           l'écran sur mobile, issue #69) pour que les onglets restent fixes
+           avec le plateau — "tout ce qui précède l'onglet actif fixe à
+           l'écran", seule la zone des panneaux ci-dessous défile. Cette
+           position dans le gabarit (avant les panneaux) est son emplacement
+           d'origine, repris tel quel si jamais restauré (grand écran/autres
+           modes, où cette colonne entière est de toute façon masquée, cf.
+           <style>). -->
+      <div class="game-tab-bar" id="game-tab-bar">
+        <button type="button" class="game-tab-btn" id="game-tab-btn-coach" onclick="switchGameTab('coach')">Coach<span class="game-tab-dot"></span></button>
+        <button type="button" class="game-tab-btn" id="game-tab-btn-lignes" onclick="switchGameTab('lignes')">Lignes<span class="game-tab-dot"></span></button>
+        <button type="button" class="game-tab-btn" id="game-tab-btn-analyse" onclick="switchGameTab('analyse')">Analyse<span class="game-tab-dot"></span></button>
+        <button type="button" class="game-tab-btn" id="game-tab-btn-coups" onclick="switchGameTab('coups')">Coups<span class="game-tab-dot"></span></button>
+      </div>
+      <div class="game-tab-panel" id="game-tab-panel-coach"></div>
+      <div class="game-tab-panel" id="game-tab-panel-lignes"></div>
+      <div class="game-tab-panel" id="game-tab-panel-analyse"></div>
+      <div class="game-tab-panel" id="game-tab-panel-coups">
+        <h2 style="font-size:1rem; font-family:var(--cc-font-heading); font-weight:400; margin:0 0 8px; color:var(--cc-text);">Historique des coups</h2>
+      </div>
     </div>
 
     <!-- ── Colonne à onglets, un par mode (issue #23) ────────────────────────
@@ -967,6 +1379,10 @@
                "Expliquer ce coup" à la demande (pas d'appel automatique). -->
           <div id="game-analysis-panel" style="margin-top:10px; padding-top:8px; border-top:1px solid #dde6ee;">
             <button id="game-analysis-btn" onclick="analyserPartieCourante()">Analyser cette partie</button>
+            <!-- Indicateur d'attente sans compteur (issue #70 point 4) —
+                 classe "show" posée/retirée par game_analysis.js, sans effet
+                 hors du mode jeu mobile (cf. <style>). -->
+            <div id="game-analysis-progress" class="game-analysis-progress"></div>
             <div id="game-analysis-status" style="font-size:0.8rem; color:var(--cc-text-muted); margin-top:4px;"></div>
             <div id="game-analysis-coach-status" style="font-size:0.8rem; color:var(--cc-text-muted); margin-top:2px; font-style:italic;"></div>
             <ul id="game-analysis-report" style="list-style:none; margin:6px 0 0; padding:0; max-height:260px; overflow-y:auto;"></ul>
@@ -974,76 +1390,103 @@
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-free">
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-            <button onclick="startFreeGame()">Nouvelle partie libre</button>
-            <button onclick="requestStockfishMove()">Coup Stockfish</button>
-            <label style="font-size:0.82rem;">
-              <input type="checkbox" id="free-auto-stockfish">
-              Stockfish joue auto
-            </label>
+          <!-- #free-extra-controls (issue #70 point 8, choix le plus simple
+               documenté dans le rapport de clôture) : déplacé tel quel dans
+               le menu "..." sur mobile en mode jeu (mobile_game.js), comme
+               #opening-extra-controls/#finale-extra-controls ci-dessous —
+               mêmes onclick/ids, aucune logique dupliquée. Partie libre n'a
+               pas de choix de camp (les deux camps sont joués librement) : pas
+               de grands boutons Blancs/Noirs pour ce mode (écart documenté). -->
+          <div id="free-extra-controls">
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <button onclick="startFreeGame()">Nouvelle partie libre</button>
+              <button onclick="requestStockfishMove()">Coup Stockfish</button>
+              <label style="font-size:0.82rem;">
+                <input type="checkbox" id="free-auto-stockfish">
+                Stockfish joue auto
+              </label>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+              <input id="free-finale-nom" type="text" placeholder="Nom de la finale" style="flex:1; min-width:140px;">
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+              <input id="free-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
+              <button onclick="saveFreeGameAsFinale()">Enregistrer comme finale</button>
+            </div>
+            <div id="free-play-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
           </div>
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-            <input id="free-finale-nom" type="text" placeholder="Nom de la finale" style="flex:1; min-width:140px;">
-          </div>
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-            <input id="free-finale-description" type="text" placeholder="Description / thème technique" style="flex:1; min-width:140px;">
-            <button onclick="saveFreeGameAsFinale()">Enregistrer comme finale</button>
-          </div>
-          <div id="free-play-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-pedagogic">
-          <!-- Issue #65 point 6 : id/classe dédiés pour que
-               placePedagogicStartButtonsForViewport() (pedagogic.js) puisse
-               déplacer ce bloc tel quel vers #mobile-pedagogic-start-slot sur
-               mobile (mêmes onclick, aucune logique dupliquée) — voir
+          <!-- Issue #65 point 6 (généralisé issue #70) : id/classe dédiés
+               pour que placePedagogicStartButtonsForViewport() (pedagogic.js)
+               puisse déplacer ce bloc tel quel vers #mobile-pedagogic-start-slot
+               sur mobile (mêmes onclick, aucune logique dupliquée) — voir
                commentaire sur #mobile-pedagogic-start-slot ci-dessus. -->
-          <div id="pedagogic-start-buttons" class="pedagogic-start-buttons" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <div id="pedagogic-start-buttons" class="pedagogic-start-buttons mode-start-buttons" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
             <button onclick="startPedagogicGame('blancs')">Jouer les Blancs</button>
             <button onclick="startPedagogicGame('noirs')">Jouer les Noirs</button>
+            <div class="mode-start-hint">Choisis ta couleur pour commencer</div>
           </div>
-          <div id="pedagogic-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+          <div id="pedagogic-extra-controls">
+            <div id="pedagogic-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+          </div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-opening">
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-            <input id="opening-name-input" type="text" placeholder="Nom de l'ouverture (ex. Défense française)" style="flex:1; min-width:180px;">
-          </div>
-          <!-- Suggestions rapides (issue #27) : coups les plus pondérés du
-               livre Polyglot gm2001.bin à la position de départ, en plus du
-               champ texte libre ci-dessus — un clic préremplit le champ avec
-               le nom reconnu (1.e4/1.d4/1.c4/1.Nf3) ou, au-delà, le coup lui-même
-               (voir opening_book.FIRST_MOVE_OPENING_NAMES). -->
-          <div id="opening-suggestions-label" style="font-size:0.76rem; color:var(--cc-text-muted); margin-top:6px;"></div>
-          <div id="opening-suggestions" style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;"></div>
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+          <!-- #opening-start-buttons (issue #70 point 4, mécanique identique
+               à #pedagogic-start-buttons ci-dessus — cf. placeOpeningStartButtonsForViewport,
+               opening.js) / #opening-extra-controls (point 8, même choix que
+               #free-extra-controls) : deux blocs déplacés indépendamment sur
+               mobile en mode jeu, sans dupliquer la logique de démarrage. -->
+          <div id="opening-start-buttons" class="mode-start-buttons" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
             <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
             <button onclick="startOpeningGame('noirs')">Jouer les Noirs</button>
+            <div class="mode-start-hint">Choisis ta couleur pour commencer</div>
           </div>
-          <div id="opening-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+          <div id="opening-extra-controls">
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <input id="opening-name-input" type="text" placeholder="Nom de l'ouverture (ex. Défense française)" style="flex:1; min-width:180px;">
+            </div>
+            <!-- Suggestions rapides (issue #27) : coups les plus pondérés du
+                 livre Polyglot gm2001.bin à la position de départ, en plus du
+                 champ texte libre ci-dessus — un clic préremplit le champ avec
+                 le nom reconnu (1.e4/1.d4/1.c4/1.Nf3) ou, au-delà, le coup lui-même
+                 (voir opening_book.FIRST_MOVE_OPENING_NAMES). -->
+            <div id="opening-suggestions-label" style="font-size:0.76rem; color:var(--cc-text-muted); margin-top:6px;"></div>
+            <div id="opening-suggestions" style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;"></div>
+            <div id="opening-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+          </div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-finale">
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-            <select id="finale-select" style="flex:1; min-width:0;" onchange="onFinaleSelectChange()">
-              <option value="">— Choisir une finale —</option>
-            </select>
+          <!-- #finale-extra-controls (issue #70 point 8, même choix que
+               #free-extra-controls ci-dessus) : le camp est fixé par la
+               position-type elle-même ("camps inversés" en tient lieu), donc
+               pas de grands boutons Blancs/Noirs pour ce mode non plus (même
+               écart documenté que pour partie libre). -->
+          <div id="finale-extra-controls">
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <select id="finale-select" style="flex:1; min-width:0;" onchange="onFinaleSelectChange()">
+                <option value="">— Choisir une finale —</option>
+              </select>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+              <button type="button" id="finale-restart-btn" onclick="restartCurrentFinale()">Recommencer cette finale</button>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+              <label style="font-size:0.78rem;">
+                <input type="checkbox" id="finale-inverser-camps">
+                Camps inversés (je joue la défense)
+              </label>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+              <button type="button" id="finale-demo-toggle-btn" onclick="toggleFinaleDemo()">Voir une démonstration</button>
+              <button type="button" id="finale-demo-next-btn" onclick="finaleDemoNext()" style="display:none;">Coup suivant</button>
+            </div>
+            <div id="finale-description" style="font-size:0.78rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+            <div id="finale-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
           </div>
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-            <button type="button" id="finale-restart-btn" onclick="restartCurrentFinale()">Recommencer cette finale</button>
-          </div>
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-            <label style="font-size:0.78rem;">
-              <input type="checkbox" id="finale-inverser-camps">
-              Camps inversés (je joue la défense)
-            </label>
-          </div>
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-            <button type="button" id="finale-demo-toggle-btn" onclick="toggleFinaleDemo()">Voir une démonstration</button>
-            <button type="button" id="finale-demo-next-btn" onclick="finaleDemoNext()" style="display:none;">Coup suivant</button>
-          </div>
-          <div id="finale-description" style="font-size:0.78rem; color:var(--cc-text-muted); margin-top:4px;"></div>
-          <div id="finale-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-exercise">
@@ -1127,7 +1570,7 @@
          d'entraînement au-dessus, avec sa liste à puces potentiellement
          longue) empêchait. -->
     <div id="coach-column">
-      <div class="panel coach-drawer" style="margin-bottom:12px;">
+      <div class="panel coach-drawer" id="coach-drawer-panel" style="margin-bottom:12px;">
         <h2 style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
           <span style="display:flex; align-items:center; gap:8px;"><span class="coach-avatar" aria-hidden="true">C</span>Coach</span>
           <!-- Case "Commenter chaque coup" (issue #27) : déplacée ici depuis la
@@ -1255,6 +1698,7 @@
   <script src="{{ url_for('static', filename='finales.js') }}"></script>
   <script src="{{ url_for('static', filename='editor.js') }}"></script>
   <script src="{{ url_for('static', filename='controls.js') }}"></script>
+  <script src="{{ url_for('static', filename='mobile_game.js') }}"></script>
   <script>
     // Position de départ affichée immédiatement, avant même le retour de la
     // bibliothèque PGN (cf. socket.on("pgn_lib_game_loaded", ...) qui prendra

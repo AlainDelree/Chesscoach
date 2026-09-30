@@ -441,6 +441,83 @@ function renderHistory(activeIdx) {
   }
   html += '</table>';
   histEl.innerHTML = html;
+
+  if (typeof updateGameStatusLine === "function") updateGameStatusLine();
+}
+
+// ── Ligne d'état compacte du mode jeu mobile (issue #70 point 1/5) ─────────
+// "Coup N · coup" (même convention de numérotation que review-move-info,
+// c-à-d le nombre de demi-coups joués — pas le numéro de coup plein de la
+// maquette, pour rester cohérent avec le reste de l'appli plutôt que
+// d'introduire une seconde numérotation) + matériel capturé condensé (une
+// pastille de la couleur en avance, "=" en cas d'égalité) + camp au trait.
+// Alimente à la fois la ligne d'état sous le plateau complet et la bande
+// compacte (#board-compact-strip) — sans effet tant que ces éléments sont
+// absents/masqués (grand écran, modes hors jeu). Appelée depuis
+// renderHistory() (déjà invoquée après chaque coup, tous modes confondus).
+function _materialDiffFromFenBoard(fenBoard) {
+  const vals = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+  let scoreW = 0, scoreB = 0;
+  for (const ch of fenBoard) {
+    const lower = ch.toLowerCase();
+    if (!(lower in vals)) continue;
+    if (ch === lower) scoreB += vals[lower]; else scoreW += vals[lower];
+  }
+  return scoreW - scoreB;
+}
+
+function updateGameStatusLine() {
+  const moveEl  = document.getElementById("game-status-move");
+  const rightEl = document.getElementById("game-status-right");
+  const compactMoveEl = document.getElementById("board-compact-move");
+  const compactMatEl  = document.getElementById("board-compact-material");
+  if (!moveEl && !compactMoveEl) return;
+
+  let nbCoups = 0, lastSan = "", fenBoard = "", turnBlancs = true;
+  if (typeof activeMode !== "undefined" && activeMode && typeof activeModeGameState === "function") {
+    const state = activeModeGameState();
+    if (state && state.fen) {
+      nbCoups = state.nbCoups || 0;
+      lastSan = state.move || "";
+      fenBoard = state.fen.split(" ")[0];
+      turnBlancs = state.fen.split(" ")[1] !== "b";
+    }
+  } else if (typeof reviewFens !== "undefined" && reviewFens && reviewFens.length) {
+    nbCoups = reviewIdx;
+    fenBoard = reviewFens[reviewIdx] || "";
+    lastSan = (reviewIdx > 0 && reviewMoves[reviewIdx - 1]) ? reviewMoves[reviewIdx - 1].san : "";
+    turnBlancs = (reviewIdx % 2) === 0;
+  } else {
+    return;
+  }
+
+  const moveText = nbCoups > 0 ? `Coup ${nbCoups} · ${lastSan}` : "Position initiale";
+  if (moveEl) moveEl.textContent = moveText;
+  if (compactMoveEl) compactMoveEl.textContent = moveText;
+
+  const diff = fenBoard ? _materialDiffFromFenBoard(fenBoard) : 0;
+  const turnText = turnBlancs ? "Trait aux Blancs" : "Trait aux Noirs";
+  let materialText;
+  if (diff === 0) {
+    materialText = "=";
+  } else {
+    materialText = (diff > 0 ? "Blancs" : "Noirs") + " +" + Math.abs(diff);
+  }
+  if (rightEl) {
+    rightEl.innerHTML = "";
+    if (diff !== 0) {
+      const dot = document.createElement("span");
+      dot.className = "game-status-dot " + (diff > 0 ? "white" : "black");
+      rightEl.appendChild(dot);
+    }
+    const matSpan = document.createElement("span");
+    matSpan.textContent = materialText;
+    rightEl.appendChild(matSpan);
+    const turnSpan = document.createElement("span");
+    turnSpan.textContent = turnText;
+    rightEl.appendChild(turnSpan);
+  }
+  if (compactMatEl) compactMatEl.textContent = `${materialText} · ${turnText}`;
 }
 
 function renderReview() {
@@ -1122,11 +1199,17 @@ function showGameOverBanner(gameOverInfo, campAlain, onAnalyser) {
     el.appendChild(btn);
   }
   el.style.display = "block";
+  // Classe sur <body> (issue #70 point 4) : permet au CSS du mode jeu mobile
+  // de masquer la barre d'actions/le bandeau avant-partie pendant que ce
+  // bandeau de résultat est affiché, sans dépendre d'un sélecteur d'attribut
+  // fragile sur le style inline ci-dessus.
+  document.body.classList.add("game-over-active");
 }
 
 function hideGameOverBanner() {
   const el = document.getElementById("game-over-banner");
   if (el) el.style.display = "none";
+  document.body.classList.remove("game-over-active");
 }
 
 document.addEventListener("DOMContentLoaded", () => {

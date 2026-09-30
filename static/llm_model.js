@@ -11,9 +11,18 @@
 // d'afficher un message clair dans le chat, plutôt qu'une erreur brute.
 
 function _llmModelSetActive(modelId) {
+  let activeLabel = null;
   document.querySelectorAll("#llm-model-selector .llm-model-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.model === modelId);
+    const isActive = btn.dataset.model === modelId;
+    btn.classList.toggle("active", isActive);
+    if (isActive) activeLabel = btn.dataset.label || btn.textContent;
   });
+  // Pastille de modèle du mode jeu mobile (issue #70, point 3) : simple
+  // miroir texte (premier mot du libellé, comme .llm-model-compact dans
+  // l'en-tête existant) — #llm-model-selector ci-dessus reste la seule
+  // source de vérité (déplacé tel quel dans le popup au clic, mobile_game.js).
+  const pill = document.getElementById("game-model-pill");
+  if (pill && activeLabel) pill.textContent = activeLabel.split(" ")[0];
 }
 
 function _llmModelSetBusy(busy) {

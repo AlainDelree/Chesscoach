@@ -105,6 +105,12 @@ function switchModeTab(tabKey) {
   // sharedReprendreCoup()/openExercisePhaseSheet() (exercise.js).
   const mobileExerciseBar = document.getElementById("mobile-exercise-bar");
   if (mobileExerciseBar) mobileExerciseBar.classList.toggle("show", tabKey === "exercise");
+
+  // Issue #70 : rafraîchit l'écran de partie mobile (mobile_game.js — plateau
+  // fixe/onglets Coach-Lignes-Analyse-Coups pour free/pedagogic/opening/
+  // finale) à chaque changement d'onglet de mode ; no-op si mobile_game.js
+  // n'est pas chargé (aucune dépendance dure de ce fichier vers lui).
+  if (typeof onGameUiRefresh === "function") onGameUiRefresh();
 }
 
 // ── Sélecteur de mode en menu déroulant sur mobile (issue #63) ─────────────
@@ -310,6 +316,13 @@ function updateSharedControlBar() {
     askCoachHelp.textContent = hasAskCoach ? (MODE_ASK_COACH_HELP[activeMode] || "") : "";
   }
   if (statusEl) statusEl.textContent = activeMode ? MODE_LABELS[activeMode] : "Aucun mode interactif actif.";
+
+  // Issue #70 : mêmes points de coupure que ci-dessus (switchModeTab) — cette
+  // fonction est déjà appelée par setActiveMode()/les gestionnaires de fin de
+  // partie/abandon/reprendre de chaque mode, donc par ricochet à chaque
+  // transition pertinente pour la barre d'actions/le bandeau avant-partie du
+  // mode jeu mobile.
+  if (typeof onGameUiRefresh === "function") onGameUiRefresh();
 }
 
 function sharedReprendreCoup() {

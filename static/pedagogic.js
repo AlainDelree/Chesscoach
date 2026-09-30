@@ -43,8 +43,12 @@ function placePedagogicStartButtonsForViewport() {
   if (!btns || !slot || !_pedagogicStartHomeParent) return;
   // "Aucune partie en cours" = jamais démarrée, ou terminée/abandonnée —
   // dans les deux cas, mettre en avant les boutons pour en (re)lancer une.
+  // currentModeTab === "pedagogic" (issue #70) : évite que ces boutons
+  // n'apparaissent dans la bande avant-partie d'un autre mode (mobile_game.js)
+  // quand on n'est pas en train de regarder l'onglet Partie pédagogique.
   const gameEnCours = pedagogicActive && !pedagogicGameOver;
-  const showInSlot = _pedagogicMobileQuery.matches && !gameEnCours;
+  const onPedagogicTab = typeof currentModeTab === "undefined" || currentModeTab === "pedagogic";
+  const showInSlot = _pedagogicMobileQuery.matches && onPedagogicTab && !gameEnCours;
   if (showInSlot) {
     if (btns.parentElement !== slot) slot.appendChild(btns);
   } else if (btns.parentElement !== _pedagogicStartHomeParent) {

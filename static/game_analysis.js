@@ -72,6 +72,10 @@ function analyserPartieCourante() {
   _gameAnalysisBusy = true;
   const btn = document.getElementById("game-analysis-btn");
   if (btn) btn.disabled = true;
+  // Indicateur d'attente sans compteur (issue #70 point 4) — no-op hors mode
+  // jeu mobile (classe absente, cf. <style>/mobile_game.js).
+  const progress = document.getElementById("game-analysis-progress");
+  if (progress) progress.classList.add("show");
   const status = document.getElementById("game-analysis-status");
   if (status) status.textContent = "Analyse Stockfish en cours (peut prendre une minute)...";
   const coachStatus = document.getElementById("game-analysis-coach-status");
@@ -310,6 +314,8 @@ if (typeof socket !== "undefined") {
     _gameAnalysisBusy = false;
     const btn = document.getElementById("game-analysis-btn");
     if (btn) btn.disabled = false;
+    const progress = document.getElementById("game-analysis-progress");
+    if (progress) progress.classList.remove("show");
     const status = document.getElementById("game-analysis-status");
     if (!data || !data.moves) {
       if (status) status.textContent = "L'analyse a échoué.";
@@ -332,6 +338,7 @@ if (typeof socket !== "undefined") {
     renderGameAnalysisReport();
     renderReview();
     if (status) status.textContent = `Analyse terminée (${data.moves.length} coups examinés).`;
+    if (typeof _gameTabMarkNovelty === "function") _gameTabMarkNovelty("analyse");
     demanderExplicationsCoach();
     // Analyse lancée depuis la bannière de fin de partie (issue #59) : le
     // rapport vient de grandir (liste des coups flagués), on refait défiler
@@ -344,6 +351,8 @@ if (typeof socket !== "undefined") {
     _gameAnalysisBusy = false;
     const btn = document.getElementById("game-analysis-btn");
     if (btn) btn.disabled = false;
+    const progress = document.getElementById("game-analysis-progress");
+    if (progress) progress.classList.remove("show");
     const status = document.getElementById("game-analysis-status");
     const err = data && data.error;
     const msg = (err === "stockfish_indisponible")
@@ -367,6 +376,7 @@ if (typeof socket !== "undefined") {
         : "Le coach n'a retenu aucun coup en particulier sur cette partie.";
     }
     renderGameAnalysisReport();
+    if (typeof _gameTabMarkNovelty === "function") _gameTabMarkNovelty("analyse");
   });
 
   socket.on("analyse_choix_coach_error", (data) => {
