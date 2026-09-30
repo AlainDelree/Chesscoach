@@ -25,6 +25,43 @@ let pedagogicGameOver   = false; // fin de partie détectée côté serveur (iss
 let pedagogicAbandonne  = false; // fin de partie spécifiquement par "Abandonner" (issue #52, cf. coachBuildContext)
 let pedagogicFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 
+// ── Boutons "Jouer les Blancs/Noirs" déplacés avant le plateau sur mobile
+// (issue #65 point 6) ─────────────────────────────────────────────────────
+// Sur GSM, ce bloc (#pedagogic-start-buttons, dans le panneau à onglets,
+// sous le plateau) était hors de vue tant qu'une partie n'était pas déjà
+// lancée. Même mécanique de relocalisation DOM que placeModeTabBarForViewport
+// (controls.js) — requête média propre plutôt qu'une dépendance à
+// _mobileModeBarQuery (controls.js est chargé après ce fichier, cf. l'ordre
+// des <script> dans templates/index.html).
+let _pedagogicStartHomeParent      = null;
+let _pedagogicStartHomeNextSibling = null;
+const _pedagogicMobileQuery = window.matchMedia("(max-width: 900px)");
+
+function placePedagogicStartButtonsForViewport() {
+  const btns = document.getElementById("pedagogic-start-buttons");
+  const slot = document.getElementById("mobile-pedagogic-start-slot");
+  if (!btns || !slot || !_pedagogicStartHomeParent) return;
+  // "Aucune partie en cours" = jamais démarrée, ou terminée/abandonnée —
+  // dans les deux cas, mettre en avant les boutons pour en (re)lancer une.
+  const gameEnCours = pedagogicActive && !pedagogicGameOver;
+  const showInSlot = _pedagogicMobileQuery.matches && !gameEnCours;
+  if (showInSlot) {
+    if (btns.parentElement !== slot) slot.appendChild(btns);
+  } else if (btns.parentElement !== _pedagogicStartHomeParent) {
+    _pedagogicStartHomeParent.insertBefore(btns, _pedagogicStartHomeNextSibling);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const btns = document.getElementById("pedagogic-start-buttons");
+  if (btns) {
+    _pedagogicStartHomeParent      = btns.parentElement;
+    _pedagogicStartHomeNextSibling = btns.nextSibling;
+    placePedagogicStartButtonsForViewport();
+  }
+  _pedagogicMobileQuery.addEventListener("change", () => placePedagogicStartButtonsForViewport());
+});
+
 function pedagogicCommenterChaqueCoup() {
   const cb = document.getElementById("shared-auto-comment");
   return !!(cb && cb.checked);
@@ -67,6 +104,12 @@ function abandonPedagogicGame() {
     pedagogicCampAlain,
     () => analyserPartieDepuisPgn(_pedagogicGamePgnForAnalysis())
   );
+  // Issue #65 point 5 : grise "Demander l'avis du coach" (askCoachAvailable,
+  // controls.js) dès l'abandon, et déplace "Jouer les Blancs/Noirs" en haut
+  // sur mobile (placePedagogicStartButtonsForViewport) puisqu'aucune partie
+  // n'est plus en cours.
+  if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+  if (typeof placePedagogicStartButtonsForViewport === "function") placePedagogicStartButtonsForViewport();
 }
 
 function reprendrePedagogicCoup() {
@@ -82,6 +125,11 @@ function reprendrePedagogicCoup() {
   hideGameOverBanner();
   renderPedagogicBoard();
   updatePedagogicStatus();
+  // Issue #65 point 5 : la partie redevient en cours (pedagogicGameOver
+  // retombe à false) — réactive "Demander l'avis du coach" et renvoie
+  // "Jouer les Blancs/Noirs" à leur emplacement d'origine sur mobile.
+  if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+  if (typeof placePedagogicStartButtonsForViewport === "function") placePedagogicStartButtonsForViewport();
 }
 
 function askPedagogicCoach() {
@@ -189,6 +237,9 @@ if (typeof socket !== "undefined") {
     pedagogicAbandonne = false;
     pedagogicCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     setActiveMode("pedagogic");
+    // Issue #65 point 6 : la partie démarre — les boutons "Jouer les
+    // Blancs/Noirs" reprennent leur emplacement d'origine sur mobile.
+    placePedagogicStartButtonsForViewport();
 
     _boardFlipped = (pedagogicCampAlain === "noirs");
     buildBoard();
@@ -223,6 +274,8 @@ if (typeof socket !== "undefined") {
       const statusEl = document.getElementById("pedagogic-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       showGameOverBanner(data.game_over_info, pedagogicCampAlain, () => analyserPartieDepuisPgn(_pedagogicGamePgnForAnalysis()));
+      if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+      if (typeof placePedagogicStartButtonsForViewport === "function") placePedagogicStartButtonsForViewport();
       return;
     }
     updatePedagogicStatus();

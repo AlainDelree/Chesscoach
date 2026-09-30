@@ -734,6 +734,38 @@ function stripMarkdownForChat(text) {
     .trim();
 }
 
+// Révèle un nouveau message du chat coach, que #coach-history défile en
+// interne (bureau, ou mobile si jamais le CSS venait à réintroduire un
+// overflow-y:auto — repli robuste) ou non (mobile, issue #65 point 3 : plus
+// de zone à défilement interne, cf. board.css/templates/index.html — c'est
+// la PAGE qui défile). Détection au comportement (scrollHeight >
+// clientHeight) plutôt qu'à la largeur d'écran : n'importe quel media query
+// peut faire varier ce point, ce test reste vrai dans tous les cas.
+// `toStart` reprend la logique de l'issue #53 : true pour placer le DÉBUT de
+// l'élément en haut de la zone visible (réponse du coach), false pour
+// afficher sa fin (message d'Alain, séparateur, erreur).
+function _coachScrollReveal(history, el, toStart) {
+  const internallyScrollable = history.scrollHeight > history.clientHeight + 1;
+  if (internallyScrollable) {
+    if (toStart) {
+      // getBoundingClientRect() plutôt que bubble.offsetTop : #coach-history
+      // n'a pas de position définie, donc ses enfants n'ont pas cette div
+      // comme offsetParent (le navigateur remonte jusqu'à <body>) —
+      // offsetTop serait alors faux ici. Si la réponse est courte, le
+      // navigateur borne scrollTop à la valeur max possible, ce qui revient
+      // à tout afficher sans espace vide — pas de cas particulier à gérer
+      // pour les réponses courtes.
+      const historyRect = history.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      history.scrollTop += elRect.top - historyRect.top;
+    } else {
+      history.scrollTop = history.scrollHeight;
+    }
+  } else {
+    el.scrollIntoView({ block: toStart ? "start" : "end" });
+  }
+}
+
 function _coachRenderBubble(role, text) {
   const history = document.getElementById("coach-history");
   if (!history) return;
@@ -744,23 +776,10 @@ function _coachRenderBubble(role, text) {
   bubble.className = "coach-bubble " + (isUser ? "user" : "assistant");
   bubble.textContent = text;
   history.appendChild(bubble);
-  if (isUser) {
-    // Message d'Alain : comportement inchangé, on descend tout en bas
-    // (voir son message envoyé).
-    history.scrollTop = history.scrollHeight;
-  } else {
-    // Réponse du coach : afficher le DÉBUT de la réponse en haut de la
-    // zone plutôt que sa fin (issue #53). getBoundingClientRect() plutôt
-    // que bubble.offsetTop : #coach-history n'a pas de position définie,
-    // donc ses enfants n'ont pas cette div comme offsetParent (le
-    // navigateur remonte jusqu'à <body>) — offsetTop serait alors faux ici.
-    // Si la réponse est courte, le navigateur borne scrollTop à la valeur
-    // max possible, ce qui revient à tout afficher sans espace vide — pas
-    // de cas particulier à gérer pour les réponses courtes.
-    const historyRect = history.getBoundingClientRect();
-    const bubbleRect = bubble.getBoundingClientRect();
-    history.scrollTop += bubbleRect.top - historyRect.top;
-  }
+  // Message d'Alain : comportement inchangé, on descend tout en bas (voir
+  // son message envoyé). Réponse du coach : afficher le DÉBUT de la réponse
+  // en haut de la zone plutôt que sa fin (issue #53).
+  _coachScrollReveal(history, bubble, !isUser);
 }
 
 // Même lien que le "Coût API" de l'en-tête (issue #54) — la Console est
@@ -790,7 +809,7 @@ function _coachRenderCreditInsuffisant() {
   a.textContent = "Recharger sur la Console";
   bubble.appendChild(a);
   history.appendChild(bubble);
-  history.scrollTop = history.scrollHeight;
+  _coachScrollReveal(history, bubble, false);
 }
 
 // Point de coupure d'un nouveau segment de conversation (issue #64) : appelé
@@ -809,7 +828,7 @@ function coachNewSegment(label) {
       sep.className = "coach-separator";
       sep.textContent = label || "Nouvelle partie";
       history.appendChild(sep);
-      history.scrollTop = history.scrollHeight;
+      _coachScrollReveal(history, sep, false);
     }
   }
   _coachSegmentStart     = _coachHistory.length;

@@ -94,6 +94,9 @@ function abandonOpeningGame() {
     openingCampAlain,
     () => analyserPartieDepuisPgn(_openingGamePgnForAnalysis())
   );
+  // Issue #65 point 5 : grise "Demander l'avis du coach" (askCoachAvailable,
+  // controls.js) dès l'abandon.
+  if (typeof updateSharedControlBar === "function") updateSharedControlBar();
 }
 
 function reprendreOpeningCoup() {
@@ -111,6 +114,9 @@ function reprendreOpeningCoup() {
   socket.emit("opening_undo", { in_book: openingInBookAvantCoup });
   renderOpeningBoard();
   updateOpeningStatus();
+  // Issue #65 point 5 : la partie redevient en cours — réactive "Demander
+  // l'avis du coach".
+  if (typeof updateSharedControlBar === "function") updateSharedControlBar();
 }
 
 function askOpeningCoach() {
@@ -276,6 +282,7 @@ if (typeof socket !== "undefined") {
       const statusEl = document.getElementById("opening-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       showGameOverBanner(data.game_over_info, openingCampAlain);
+      if (typeof updateSharedControlBar === "function") updateSharedControlBar();
       return;
     }
     updateOpeningStatus();

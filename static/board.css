@@ -156,7 +156,11 @@
   cursor: pointer;
   color: var(--cc-accent-strong);
 }
-.opening-suggestion-btn:hover { background: var(--cc-neutral-200); }
+/* (hover: hover) — issue #65 point 2 : évite un survol tactile "collé"
+   après un tap, cf. le bloc équivalent dans templates/index.html. */
+@media (hover: hover) and (pointer: fine) {
+  .opening-suggestion-btn:hover { background: var(--cc-neutral-200); }
+}
 
 /* ── Bannière de fin de partie (issue #31) ──────────────────────────────────
    Remplace la simple ligne de statut discrète par un bandeau nettement plus
@@ -298,9 +302,14 @@
   flex-shrink: 0;
 }
 
-/* Bulles du chat (issue #63) — remplace les couleurs codées en dur de
-   _coachRenderBubble (board.js) par ces classes, pilotées par les mêmes
-   variables de palette que le reste de l'appli. */
+/* Bulles du chat (issue #63, couleurs corrigées issue #65 point 3) —
+   remplace les couleurs codées en dur de _coachRenderBubble (board.js) par
+   ces classes, pilotées par les mêmes variables de palette que le reste de
+   l'appli. Conformément à la maquette (design/exercice.html) : le message
+   d'Alain (.user) est une pastille foncée alignée à droite, la réponse du
+   coach (.assistant) une bulle claire — l'inverse de ce qui était codé ici
+   avant l'issue #65 (constaté par Alain sur GSM : réponse du coach dans une
+   grosse bulle foncée, message d'Alain dans une bulle claire). */
 .coach-bubble {
   border-radius: 20px 20px 6px 20px;
   padding: 10px 14px;
@@ -311,15 +320,15 @@
 }
 .coach-bubble.user {
   align-self: flex-end;
-  background: var(--cc-neutral-200);
-  color: var(--cc-text);
-  border-radius: 20px 20px 20px 6px;
-}
-.coach-bubble.assistant {
-  align-self: flex-start;
   background: var(--cc-neutral-800);
   color: var(--cc-bg);
   border-radius: 20px 20px 6px 20px;
+}
+.coach-bubble.assistant {
+  align-self: flex-start;
+  background: var(--cc-neutral-200);
+  color: var(--cc-text);
+  border-radius: 20px 20px 20px 6px;
 }
 .coach-bubble.error {
   align-self: flex-start;

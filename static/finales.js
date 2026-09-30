@@ -86,6 +86,9 @@ function abandonFinaleGame() {
     finaleCampAlain,
     () => analyserPartieDepuisPgn(_finaleGamePgnForAnalysis())
   );
+  // Issue #65 point 5 : grise "Demander l'avis du coach" (askCoachAvailable,
+  // controls.js) dès l'abandon.
+  if (typeof updateSharedControlBar === "function") updateSharedControlBar();
 }
 
 function updateFinaleDemoNextButton() {
@@ -132,6 +135,9 @@ function reprendreFinaleCoup() {
   hideGameOverBanner();
   renderFinaleBoard();
   updateFinaleStatus();
+  // Issue #65 point 5 : la partie redevient en cours — réactive "Demander
+  // l'avis du coach".
+  if (typeof updateSharedControlBar === "function") updateSharedControlBar();
 }
 
 // Complément de contexte pour le chat libre du coach (issue #29,
@@ -475,6 +481,7 @@ if (typeof socket !== "undefined") {
       const statusEl = document.getElementById("finale-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       showGameOverBanner(data.game_over_info, finaleCampAlain);
+      if (typeof updateSharedControlBar === "function") updateSharedControlBar();
       return;
     }
     updateFinaleStatus();
@@ -505,6 +512,7 @@ if (typeof socket !== "undefined") {
       const statusEl = document.getElementById("finale-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       showGameOverBanner(data.game_over_info);
+      if (typeof updateSharedControlBar === "function") updateSharedControlBar();
       return;
     }
     updateFinaleStatus();
@@ -542,6 +550,7 @@ if (typeof socket !== "undefined") {
       const statusEl = document.getElementById("finale-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       showGameOverBanner(data.game_over_info, finaleCampAlain);
+      if (typeof updateSharedControlBar === "function") updateSharedControlBar();
       return;
     }
     updateFinaleStatus();

@@ -25,16 +25,38 @@
 
 let activeMode = null; // null | "free" | "pedagogic" | "opening" | "finale" | "exercise" | "editor"
 
+// askCoachAvailable (issue #65 point 5) : reflète au plus près la condition
+// de garde de la fonction askCoach correspondante (askFreeCoach and co,
+// fichiers de mode), pour que le bouton mutualisé "Demander l'avis du coach"
+// soit désactivé et grisé (bouton HTML natif, cf. la règle générale
+// "button:disabled { opacity:0.5 }") dès qu'un clic serait un no-op silencieux
+// — le cas signalé par Alain (partie terminée ou abandonnée) mais aussi tant
+// qu'aucune partie n'est démarrée. Simplification assumée : n'inclut pas les
+// courtes fenêtres "*Waiting" (coup adverse en cours de traitement, ~1s) —
+// cf. rapport de clôture, limite documentée plutôt que corrigée ici.
 const MODE_CAPS = {
-  free:      { abandon: () => abandonFreeGame(),         reprendre: null,                            askCoach: () => askFreeCoach(),       hasComment: false },
-  pedagogic: { abandon: () => abandonPedagogicGame(),     reprendre: () => reprendrePedagogicCoup(),  askCoach: () => askPedagogicCoach(),  hasComment: true  },
-  opening:   { abandon: () => abandonOpeningGame(),       reprendre: () => reprendreOpeningCoup(),    askCoach: () => askOpeningCoach(),    hasComment: true  },
-  finale:    { abandon: () => abandonFinaleGame(),        reprendre: () => reprendreFinaleCoup(),     askCoach: () => askFinaleCoach(),     hasComment: true  },
-  exercise:  { abandon: null,                             reprendre: () => reprendreExerciceCoup(),   askCoach: () => askExerciseCoach(),   hasComment: false },
+  free:      { abandon: () => abandonFreeGame(),         reprendre: null,                            askCoach: () => askFreeCoach(),       askCoachAvailable: () => freePlayActive && !!freeGame && !freeGameOver,           hasComment: false },
+  pedagogic: { abandon: () => abandonPedagogicGame(),     reprendre: () => reprendrePedagogicCoup(),  askCoach: () => askPedagogicCoach(),  askCoachAvailable: () => pedagogicActive && !!pedagogicGame && !pedagogicGameOver, hasComment: true  },
+  opening:   { abandon: () => abandonOpeningGame(),       reprendre: () => reprendreOpeningCoup(),    askCoach: () => askOpeningCoach(),    askCoachAvailable: () => openingActive && !!openingGame && !openingGameOver,       hasComment: true  },
+  finale:    { abandon: () => abandonFinaleGame(),        reprendre: () => reprendreFinaleCoup(),     askCoach: () => askFinaleCoach(),     askCoachAvailable: () => finaleActive && !!finaleGame && !finaleGameOver,          hasComment: true  },
+  exercise:  { abandon: null,                             reprendre: () => reprendreExerciceCoup(),   askCoach: () => askExerciseCoach(),   askCoachAvailable: () => !!exerciseGame,                                          hasComment: false },
   // Éditeur de position (issue #16) : pas de partie jouée, donc pas de
   // "reprendre mon coup" ni de coach à la demande — juste un moyen de
   // quitter le panneau via le bouton "Abandonner" mutualisé.
-  editor:    { abandon: () => abandonPositionEditor(),    reprendre: null,                            askCoach: null,                       hasComment: false },
+  editor:    { abandon: () => abandonPositionEditor(),    reprendre: null,                            askCoach: null,                       askCoachAvailable: null,                                                           hasComment: false },
+};
+
+// Phrase affichée sous les boutons du mode actif (issue #65 point 5) — ce
+// que fait concrètement "Demander l'avis du coach" dans ce mode, pour qu'il
+// ne reste plus un bouton "mystère" quand il est grisé. Même texte pour
+// pedagogic/opening/finale (même mécanique : un commentaire ponctuel de la
+// position, hors case "Commenter chaque coup").
+const MODE_ASK_COACH_HELP = {
+  free:      "Demande au coach un commentaire ponctuel sur la position affichée, sans jouer de coup à sa place.",
+  pedagogic: "Demande un commentaire ponctuel sur la position actuelle — surtout utile si « Commenter chaque coup » est décoché.",
+  opening:   "Demande un commentaire ponctuel sur la position actuelle — surtout utile si « Commenter chaque coup » est décoché.",
+  finale:    "Demande un commentaire ponctuel sur la position actuelle — surtout utile si « Commenter chaque coup » est décoché.",
+  exercise:  "Demande un commentaire du coach sur la position affichée, à tout moment de l'exercice (avant ou après le verdict).",
 };
 
 const MODE_LABELS = {
@@ -171,12 +193,38 @@ function updateSharedControlBar() {
   const abandonBtn   = document.getElementById("shared-abandon-btn");
   const commentRow   = document.getElementById("shared-comment-row");
   const askCoachBtn  = document.getElementById("shared-ask-coach-btn");
+  const askCoachHelp = document.getElementById("shared-ask-coach-help");
   const statusEl     = document.getElementById("shared-mode-status");
 
-  if (reprendreBtn) reprendreBtn.style.display = caps && caps.reprendre  ? "" : "none";
+  // Issue #65 point 5 : sur mobile, le mode exercice affiche déjà "Reprendre
+  // mon coup" dans la barre du bas (#mobile-exercise-bar, visible seulement
+  // sur cet onglet) — le garder aussi ici ferait doublon. Les autres modes
+  // (pédagogique/ouverture/finales) n'ont pas cette barre du bas, donc y
+  // gardent ce bouton normalement, y compris sur mobile.
+  if (reprendreBtn) {
+    const isMobile = typeof _mobileModeBarQuery !== "undefined" && _mobileModeBarQuery.matches;
+    const dupliqueBarreExercice = activeMode === "exercise" && isMobile;
+    reprendreBtn.style.display = (caps && caps.reprendre && !dupliqueBarreExercice) ? "" : "none";
+  }
   if (abandonBtn)   abandonBtn.style.display   = caps && caps.abandon   ? "" : "none";
   if (commentRow)   commentRow.style.display   = caps && caps.hasComment ? "" : "none";
-  if (askCoachBtn)  askCoachBtn.style.display  = caps && caps.askCoach  ? "" : "none";
+
+  // Issue #65 point 5 : "Demander l'avis du coach" ne fait rien quand la
+  // partie est terminée/abandonnée (askXCoach des fichiers de mode se
+  // contente alors de ne rien faire, sans le moindre retour visuel) — le
+  // bouton doit donc être grisé/désactivé dans ce cas plutôt que de rester
+  // cliquable en apparence (règle "pas de terracotta pour ce qui n'est pas
+  // cliquable" — button:disabled { opacity:0.5 } s'en charge visuellement).
+  if (askCoachBtn) {
+    const hasAskCoach = !!(caps && caps.askCoach);
+    askCoachBtn.style.display = hasAskCoach ? "" : "none";
+    askCoachBtn.disabled = hasAskCoach && caps.askCoachAvailable ? !caps.askCoachAvailable() : false;
+  }
+  if (askCoachHelp) {
+    const hasAskCoach = !!(caps && caps.askCoach);
+    askCoachHelp.style.display = hasAskCoach ? "" : "none";
+    askCoachHelp.textContent = hasAskCoach ? (MODE_ASK_COACH_HELP[activeMode] || "") : "";
+  }
   if (statusEl) statusEl.textContent = activeMode ? MODE_LABELS[activeMode] : "Aucun mode interactif actif.";
 }
 
@@ -313,7 +361,16 @@ document.addEventListener("DOMContentLoaded", () => {
     _modeTabBarHomeParent = bar.parentElement;
     _modeTabBarHomeNextSibling = bar.nextSibling;
     placeModeTabBarForViewport(_mobileModeBarQuery.matches);
-    _mobileModeBarQuery.addEventListener("change", (e) => placeModeTabBarForViewport(e.matches));
+    // updateSharedControlBar() en plus de placeModeTabBarForViewport() :
+    // issue #65 point 5, le doublon "Reprendre mon coup" en mode exercice ne
+    // dépend pas seulement du mode actif mais aussi du franchissement du
+    // seuil mobile (rotation d'écran, redimensionnement d'une fenêtre
+    // desktop) — sans cet appel, resterait affiché jusqu'au prochain
+    // changement de mode.
+    _mobileModeBarQuery.addEventListener("change", (e) => {
+      placeModeTabBarForViewport(e.matches);
+      updateSharedControlBar();
+    });
   }
 
   // Replié par défaut sur mobile seulement (issue #63) — sur grand écran,

@@ -41,6 +41,7 @@
       border-bottom: 1px solid var(--cc-divider);
     }
     header h1 { margin: 0; font-size: 1.05rem; font-family: var(--cc-font-heading); font-weight: 400; color: var(--cc-accent-strong); }
+    .header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     header .cout-api-link {
       color: var(--cc-accent);
       font-size: 0.9rem;
@@ -66,7 +67,6 @@
       padding: 6px 14px;
       cursor: pointer;
     }
-    button:hover:not(:disabled) { background: var(--cc-accent); color: var(--cc-bg); }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .btn-filled {
@@ -76,7 +76,6 @@
       font-family: var(--cc-font-heading);
       font-weight: 400;
     }
-    .btn-filled:hover:not(:disabled) { background: var(--cc-accent-hover) !important; }
 
     /* Sélecteur de modèle Claude actif (issue #61) : deux boutons contigus
        façon "segmented control", discret dans l'en-tête près du compteur de
@@ -106,7 +105,6 @@
       white-space: nowrap;
     }
     #llm-model-selector .llm-model-btn + .llm-model-btn { border-left: 2px solid var(--cc-accent); }
-    #llm-model-selector .llm-model-btn:hover:not(:disabled) { background: var(--cc-neutral-200); color: var(--cc-accent-strong); }
     #llm-model-selector .llm-model-btn.active {
       background: var(--cc-accent);
       color: var(--cc-bg);
@@ -198,6 +196,29 @@
       #usage-detail td { white-space: normal; word-break: break-word; }
     }
 
+    /* Issue #65 point 2 : sur écran tactile, un tap déclenche :hover puis le
+       laisse "collé" (pas de souris pour le faire cesser) jusqu'au tap
+       suivant ailleurs — un défilement de page ou un changement de mode
+       (qui touchent un autre bouton) le font disparaître, ce qui explique le
+       symptôme observé ("il faut changer de mode ou défiler pour revoir la
+       surbrillance"). Tous ces :hover ont plus de sélecteurs de classe que
+       les règles .active/.playing/.selected qu'ils sont censés compléter
+       (ex. button:hover:not(:disabled) a 2 pseudo-classes contre 1 seule
+       classe pour .mode-tab-btn.active ou .phase-pill.active) : ils gagnent
+       donc la cascade et masquent la surbrillance active tant que le survol
+       tactile reste collé — pas seulement pour le sélecteur Haiku/Sonnet
+       (bouton .llm-model-btn.active) mais potentiellement pour tout bouton
+       de l'appli qui combine un état .active/.playing avec un style de
+       survol générique. Regrouper ici les styles de survol des boutons
+       génériques derrière (hover: hover) — un vrai pointeur à survol, donc
+       jamais un écran tactile — règle le problème une seule fois pour tous
+       les boutons plutôt que bouton par bouton. */
+    @media (hover: hover) and (pointer: fine) {
+      button:hover:not(:disabled) { background: var(--cc-accent); color: var(--cc-bg); }
+      .btn-filled:hover:not(:disabled) { background: var(--cc-accent-hover) !important; }
+      #llm-model-selector .llm-model-btn:hover:not(:disabled) { background: var(--cc-neutral-200); color: var(--cc-accent-strong); }
+    }
+
     #app {
       display: flex;
       gap: 16px;
@@ -214,8 +235,25 @@
       flex-shrink: 0;
     }
     #board-row { display: flex; align-items: flex-start; gap: 4px; }
+    /* Issue #65 point 1 : #coord-rank (rangs) est un simple frère de
+       #board-wrapper dans #board-row, donc déjà aligné en haut avec lui —
+       seul le bord de 2px de #board-wrapper (border, pas dans le flux
+       normal des .square) le décale d'autant vers le bas ; ce margin-top le
+       compense pour que chaque numéro tombe bien au milieu de sa rangée.
+       #coord-file (colonnes), lui, n'est PAS dans #board-row : sans
+       #board-file-column ci-dessous, il serait centré sous toute la largeur
+       de #board-column (repère faux — #board-row inclut aussi #coord-rank
+       et .eval-bar-wrap avant le plateau), d'où le décalage vers la gauche
+       systématique (~40% d'une case) constaté par Alain sur GSM comme sur
+       grand écran. Regrouper #board-wrapper et #coord-file dans une même
+       colonne flex centrée (#board-file-column) les fait partager le même
+       repère horizontal : #coord-file (largeur = --bd-size, sans bordure)
+       se centre alors automatiquement avec exactement le même 2px de marge
+       de chaque côté que la bordure de #board-wrapper, donc directement
+       sous les cases. */
+    #coord-rank { display: flex; flex-direction: column; justify-content: space-around; height: var(--bd-size); margin-top: 2px; }
+    #board-file-column { display: flex; flex-direction: column; align-items: center; gap: 4px; }
     #coord-file { display: flex; justify-content: space-around; width: var(--bd-size); }
-    #coord-rank { display: flex; flex-direction: column; justify-content: space-around; height: var(--bd-size); }
     .material-row { min-height: 22px; }
     #review-controls { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
     #historique-column {
@@ -306,9 +344,38 @@
          défilement horizontal de toute la page. */
       #review-controls { flex-wrap: wrap; }
 
-      /* Chat borné pour garder plateau + chat visibles ensemble sans trop
-         défiler la page (souhait d'Alain), au lieu de calc(100vh - 60px). */
-      .coach-drawer { max-height: 55vh; }
+      /* Issue #65 point 4 : sur GSM, le titre (h1) et le sélecteur de
+         modèle/compteur de tokens/lien "Coût API" côte à côte prenaient près
+         du tiers de l'écran avant même le plateau (le h1, trop long pour
+         tenir sur une ligne, se repliait sur 2-3 lignes). Comme dans la
+         maquette (design/exercice.html) : titre masqué, le reste sur une
+         seule ligne qui occupe alors toute la largeur de l'en-tête. */
+      header h1 { display: none; }
+      header { padding: 8px 12px; }
+      .header-actions { flex-wrap: nowrap; width: 100%; justify-content: space-between; gap: 8px; }
+
+      /* Issue #65 point 3 : sur GSM, ne pas enfermer le chat dans sa propre
+         zone à défilement interne (max-height + overflow-y du bureau) —
+         comme dans la maquette, c'est la page entière qui défile. Le calage
+         "début de la réponse du coach en haut de l'écran" (_coachRenderBubble,
+         board.js) bascule alors automatiquement sur window.scrollTo/
+         scrollIntoView, cf. board.js — la détection s'appuie sur le fait que
+         ce conteneur n'est ici plus défilable en interne (scrollHeight <=
+         clientHeight). */
+      .coach-drawer  { max-height: none; overflow-y: visible; }
+      .coach-history { overflow-y: visible; }
+
+      /* Issue #65 point 6 : sur GSM, "Jouer les Blancs"/"Jouer les Noirs"
+         (mode partie pédagogique) tout en bas du panneau à onglets, sous le
+         plateau, étaient hors de vue tant qu'on ne défilait pas. Ce slot
+         (display:contents — aucune boîte propre, donc invisible et sans
+         effet tant qu'il est vide) reçoit ces deux boutons par JS
+         (placePedagogicStartButtonsForViewport, pedagogic.js) tant qu'aucune
+         partie pédagogique n'est en cours ; ils reprennent leur emplacement
+         d'origine (bas du panneau "Partie pédagogique") dès qu'une partie
+         démarre, ou sur grand écran. */
+      #mobile-pedagogic-start-slot .pedagogic-start-buttons { width: 100%; margin-bottom: 4px; }
+      #mobile-pedagogic-start-slot .pedagogic-start-buttons button { flex: 1; }
 
       /* ── Sélecteur de mode en menu déroulant (issue #63) ─────────────────
          Les 7 boutons d'onglets existants (mode-tab-btn, switchModeTab dans
@@ -493,6 +560,11 @@
     #mobile-mode-bar-slot { display: block; }
     .mobile-exercise-bar { display: none; }
     .phase-sheet-backdrop, .phase-sheet { display: none; }
+    /* display:contents (issue #65 point 6) : ni boîte propre ni effet sur la
+       mise en page tant que le slot est vide (JS ne le remplit que sur
+       mobile, cf. media query ci-dessus) — pas besoin de le conditionner à
+       la media query, un slot vide sur grand écran ne change rien. */
+    #mobile-pedagogic-start-slot { display: contents; }
   </style>
 </head>
 <body>
@@ -504,7 +576,7 @@
   <div id="mobile-mode-bar-slot"></div>
   <header>
     <h1>ChessCoach — plateau &amp; revue de partie</h1>
-    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+    <div class="header-actions">
       <!-- Sélecteur de modèle Claude actif (issue #61) : Haiku (test) /
            Sonnet (sérieux), rendu initial côté serveur à partir de
            config.LLM_MODEL (index()), interaction gérée par llm_model.js.
@@ -551,6 +623,11 @@
 
     <!-- ── Colonne plateau ─────────────────────────────────────────────── -->
     <div id="board-column">
+      <!-- Issue #65 point 6 : reçoit par JS (placePedagogicStartButtonsForViewport,
+           pedagogic.js) les boutons "Jouer les Blancs/Noirs" du mode partie
+           pédagogique sur mobile, tant qu'aucune partie n'est en cours — vide
+           et sans effet sinon (display:contents, cf. <style>). -->
+      <div id="mobile-pedagogic-start-slot"></div>
       <div id="game-over-banner" class="game-over-banner" style="display:none;"></div>
       <div class="material-row"><span id="material-top"></span></div>
       <div id="board-row">
@@ -562,18 +639,24 @@
             <div class="eval-fill-black" id="eval-black" style="height:50%;"></div>
           </div>
         </div>
-        <div id="board-wrapper">
-          <div id="board"></div>
-          <svg id="arrows-svg">
-            <defs>
-              <marker id="arrowhead" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
-                <path d="M0,0 L4,2 L0,4 Z" fill="rgba(232,69,96,0.75)"></path>
-              </marker>
-            </defs>
-          </svg>
+        <!-- #board-file-column (issue #65 point 1) : regroupe #board-wrapper
+             et #coord-file dans une même colonne centrée pour qu'ils
+             partagent le même repère horizontal — cf. commentaire détaillé
+             sur les règles CSS correspondantes ci-dessus. -->
+        <div id="board-file-column">
+          <div id="board-wrapper">
+            <div id="board"></div>
+            <svg id="arrows-svg">
+              <defs>
+                <marker id="arrowhead" markerWidth="4" markerHeight="4" refX="2" refY="2" orient="auto">
+                  <path d="M0,0 L4,2 L0,4 Z" fill="rgba(232,69,96,0.75)"></path>
+                </marker>
+              </defs>
+            </svg>
+          </div>
+          <div id="coord-file"></div>
         </div>
       </div>
-      <div id="coord-file"></div>
       <div class="material-row"><span id="material-bottom"></span></div>
 
       <div id="review-controls">
@@ -608,6 +691,11 @@
           <button id="shared-ask-coach-btn" onclick="sharedAskCoach()">Demander l'avis du coach</button>
         </div>
         <div id="shared-mode-status" style="font-size:0.78rem; color:var(--cc-text-muted); margin-top:4px;">Aucun mode interactif actif.</div>
+        <!-- Issue #65 point 5 : courte phrase expliquant ce que fait
+             "Demander l'avis du coach" dans le mode actif — remplie par
+             updateSharedControlBar() (controls.js), masquée quand le bouton
+             lui-même est masqué (mode sans coach à la demande). -->
+        <div id="shared-ask-coach-help" style="font-size:0.76rem; color:var(--cc-text-muted); margin-top:2px; font-style:italic; display:none;"></div>
       </div>
 
     </div>
@@ -695,7 +783,12 @@
         </div>
 
         <div class="mode-tab-panel" id="tab-panel-pedagogic">
-          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <!-- Issue #65 point 6 : id/classe dédiés pour que
+               placePedagogicStartButtonsForViewport() (pedagogic.js) puisse
+               déplacer ce bloc tel quel vers #mobile-pedagogic-start-slot sur
+               mobile (mêmes onclick, aucune logique dupliquée) — voir
+               commentaire sur #mobile-pedagogic-start-slot ci-dessus. -->
+          <div id="pedagogic-start-buttons" class="pedagogic-start-buttons" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
             <button onclick="startPedagogicGame('blancs')">Jouer les Blancs</button>
             <button onclick="startPedagogicGame('noirs')">Jouer les Noirs</button>
           </div>

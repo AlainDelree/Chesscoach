@@ -53,6 +53,10 @@ function abandonFreeGame() {
   const statusEl = document.getElementById("free-play-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
   showGameOverBanner({ gagnant: null, message: "Partie abandonnée." }, null, () => analyserPartieDepuisPgn(_freeGamePgnForAnalysis()));
+  // Issue #65 point 5 : "Demander l'avis du coach" doit se griser dès que la
+  // partie est terminée (askFreeCoach devient un no-op) — updateSharedControlBar()
+  // relit MODE_CAPS.free.askCoachAvailable (controls.js), qui teste freeGameOver.
+  if (typeof updateSharedControlBar === "function") updateSharedControlBar();
 }
 
 function startFreeGame() {
@@ -264,6 +268,9 @@ if (typeof socket !== "undefined") {
       const statusEl = document.getElementById("free-play-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
       showGameOverBanner(data.game_over_info, null, () => analyserPartieDepuisPgn(_freeGamePgnForAnalysis()));
+      // Issue #65 point 5 : mat/pat/nulle détecté côté serveur — même
+      // rafraîchissement du bouton "Demander l'avis du coach" qu'un abandon.
+      if (typeof updateSharedControlBar === "function") updateSharedControlBar();
       return;
     }
 
