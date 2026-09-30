@@ -76,6 +76,39 @@ manuelle ne s'accordaient pas sur lequel des deux était "le vrai tournant" :
     "le roque était préférable pour la sécurité du roi", sans jamais
     mentionner que 8...Nxf4 capture la dame sans reprise possible : le
     modèle devait deviner la réfutation réelle plutôt que la recevoir.
+
+Ajouté par l'issue #66, constat sur une partie pédagogique réelle (Haiku
+puis Sonnet, Alain Noirs) : même quand le bloc de faits donnait déjà le bon
+matériel, le bon coup et le bon meilleur coup, le modèle reconstituait de
+tête quelle pièce joue et où se trouvent les autres pièces au moment d'un
+coup cité en seule notation SAN, et se trompait (cavalier b6 au lieu de f6
+pour Nxg4, fou capturant un cavalier au lieu d'un pion pour Bxe5, cavalier
+blanc "en e5" au lieu de g4 pour 7...h5) — même famille que "dame en b5" et
+la confusion de camp déjà traitées par les issues #25/#44. Un second
+symptôme, propre à Sonnet sur la même partie : une capture présentée comme
+"gratuite" alors que la pièce prise était défendue et reprise dans la ligne
+principale de Stockfish elle-même (8...Nxg4, cavalier g4 défendu par le fou
+e2) :
+  - describe_move_mechanically / _decrit_coup_mecanique : décrit
+    mécaniquement UN coup (pièce et case de départ, case d'arrivée, capture
+    éventuelle avec type/case/défense/solde net après reprise, échec/mat, et
+    pièces adverses désormais attaquées) à partir d'une position FEN et d'un
+    coup en SAN ou UCI — jamais deviné, toujours calculé avec python-chess
+    sur la position réelle. Réutilise _solde_net_apres_capture (issue #57)
+    pour ne jamais présenter comme "gratuite" une capture reprenable ;
+  - describe_pv_mechanically : même calcul, coup par coup, sur les premiers
+    plis d'une ligne principale (PV) déjà citée dans le bloc de faits ;
+  - find_stockfish_check_targets et build_game_facts_text : chaque coup cité
+    par la vérification Stockfish ciblée (coup joué, meilleur coup, réponse
+    réellement jouée ensuite, premier pli de la ligne principale après le
+    meilleur coup) reçoit désormais cette description mécanique, plus la
+    position (pièce par pièce) juste avant le coup joué ;
+  - build_game_facts_text ajoute une rubrique séparée "pions perdus sans
+    reprise" (variation d'exactement 1 point, aucune reprise possible),
+    limitée aux 3 plus récents de la partie — ces pertes restent sous le
+    seuil de 2 points des "moments clés" (ex. 6.Nxe5 sur la partie de test de
+    l'issue #66, pion e5 laissé sans défense par 5...Nb6) et passaient donc
+    inaperçues.
 """
 
 import io
@@ -116,6 +149,192 @@ _NOM_PIECE_MAJ = {
 # Seuil de variation matérielle (en points classiques) à partir duquel un
 # coup est retenu comme "moment clé" (issue #55, point 2 de la tâche).
 _SEUIL_MOMENT_CLE = 2
+
+# Nombre maximal de pions perdus sans reprise conservés dans le bloc de
+# faits (issue #66, point 4) — les plus récents de la partie, les autres
+# étant omis plutôt que de faire grossir le bloc indéfiniment sur une
+# longue partie.
+_MAX_PIONS_PERDUS_SANS_REPRISE = 3
+
+# Genre grammatical des pièces (issue #66) : "la dame"/"la tour" sont
+# féminines, les autres masculines — nécessaire pour accorder l'adjectif de
+# couleur ("blanc"/"blanche") dans les descriptions mécaniques de coups.
+_FEMININ = {chess.QUEEN, chess.ROOK}
+
+
+def _couleur_accordee(piece_type: int, est_blanc: bool) -> str:
+    if est_blanc:
+        return "blanche" if piece_type in _FEMININ else "blanc"
+    return "noire" if piece_type in _FEMININ else "noir"
+
+
+def _nom_piece_capturee(piece_type: int) -> str:
+    """Nom (avec article) d'une pièce CAPTURÉE dans une description
+    mécanique (issue #66) — indéfini pour un pion ("un pion", générique,
+    jamais individuellement identifié), défini pour les autres pièces
+    ("le cavalier", "la dame"...), cohérent avec l'exemple demandé par
+    l'issue #66 ("capture un pion blanc" mais "capture le cavalier blanc")."""
+    if piece_type == chess.PAWN:
+        return "un pion"
+    return _NOM_PIECE.get(piece_type, "une pièce")
+
+
+def _premier_coup_vers(board: "chess.Board", case: int) -> "chess.Move | None":
+    """Premier coup légal de `board` qui atterrit sur `case`, ou None — sert
+    à identifier QUELLE pièce reprendrait une capture (issue #66), en plus
+    de _solde_net_apres_capture qui n'en calcule que le solde chiffré."""
+    return next((m for m in board.legal_moves if m.to_square == case), None)
+
+
+def _pieces_attaquees_apres(board_apres: "chess.Board", case: int) -> list[str]:
+    """Pièces adverses (hors roi, déjà signalé séparément via l'échec)
+    désormais attaquées par la pièce qui vient de jouer en `case` (issue
+    #66, point 1) — calculé mécaniquement (chess.Board.attacks), jamais
+    déduit de mémoire."""
+    piece = board_apres.piece_at(case)
+    if piece is None:
+        return []
+    cibles = []
+    for sq in board_apres.attacks(case):
+        cible = board_apres.piece_at(sq)
+        if cible is not None and cible.color != piece.color and cible.piece_type != chess.KING:
+            cibles.append(f"{_NOM_PIECE_MAJ[cible.piece_type]} {chess.square_name(sq)}")
+    return cibles
+
+
+def _decrit_coup_mecanique(board: "chess.Board", move: "chess.Move", camp_alain: str = "") -> str:
+    """Décrit mécaniquement UN coup légal de `board` (position AVANT ce
+    coup, non modifiée par cet appel) — issue #66, point 1 : quelle pièce
+    joue (type et case de départ), case d'arrivée, capture éventuelle (type
+    de pièce ou pion capturé et sa case, défendue ou non, solde net après
+    reprise éventuelle — réutilise _solde_net_apres_capture de l'issue #57
+    pour ne jamais présenter comme "gratuite" une capture reprenable),
+    échec ou mat, et quelles pièces adverses ce coup attaque désormais.
+    Jamais deviné : uniquement calculé avec python-chess sur cette position
+    réelle."""
+    est_blanc = board.turn == chess.WHITE
+    piece = board.piece_at(move.from_square)
+    origine = chess.square_name(move.from_square)
+    arrivee = chess.square_name(move.to_square)
+    label_camp = camp_label(est_blanc, camp_alain)
+    label_adv = camp_label(not est_blanc, camp_alain)
+
+    est_ep = board.is_en_passant(move)
+    piece_capturee = board.piece_at(move.to_square)
+    if piece_capturee is None and est_ep:
+        piece_capturee = chess.Piece(chess.PAWN, not est_blanc)
+
+    board_apres = board.copy()
+    board_apres.push(move)
+
+    piece_txt = f"{_NOM_PIECE[piece.piece_type]} {_couleur_accordee(piece.piece_type, est_blanc)} de {origine}"
+    promo_txt = ""
+    if move.promotion:
+        promo_txt = f" (promotion en {_NOM_PIECE_MAJ[move.promotion].lower()})"
+
+    if piece_capturee is not None:
+        variation = _VALEURS.get(piece_capturee.piece_type, 0)
+        solde_net = _solde_net_apres_capture(board_apres, move.to_square, variation)
+        nom_capturee = _nom_piece_capturee(piece_capturee.piece_type)
+        recapture_move = _premier_coup_vers(board_apres, move.to_square)
+        if recapture_move is not None and solde_net is not None:
+            piece_defenseur = board_apres.piece_at(recapture_move.from_square)
+            nom_defenseur = (
+                f"{_NOM_PIECE[piece_defenseur.piece_type]} "
+                f"{_couleur_accordee(piece_defenseur.piece_type, piece_defenseur.color)} de "
+                f"{chess.square_name(recapture_move.from_square)}"
+                if piece_defenseur else "une pièce"
+            )
+            defense_txt = (
+                f" — était défendu(e) par {nom_defenseur} : reprise possible, solde net "
+                f"{solde_net:+d} points pour {label_adv}"
+            )
+        else:
+            defense_txt = f" — {variation} point(s) gagné(s) net, aucune reprise possible pour {label_adv}"
+        segs = [
+            f"{label_camp} : {piece_txt}{promo_txt} capture {nom_capturee} de {label_adv} en "
+            f"{arrivee}{defense_txt}"
+        ]
+    else:
+        segs = [f"{label_camp} : {piece_txt} joue en {arrivee}{promo_txt}"]
+
+    if board_apres.is_checkmate():
+        segs.append("échec et mat")
+    elif board_apres.is_check():
+        segs.append("échec")
+
+    attaques = _pieces_attaquees_apres(board_apres, move.to_square)
+    if attaques:
+        segs.append(f"attaque désormais {', '.join(attaques)}")
+
+    return " ; ".join(segs)
+
+
+def _parse_coup(board: "chess.Board", coup) -> "chess.Move | None":
+    """Résout `coup` (SAN ou UCI, ou déjà un chess.Move) en un chess.Move
+    légal sur `board`, ou None si illisible ou illégal — jamais une
+    exception qui remonterait à l'appelant."""
+    if isinstance(coup, chess.Move):
+        return coup if coup in board.legal_moves else None
+    coup_str = (coup or "").strip()
+    if not coup_str:
+        return None
+    try:
+        move = board.parse_san(coup_str)
+    except ValueError:
+        try:
+            move = chess.Move.from_uci(coup_str)
+        except Exception:
+            return None
+    return move if move in board.legal_moves else None
+
+
+def describe_move_mechanically(fen_avant: str, coup, camp_alain: str = "") -> str | None:
+    """API publique (issue #66, point 1) : décrit mécaniquement UN coup
+    (SAN ou UCI) légal sur la position `fen_avant` — cf. _decrit_coup_mecanique
+    pour le détail. Retourne None si fen_avant/coup sont vides, illisibles,
+    ou si le coup n'est pas légal sur cette position (jamais une
+    supposition)."""
+    fen_avant = (fen_avant or "").strip()
+    if not fen_avant or not coup:
+        return None
+    try:
+        board = chess.Board(fen_avant)
+        move = _parse_coup(board, coup)
+        if move is None:
+            return None
+        return _decrit_coup_mecanique(board, move, camp_alain)
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] describe_move_mechanically a échoué : {e}")
+        return None
+
+
+def describe_pv_mechanically(fen_avant: str, pv_text: str, camp_alain: str = "",
+                              max_plies: int = 2) -> list[str]:
+    """API publique (issue #66, point 1) : décrit mécaniquement, coup par
+    coup, les `max_plies` premiers plis d'une ligne principale (PV) déjà
+    citée dans le bloc de faits (SAN, coups séparés par des espaces, depuis
+    la position `fen_avant`) — même calcul que describe_move_mechanically,
+    rejoué séquentiellement. Retourne une liste vide si fen_avant/pv_text
+    sont vides ou illisibles, ou dès le premier coup illégal rencontré
+    (liste tronquée, jamais une supposition sur la suite)."""
+    fen_avant = (fen_avant or "").strip()
+    pv_text = (pv_text or "").strip()
+    if not fen_avant or not pv_text:
+        return []
+    try:
+        board = chess.Board(fen_avant)
+        descriptions = []
+        for san in pv_text.split()[:max_plies]:
+            move = _parse_coup(board, san)
+            if move is None:
+                break
+            descriptions.append(_decrit_coup_mecanique(board, move, camp_alain))
+            board.push(move)
+        return descriptions
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] describe_pv_mechanically a échoué : {e}")
+        return []
 
 # Pseudo Lichess/Chess.com d'Alain (issue #56) — même constante que
 # build_patterns_erreurs.py/build_repertoire_ouvertures.py (scripts autonomes
@@ -389,9 +608,14 @@ def find_stockfish_check_targets(pgn_text: str, camp_alain: str) -> list:
     Retourne une liste d'au plus 4 éléments (2 par moment, avant
     déduplication) : {"fen_avant": str, "san": str, "numero": str,
     "coup_plein": int, "camp": "blancs"/"noirs", "moment":
-    "plus_grave"/"premier_significatif"} — fen_avant est la position AVANT
-    ce coup d'Alain, à transmettre telle quelle à Stockfish par l'appelant
-    (app.py, qui détient engine_manager).
+    "plus_grave"/"premier_significatif", "uci_reponse_suivante": str | None}
+    — fen_avant est la position AVANT ce coup d'Alain, à transmettre telle
+    quelle à Stockfish par l'appelant (app.py, qui détient engine_manager).
+    uci_reponse_suivante (issue #66, point 1) est le coup réellement joué
+    ensuite dans la partie (nécessairement celui de l'adversaire, puisque
+    ce coup-ci est celui d'Alain), en UCI, ou None si ce coup est le
+    dernier de la partie — permet à l'appelant de décrire mécaniquement
+    cette réponse réelle sans avoir à rejouer tout le PGN une seconde fois.
 
     Repli silencieux ([]) si le PGN est illisible, camp_alain n'est pas
     connu, ou aucun moment de cette gravité n'est trouvé dans la partie."""
@@ -436,7 +660,7 @@ def find_stockfish_check_targets(pgn_text: str, camp_alain: str) -> list:
             board.push(move)
             historique.append({
                 "numero": numero, "san": san, "est_blanc": est_blanc, "fen_avant": fen_avant,
-                "coup_plein": coup_plein,
+                "coup_plein": coup_plein, "idx": i, "uci": move.uci(),
             })
             w_apres, b_apres = _materiel(board)
 
@@ -469,13 +693,15 @@ def find_stockfish_check_targets(pgn_text: str, camp_alain: str) -> list:
 
     def _cibles_pour(moment_index: int, label: str) -> list:
         coups_alain = [h for h in historique[:moment_index + 1] if h["est_blanc"] == est_blanc_alain]
-        return [
-            {
+        resultats = []
+        for c in coups_alain[-2:]:
+            suivant = historique[c["idx"] + 1] if c["idx"] + 1 < len(historique) else None
+            resultats.append({
                 "fen_avant": c["fen_avant"], "san": c["san"], "numero": c["numero"],
                 "coup_plein": c["coup_plein"], "camp": camp_alain, "moment": label,
-            }
-            for c in coups_alain[-2:]
-        ]
+                "uci_reponse_suivante": suivant["uci"] if suivant else None,
+            })
+        return resultats
 
     resultats = _cibles_pour(plus_grave_index, "plus_grave")
     if premier_index is not None and premier_index != plus_grave_index:
@@ -498,6 +724,9 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
          issue #57) et, en dernier, la fin de partie (mat/pat/nulle par la
          règle/abandon) si la partie est terminée — ajoutée même sans aucune
          variation matérielle (issue #56 point 4) ;
+      2bis. pions perdus sans reprise (variation d'exactement 1 point, sous
+         le seuil des moments clés), les 3 plus récents de la partie (issue
+         #66, point 4) ;
       3. position actuelle : pièces par camp avec cases exactes, FEN,
          matériel restant, mention explicite si un camp n'a plus de dame ;
       4. si fourni, les coups flagués par une analyse mécanique Stockfish
@@ -506,7 +735,12 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
          deux coups d'Alain qui précèdent chacun des deux moments (le plus
          grave, et le premier significatif s'il est différent) désignés par
          find_stockfish_check_targets — calculée par l'appelant (app.py),
-         jamais par ce module.
+         jamais par ce module. Chaque coup cité (coup joué, meilleur coup,
+         réponse réellement jouée ensuite, premier pli après le meilleur
+         coup si la ligne principale en compte plus d'un) est décrit
+         mécaniquement (describe_move_mechanically/describe_pv_mechanically,
+         issue #66 point 1), et la position juste avant le coup joué est
+         listée pièce par pièce (issue #66 point 2).
 
     Repli silencieux ("") si le PGN est vide/illisible ou si camp_alain n'est
     pas "blancs"/"noirs" : le contexte reste utilisable sans ce bloc plutôt
@@ -527,6 +761,7 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
 
     lignes_coups = []
     moments_cles = []
+    pions_perdus_sans_reprise = []
     w_avant, b_avant = _materiel(board)
     # Coup/auteur du dernier coup effectivement joué (issue #56, point 4) —
     # mis à jour seulement une fois le coup poussé avec succès sur board,
@@ -567,6 +802,19 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
                     numero, san, est_blanc, camp_alain, piece_capturee, case_arrivee,
                     board, abs(variation),
                 ))
+            elif (piece_capturee is not None and piece_capturee.piece_type == chess.PAWN
+                    and abs(variation) == 1
+                    and _solde_net_apres_capture(board, case_arrivee, abs(variation)) is None):
+                # Pion perdu sans reprise (issue #66, point 4) : reste sous
+                # le seuil des "moments clés" (2 points) mais mérite d'être
+                # signalé séparément — sans quoi 6.Nxe5 (pion e5 laissé sans
+                # défense par 5...Nb6, cf. partie de test) reste invisible au
+                # coach. Ne garde que les _MAX_PIONS_PERDUS_SANS_REPRISE plus
+                # récents ci-dessous, pas la liste entière de la partie.
+                pions_perdus_sans_reprise.append(_decrit_moment_cle(
+                    numero, san, est_blanc, camp_alain, piece_capturee, case_arrivee,
+                    board, abs(variation),
+                ))
 
             w_avant, b_avant = w_apres, b_apres
             dernier_numero, dernier_san, dernier_est_blanc = numero, san, est_blanc
@@ -602,6 +850,14 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
         parties.append(
             f"Moments clés : aucune variation matérielle d'au moins {_SEUIL_MOMENT_CLE} "
             "points dans cette partie, qui n'est pas terminée."
+        )
+
+    if pions_perdus_sans_reprise:
+        parties.append(
+            "Pions perdus sans reprise (variation d'exactement 1 point, distincts des "
+            f"moments clés ci-dessus qui restent sous leur seuil de {_SEUIL_MOMENT_CLE} "
+            f"points ; {_MAX_PIONS_PERDUS_SANS_REPRISE} plus récents de la partie au plus) "
+            ":\n" + "\n".join(pions_perdus_sans_reprise[-_MAX_PIONS_PERDUS_SANS_REPRISE:])
         )
 
     position_lignes = [
@@ -644,45 +900,110 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
         for c in stockfish_check:
             if not isinstance(c, dict):
                 continue
-            numero  = c.get("numero")
-            san     = (c.get("san") or "").strip()
-            camp    = (c.get("camp") or "").strip()
-            moment  = (c.get("moment") or "").strip()
+            numero    = c.get("numero")
+            san       = (c.get("san") or "").strip()
+            camp      = (c.get("camp") or "").strip()
+            moment    = (c.get("moment") or "").strip()
+            fen_avant = (c.get("fen_avant") or "").strip()
             if not san or numero is None or moment not in par_moment:
                 continue
             camp_txt = camp_label(camp == "blancs", camp_alain) if camp in ("blancs", "noirs") else ""
-            segs = [f"coup joué {san}{(' (' + camp_txt + ')') if camp_txt else ''}"]
+
+            # Position juste avant ce coup, pièce par pièce (issue #66,
+            # point 2) — même présentation que la position actuelle, pour
+            # que le coach n'ait pas à deviner où se trouvent les pièces à
+            # ce moment de la partie.
+            lignes_cible = [f"Coup {numero} {san}{(' (' + camp_txt + ')') if camp_txt else ''} :"]
+            if fen_avant:
+                try:
+                    board_position_avant = chess.Board(fen_avant)
+                    lignes_cible.append(
+                        "  Position juste avant ce coup — "
+                        f"{camp_label(True, camp_alain)} : {_liste_pieces(board_position_avant, True)} ; "
+                        f"{camp_label(False, camp_alain)} : {_liste_pieces(board_position_avant, False)}"
+                    )
+                except Exception:
+                    pass
+
+            # Description mécanique de chaque coup cité (issue #66, point 1)
+            # — jamais laissée à la charge du modèle, qui reconstituait de
+            # tête quelle pièce joue et se trompait (cavalier b6 au lieu de
+            # f6, fou capturant un cavalier au lieu d'un pion...).
+            desc_joue = describe_move_mechanically(fen_avant, san, camp_alain)
+            lignes_cible.append(
+                f"  Coup joué {san} : {desc_joue}" if desc_joue else f"  coup joué {san}"
+            )
+
             meilleur_coup = (c.get("meilleur_coup") or "").strip()
             if meilleur_coup:
-                segs.append(f"meilleur coup selon Stockfish {meilleur_coup}")
+                desc_meilleur = describe_move_mechanically(fen_avant, meilleur_coup, camp_alain)
+                lignes_cible.append(
+                    f"  Meilleur coup selon Stockfish {meilleur_coup} : {desc_meilleur}"
+                    if desc_meilleur else f"  meilleur coup selon Stockfish {meilleur_coup}"
+                )
+
             perte_cp = c.get("perte_cp")
             if isinstance(perte_cp, (int, float)):
-                segs.append(f"perte estimée {perte_cp} centipawns")
+                lignes_cible.append(f"  Perte estimée {perte_cp} centipawns")
+
             ligne_principale = (c.get("ligne_principale") or "").strip()
             if ligne_principale:
-                segs.append(f"ligne principale {ligne_principale}")
-            par_moment[moment].append(f"Coup {numero} {san} : " + " ; ".join(segs))
+                lignes_cible.append(f"  Ligne principale {ligne_principale}")
+                # Premiers coups de la ligne principale (issue #66, point 1)
+                # : le premier pli est déjà décrit ci-dessus (meilleur_coup
+                # en est le premier coup) — on décrit ici en plus la réponse
+                # anticipée par cette ligne (2e pli), s'il y en a une.
+                suite_pv = describe_pv_mechanically(fen_avant, ligne_principale, camp_alain, max_plies=2)
+                tokens_pv = ligne_principale.split()
+                if len(suite_pv) >= 2 and len(tokens_pv) >= 2:
+                    lignes_cible.append(
+                        f"  Réponse anticipée par la ligne principale {tokens_pv[1]} : {suite_pv[1]}"
+                    )
+
+            # Réponse réellement jouée ensuite dans la partie (issue #66,
+            # point 1) — coup suivant réel du PGN, PAS une hypothèse.
+            uci_reponse_suivante = (c.get("uci_reponse_suivante") or "").strip()
+            if uci_reponse_suivante and fen_avant:
+                try:
+                    board_reponse = chess.Board(fen_avant)
+                    board_reponse.push(board_reponse.parse_san(san))
+                    move_reponse = chess.Move.from_uci(uci_reponse_suivante)
+                    san_reponse = board_reponse.san(move_reponse)
+                    desc_reponse = describe_move_mechanically(
+                        board_reponse.fen(), move_reponse, camp_alain,
+                    )
+                    if desc_reponse:
+                        lignes_cible.append(
+                            f"  Réponse jouée ensuite dans la partie {san_reponse} : {desc_reponse}"
+                        )
+                except Exception as e:
+                    logger.warning(f"[GAME_FACTS] Description de la réponse suivante échouée : {e}")
+
+            par_moment[moment].append("\n".join(lignes_cible))
 
         blocs = []
         if par_moment["plus_grave"]:
             blocs.append(
                 "Moment le plus grave (perte nette la plus importante subie par Alain, ou mat "
                 "subi, dans toute cette partie — LE tournant si Alain demande lequel) :\n"
-                + "\n".join(par_moment["plus_grave"])
+                + "\n\n".join(par_moment["plus_grave"])
             )
         if par_moment["premier_significatif"]:
             blocs.append(
                 "Premier moment significatif (le premier de la partie où Alain a perdu au "
                 f"moins {_SEUIL_MOMENT_CLE} points nets ou s'est fait mater — distinct du "
                 "moment le plus grave ci-dessus, pas un second tournant) :\n"
-                + "\n".join(par_moment["premier_significatif"])
+                + "\n\n".join(par_moment["premier_significatif"])
             )
         if blocs:
             parties.append(
                 "Vérification Stockfish ciblée (issue #62), calcul court et borné, sur les "
                 "deux derniers coups d'Alain qui précèdent chacun des moments ci-dessous — "
                 "absente si Stockfish était indisponible ou trop lent au moment du calcul, "
-                "sans que cela soit une erreur :\n\n" + "\n\n".join(blocs)
+                "sans que cela soit une erreur. Chaque coup cité (coup joué, meilleur coup, "
+                "réponse jouée ensuite, réponse anticipée par la ligne principale) est suivi "
+                "d'une description mécanique calculée (issue #66) : ne complète ni ne "
+                "corrige jamais cette description, elle est déjà exacte :\n\n" + "\n\n".join(blocs)
             )
 
     return "\n\n".join(parties)
