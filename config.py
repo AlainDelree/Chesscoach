@@ -22,6 +22,14 @@ ERREURS_DETECTEES_PATH = DATA_DIR / "erreurs_detectees.json"
 # gitignoré comme le reste des données ; pas de rotation à ce stade.
 COACH_CALLS_LOG_PATH = DATA_DIR / "logs" / "coach_calls.log"
 
+# Log des échecs du bouton "Analyser cette partie" (issue #77 point 1) :
+# heure, mode d'origine (pedagogic/opening/finale/free/revue) et message
+# d'erreur, une ligne par échec — pour diagnostiquer un futur échec ponctuel
+# (position de départ non standard, moteur indisponible, etc.) sans avoir à
+# le reproduire en direct. Sous DATA_DIR, donc gitignoré comme le reste des
+# données ; pas de rotation à ce stade (même pattern que COACH_CALLS_LOG_PATH).
+ANALYSE_ERREURS_LOG_PATH = DATA_DIR / "logs" / "analyse_erreurs.log"
+
 # Compteur cumulé de tokens consommés par l'API Claude (issue #54) — pas de
 # notion de prix ni de table de coût par modèle, seulement les tokens bruts
 # renvoyés par chaque réponse de l'API, cumulés par modèle depuis une date de

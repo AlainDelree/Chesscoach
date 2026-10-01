@@ -104,6 +104,18 @@ function switchModeTab(tabKey) {
   // — ne touche que l'affichage, pas le cache utilisé par la réutilisation
   // automatique de l'issue #59).
   if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
+  // Issue #77 point 3 : le bandeau de fin de partie (résultat + "Analyser
+  // cette partie") n'a de sens que dans le mode de la partie qui vient de se
+  // terminer (activeMode, posé au démarrage par setActiveMode — pas remis à
+  // null par une fin de partie normale, cf. pedagogic.js/opening.js/
+  // finales.js/free_play.js) — jusqu'ici rien ne le masquait en changeant
+  // d'onglet, il restait visible en Bibliothèque/Revue PGN/Exercice/Éditeur
+  // et dans les autres modes de partie (rapport signalé par Alain).
+  if (activeMode && tabKey !== activeMode
+      && document.body.classList.contains("game-over-active")
+      && typeof hideGameOverBanner === "function") {
+    hideGameOverBanner();
+  }
   MODE_TABS.forEach((key) => {
     const btn   = document.getElementById(`tab-btn-${key}`);
     const panel = document.getElementById(`tab-panel-${key}`);
@@ -262,25 +274,6 @@ document.addEventListener("DOMContentLoaded", () => {
   _updateMobileHeaderHeight();
 });
 _mobileModeBarQuery.addEventListener("change", _updateMobileHeaderHeight);
-
-// ── Menu "..." de la rangée de navigation (issue #69 point 2) ──────────────
-// "Extraire le FEN" reste un seul bouton (extraireFen(), inchangé) — seul son
-// déclencheur diffère selon la largeur d'écran (cf. .review-fen-btn-full/
-// .review-more-menu, templates/index.html). Fermeture au clic ailleurs, même
-// principe que le menu déroulant du sélecteur de mode ci-dessus.
-function toggleReviewMoreMenu() {
-  const dd = document.getElementById("review-more-dropdown");
-  if (dd) dd.classList.toggle("open");
-}
-function closeReviewMoreMenu() {
-  const dd = document.getElementById("review-more-dropdown");
-  if (dd) dd.classList.remove("open");
-}
-document.addEventListener("click", (e) => {
-  const menu = document.getElementById("review-more-menu");
-  if (!menu) return;
-  if (!menu.contains(e.target)) closeReviewMoreMenu();
-});
 
 // ── Bascule propre entre modes (issue #23) ──────────────────────────────────
 // Si un mode interactif est déjà actif (activeMode) et qu'un autre onglet
@@ -452,6 +445,21 @@ function getActiveModeMoves() {
     color: m.color === "w" ? "white" : "black",
     qualite: "bon",
   }));
+}
+
+// Position de départ réelle de la partie en cours du mode actif (issue #77) —
+// chess.js pose automatiquement l'en-tête "FEN" dès qu'une instance est
+// construite avec new Chess(fen) sur une position non standard (pedagogic.js/
+// opening.js/finales.js, quand Stockfish a déjà joué un ou plusieurs coups
+// avant qu'Alain ne commence, ou pour une position-type de finale) — null si
+// la partie démarre de la position standard. Consommé par
+// analyserPartieCourante() (game_analysis.js) pour que l'analyse "en place"
+// (issue #72) rejoue les coups depuis la bonne position côté serveur.
+function getActiveModeStartFen() {
+  const game = _activeModeGameInstance();
+  if (!game || typeof game.header !== "function") return null;
+  const h = game.header();
+  return (h && h.FEN) ? h.FEN : null;
 }
 
 // ── Extraire le FEN de la position affichée (issue #21) ────────────────────

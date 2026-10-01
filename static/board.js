@@ -381,6 +381,16 @@ let _isAnalysed    = false; // true une fois l'analyse Stockfish terminée
 // sans redemander le PGN complet à chaque appel au coach.
 let reviewWhite    = "";
 let reviewBlack    = "";
+// Position de départ réelle de la partie chargée en revue (issue #77) — FEN
+// de l'en-tête PGN [FEN "..."] si la partie ne commence pas de la position
+// standard (chess.js la fixe automatiquement dans header() dès que load_pgn()
+// rencontre ces en-têtes), sinon null. Transmis à lancerAnalyse() pour que le
+// serveur rejoue les coups depuis la BONNE position (voir _analyse_full_game,
+// app.py) — sans ça, une partie à position de départ personnalisée (ex. mode
+// pédagogique avec Alain aux Noirs, ou travail de finales) fait toujours
+// échouer l'analyse ("Coup illégal") puisque le premier coup rejoué ne
+// correspond pas au trait de la position de départ standard.
+let reviewStartFen = null;
 
 // Bloqués pendant la lecture d'une ligne du coach (issue #68,
 // gameCoachLinesPreviewActive — game_coach_lines.js) : naviguer dans la
@@ -640,10 +650,11 @@ function parsePgn(pgn, onLoaded) {
     const white  = chess.header().White || "Blancs";
     const black  = chess.header().Black || "Noirs";
     const result = chess.header().Result || "*";
-    const history = chess.history({ verbose: true });
-    const chess2  = new Chess();
-    const fens    = [chess2.fen().split(" ")[0]];
-    const moves   = [];
+    const history  = chess.history({ verbose: true });
+    const startFen = chess.header().FEN || null;
+    const chess2   = startFen ? new Chess(startFen) : new Chess();
+    const fens     = [chess2.fen().split(" ")[0]];
+    const moves    = [];
 
     // Lire d'éventuelles annotations de qualité déjà présentes dans les
     // commentaires PGN (convention héritée d'AlChess : { ✓ / ?! / ? / ?? }).
@@ -666,11 +677,12 @@ function parsePgn(pgn, onLoaded) {
       fens.push(chess2.fen().split(" ")[0]);
     }
 
-    reviewFens  = fens;
-    reviewMoves = moves;
-    reviewIdx   = fens.length - 1;
-    reviewWhite = white;
-    reviewBlack = black;
+    reviewFens     = fens;
+    reviewMoves    = moves;
+    reviewIdx      = fens.length - 1;
+    reviewWhite    = white;
+    reviewBlack    = black;
+    reviewStartFen = startFen;
     _isAnalysed = moves.some(m => m.qualite && m.qualite !== "bon");
 
     buildBoard();
@@ -686,8 +698,21 @@ function parsePgn(pgn, onLoaded) {
 
 // ── Analyse Stockfish (déclenche une passe côté serveur) ────────────────────
 
-function lancerAnalyse(movesUci, seqMoves) {
-  socket.emit("analyser_pgn", { moves: movesUci, seq_moves: seqMoves || 3 });
+// startFen (issue #77) : position de départ réelle de la partie si elle
+// diffère de la position standard (reviewStartFen pour la revue de
+// bibliothèque, ou celle du mode de partie en cours pour l'analyse "en
+// place", cf. getActiveModeStartFen() dans controls.js) — null sinon, le
+// serveur retombe alors sur la position standard (comportement inchangé).
+// mode (diagnostic uniquement, issue #77 point 1) : nom du mode d'où part la
+// demande ("revue", "pedagogic", "opening", "finale", "free"), journalisé
+// côté serveur en cas d'échec de l'analyse (data/logs/analyse_erreurs.log).
+function lancerAnalyse(movesUci, seqMoves, startFen, mode) {
+  socket.emit("analyser_pgn", {
+    moves: movesUci,
+    seq_moves: seqMoves || 3,
+    start_fen: startFen || null,
+    mode: mode || "revue",
+  });
 }
 
 // ── Chat avec le coach (conversation multi-tours, cf. llm_coach.py) ─────────
@@ -1223,12 +1248,37 @@ function showGameOverBanner(gameOverInfo, campAlain, onAnalyser) {
   // bandeau de résultat est affiché, sans dépendre d'un sélecteur d'attribut
   // fragile sur le style inline ci-dessus.
   document.body.classList.add("game-over-active");
+
+  _showMobileGameOverBar(gameOverInfo.message, categorie, onAnalyser);
+}
+
+// Bande compacte de fin de partie sur mobile (issue #77 point 2) : ce grand
+// bandeau (ci-dessus) reste utilisé tel quel sur grand écran, mais masqué sur
+// mobile (cf. <style>, templates/index.html) au profit de #mobile-game-over-bar
+// — une seule ligne, mêmes classes de couleur par résultat
+// (.game-over-banner--victoire/defaite/nulle/mat, board.css, réutilisées telles
+// quelles). "Analyser cette partie" seulement si l'appelant fournit onAnalyser
+// (mêmes conditions que le grand bandeau, inchangé) ; "Nouvelle partie"
+// (mobileNewGameFromBanner, mobile_game.js) y est toujours proposé.
+function _showMobileGameOverBar(message, categorie, onAnalyser) {
+  const bar = document.getElementById("mobile-game-over-bar");
+  if (!bar) return;
+  bar.className = "mobile-game-over-bar game-over-banner--" + categorie + " show";
+  const textEl = document.getElementById("mobile-game-over-text");
+  if (textEl) textEl.textContent = message;
+  const analyseBtn = document.getElementById("mobile-game-over-analyse-btn");
+  if (analyseBtn) {
+    analyseBtn.style.display = (typeof onAnalyser === "function") ? "" : "none";
+    analyseBtn.onclick = (typeof onAnalyser === "function") ? onAnalyser : null;
+  }
 }
 
 function hideGameOverBanner() {
   const el = document.getElementById("game-over-banner");
   if (el) el.style.display = "none";
   document.body.classList.remove("game-over-active");
+  const bar = document.getElementById("mobile-game-over-bar");
+  if (bar) bar.classList.remove("show");
 }
 
 document.addEventListener("DOMContentLoaded", () => {
