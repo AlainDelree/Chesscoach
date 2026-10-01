@@ -393,6 +393,60 @@ def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
     return result
 
 
+def _calculer_menace_adverse(fen_avant: str, depth: int = DEPTH_EXERCICE_TEMPS_REEL) -> dict:
+    """Menace adverse (issue #80, point 1) sur la position `fen_avant`, via
+    EngineManager.get_threats (coup nul) — fonction mode-agnostique,
+    réutilisable par n'importe quel mode appelant (pas seulement le mode
+    "Exercice") : ne connaît ni camp_alain ni le contexte d'un exercice, se
+    contente de relayer tel quel ce que get_threats calcule sur cette
+    position, à la même profondeur que le verdict du mode Exercice
+    (DEPTH_EXERCICE_TEMPS_REEL). Retourne {"disponible": False, "raison":
+    "moteur_indisponible"} si aucun moteur n'est démarré ou si fen_avant est
+    illisible — jamais une exception."""
+    if not engine_manager:
+        return {"disponible": False, "raison": "moteur_indisponible"}
+    try:
+        board = chess.Board(fen_avant)
+    except Exception:
+        return {"disponible": False, "raison": "moteur_indisponible"}
+    return engine_manager.get_threats(board, depth=depth, n=2)
+
+
+def _calculer_idees_coup(fen_avant: str, coup, camp_alain: str, menace_data: dict | None) -> list:
+    """Idées détectées pour un coup cité (issue #80, point 5) : décomposition
+    classique de l'évaluation Stockfish avant/après ce coup
+    (EngineManager.get_eval_breakdown), combinée aux idées mécaniques
+    (game_facts.build_idees_coup) — fonction mode-agnostique comme
+    _calculer_menace_adverse ci-dessus. Retourne [] sans erreur visible si
+    Stockfish est indisponible, si le coup est illisible/illégal sur
+    fen_avant, ou si la décomposition n'a pas pu être obtenue (version de
+    Stockfish récente, 16.1 et ultérieures, qui ne reconnaît plus la
+    commande "eval" — cf. tâche 5 : "ne rien transmettre, sans erreur
+    visible")."""
+    if not engine_manager or not coup:
+        return []
+    try:
+        board = chess.Board(fen_avant)
+        try:
+            move = board.parse_san(coup) if isinstance(coup, str) else coup
+        except ValueError:
+            move = chess.Move.from_uci(coup)
+        if move not in board.legal_moves:
+            return []
+        board_apres = board.copy()
+        board_apres.push(move)
+    except Exception:
+        return []
+
+    breakdown_avant = engine_manager.get_eval_breakdown(fen_avant)
+    breakdown_apres = engine_manager.get_eval_breakdown(board_apres.fen())
+    if not breakdown_avant or not breakdown_apres:
+        return []
+    return game_facts.build_idees_coup(
+        fen_avant, coup, camp_alain, breakdown_avant, breakdown_apres, menace_data,
+    )
+
+
 def _log_analyse_erreur(mode: str, message: str) -> None:
     """Trace un échec du bouton "Analyser cette partie" (issue #77 point 1)
     dans ANALYSE_ERREURS_LOG_PATH : heure, mode d'origine, message — pour
@@ -920,6 +974,11 @@ def on_coach_comment_on_demand(data):
         "pv_coup_propose", "pv_meilleur_coup",
         "pv_coup_propose_detail", "pv_meilleur_coup_detail",
         "reprise_recente",
+        # Listes de pièces, menace adverse et idées détectées (issue #80) —
+        # même raison que les champs ci-dessus : sans eux, ce bouton perdrait
+        # ce contexte dès qu'il est sollicité pendant un exercice actif.
+        "pieces_depart_texte", "pieces_actuelles_texte", "menace_adverse_texte",
+        "idees_coup_propose_texte", "idees_coup_reel_texte", "idees_meilleur_coup_texte",
     ):
         valeur = (data or {}).get(champ)
         if valeur:
@@ -1495,6 +1554,42 @@ def on_exercise_answer(data):
         _current_exercise.get("meilleur_coup_san") or _current_exercise.get("meilleur_coup_uci", "")
     )
 
+    # Menace adverse (issue #80, point 1) : si Alain avait passé son tour,
+    # les meilleurs coups de l'adversaire et la perte d'avantage qu'ils
+    # provoqueraient — calculée une seule fois sur fen_avant, indépendamment
+    # du coup proposé (ne dépend que de la position de départ). Non calculée
+    # (disponible=False) si cette position est en échec ou si Stockfish est
+    # indisponible ; describe_menace_adverse le dit alors explicitement dans
+    # le texte transmis, plutôt que d'omettre silencieusement ce bloc.
+    menace_adverse_data = _calculer_menace_adverse(fen_avant)
+    menace_adverse_texte = game_facts.describe_menace_adverse(menace_adverse_data, fen_avant, camp_alain)
+
+    # Listes de pièces de la position de DÉPART et de la position ACTUELLE,
+    # case par case (issue #80, point 3) — jointes au contexte pour que le
+    # coach n'ait plus jamais à relire un FEN de mémoire (cf.
+    # llm_coach._EXERCISE_SYSTEM_ADDENDUM pour l'interdiction de le citer).
+    pieces_depart_texte = game_facts.describe_pieces_lists(fen_avant, camp_alain)
+    pieces_actuelles_texte = game_facts.describe_pieces_lists(fen_apres, camp_alain)
+
+    # Idées détectées pour chacun des trois coups comparés (issue #80, point
+    # 5) : décomposition classique de l'évaluation Stockfish avant/après
+    # chaque coup, combinée aux idées mécaniques (parade de la menace
+    # ci-dessus, échec/mat, développement/centralisation) — [] sans erreur
+    # visible si Stockfish est indisponible ou si cette décomposition
+    # n'existe pas sur la version installée (cf. _calculer_idees_coup).
+    idees_coup_propose_texte = game_facts.format_idees_coup(
+        "le coup proposé",
+        _calculer_idees_coup(fen_avant, coup_propose_san, camp_alain, menace_adverse_data),
+    )
+    idees_coup_reel_texte = game_facts.format_idees_coup(
+        "le coup réellement joué à l'époque",
+        _calculer_idees_coup(fen_avant, coup_reel, camp_alain, menace_adverse_data),
+    )
+    idees_meilleur_coup_texte = game_facts.format_idees_coup(
+        "le meilleur coup selon Stockfish",
+        _calculer_idees_coup(fen_avant, meilleur_coup, camp_alain, menace_adverse_data),
+    )
+
     # Description mécanique de chacun des trois coups comparés, tous les
     # trois calculés depuis fen_avant (issue #73, en remplacement de l'ancien
     # _move_details_fr qui ne donnait que le type de pièce jouée/capturée,
@@ -1549,12 +1644,19 @@ def on_exercise_answer(data):
         "fen_depart_exercice": fen_avant,
         "fen": fen_apres,
         "camp_alain": camp_alain,
+        # Listes de pièces et menace adverse (issue #80, points 1 et 3).
+        "pieces_depart_texte": pieces_depart_texte,
+        "pieces_actuelles_texte": pieces_actuelles_texte,
+        "menace_adverse_texte": menace_adverse_texte,
         "coup_propose": coup_propose_san,
         "coup_propose_description_mecanique": coup_propose_description_mecanique,
+        "idees_coup_propose_texte": idees_coup_propose_texte,
         "coup_reel": coup_reel,
         "coup_reel_description_mecanique": coup_reel_description_mecanique,
+        "idees_coup_reel_texte": idees_coup_reel_texte,
         "meilleur_coup": meilleur_coup,
         "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
+        "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
         # Ligne (PV) réellement calculée par Stockfish (issue #20), en SAN,
         # pour le coup proposé et pour le meilleur coup — cf.
         # llm_coach._build_context_text : sert au coach à justifier une
@@ -1626,6 +1728,17 @@ def on_exercise_answer(data):
             "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
             "eval_alain_cp": eval_alain_cp,
             "eval_alain_mat": eval_alain_mat,
+            # Listes de pièces, menace adverse et idées détectées (issue
+            # #80) : mêmes raisons que les champs ci-dessus — sans eux, une
+            # question de suivi posée dans le chat libre perdrait ce
+            # contexte dès le tour suivant (cf. exerciseChatContextExtra,
+            # static/exercise.js).
+            "pieces_depart_texte": pieces_depart_texte,
+            "pieces_actuelles_texte": pieces_actuelles_texte,
+            "menace_adverse_texte": menace_adverse_texte,
+            "idees_coup_propose_texte": idees_coup_propose_texte,
+            "idees_coup_reel_texte": idees_coup_reel_texte,
+            "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
         })
 
 
@@ -1742,6 +1855,25 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         fen_avant, meilleur_coup, camp_alain
     )
 
+    # Listes de pièces, menace adverse et idées détectées (issue #80) — même
+    # calcul que la source "mes erreurs" ci-dessus (_calculer_menace_adverse/
+    # _calculer_idees_coup sont mode-agnostiques) : sans ce bloc, le
+    # garde-fou "ne t'appuie que sur les listes fournies, ne cite jamais un
+    # FEN" de _EXERCISE_SYSTEM_ADDENDUM (commun aux deux sources) priverait
+    # le coach de toute donnée sur les pièces pour cette source.
+    menace_adverse_data = _calculer_menace_adverse(fen_avant)
+    menace_adverse_texte = game_facts.describe_menace_adverse(menace_adverse_data, fen_avant, camp_alain)
+    pieces_depart_texte = game_facts.describe_pieces_lists(fen_avant, camp_alain)
+    pieces_actuelles_texte = game_facts.describe_pieces_lists(fen_apres, camp_alain)
+    idees_coup_propose_texte = game_facts.format_idees_coup(
+        "le coup proposé",
+        _calculer_idees_coup(fen_avant, coup_propose_san, camp_alain, menace_adverse_data),
+    )
+    idees_meilleur_coup_texte = game_facts.format_idees_coup(
+        "la solution du problème",
+        _calculer_idees_coup(fen_avant, meilleur_coup, camp_alain, menace_adverse_data),
+    )
+
     pv_coup_propose_detail = game_facts.format_pv_with_balance(
         "Détail coup par coup de la suite réellement calculée après le coup proposé",
         game_facts.describe_pv_with_balance(fen_avant, pv_coup_propose, camp_alain, max_plies=4),
@@ -1768,10 +1900,15 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         "fen_depart_exercice": fen_avant,
         "fen": fen_apres,
         "camp_alain": camp_alain,
+        "pieces_depart_texte": pieces_depart_texte,
+        "pieces_actuelles_texte": pieces_actuelles_texte,
+        "menace_adverse_texte": menace_adverse_texte,
         "coup_propose": coup_propose_san,
         "coup_propose_description_mecanique": coup_propose_description_mecanique,
+        "idees_coup_propose_texte": idees_coup_propose_texte,
         "meilleur_coup": meilleur_coup,
         "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
+        "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
         "pv_coup_propose": pv_coup_propose,
         "pv_meilleur_coup": pv_meilleur_coup,
         "pv_coup_propose_detail": pv_coup_propose_detail,
@@ -1835,6 +1972,11 @@ def _on_exercise_answer_lichess(uci: str) -> None:
             "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
             "eval_alain_cp": eval_alain_cp,
             "eval_alain_mat": eval_alain_mat,
+            "pieces_depart_texte": pieces_depart_texte,
+            "pieces_actuelles_texte": pieces_actuelles_texte,
+            "menace_adverse_texte": menace_adverse_texte,
+            "idees_coup_propose_texte": idees_coup_propose_texte,
+            "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
             # Pour la ligne d'état et le libellé "Solution du problème" dans
             # le tableau "Lignes du coach" côté client (issue #78,
             # exercise.js) — categorie_libelle/rating déjà connus du client

@@ -422,6 +422,62 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     "sur le matériel gagné ou perdu."
     "\n\n"
     + _ANTI_INVENTION_ADDENDUM
+    + "\n\n"
+    + (
+        "Listes de pièces et interdiction de citer un FEN (issue #80, point "
+        "3) : le contexte ci-dessous donne, pour la position de DÉPART et "
+        "pour la position ACTUELLE de cet exercice, la liste des pièces de "
+        "chaque camp case par case (\"Liste des pièces...\") — c'est ta "
+        "SEULE source, en plus des descriptions mécaniques des coups cités, "
+        "pour savoir où se trouve une pièce. Ne recopie et ne cite JAMAIS un "
+        "FEN dans ta réponse, même partiellement, même pour l'expliquer à "
+        "Alain : un FEN recopié de mémoire a déjà produit une erreur de "
+        "transcription qui a fait disparaître un pion du contexte. Ne "
+        "déclare JAMAIS qu'un FEN fourni est invalide, mal formé ou contient "
+        "un caractère incorrect : si une information te semble incohérente, "
+        "dis que tu n'es pas sûr plutôt que de mettre en cause le FEN "
+        "lui-même. N'affirme JAMAIS qu'une pièce en protège, défend ou "
+        "soutient une autre si ce n'est pas écrit explicitement dans une "
+        "description mécanique ou un bloc de menace fourni ci-dessous — ne "
+        "déduis jamais toi-même une défense à partir du seul type de pièce "
+        "ou de sa case (constat réel : un pion blanc dit à tort \"protégé\" "
+        "par un pion qui ne le défendait pas)."
+        "\n\n"
+        "Menace adverse (issue #80, points 1 et 4) : quand le contexte "
+        "fournit un bloc \"Menace(s) de l'adversaire...\" où au moins une "
+        "menace est marquée \"SIGNIFICATIVE\", OU quand la description "
+        "mécanique d'un coup cité indique qu'une pièce amie \"n'est plus "
+        "attaqué(e)\" par rapport à avant ce coup : commence ton explication "
+        "par cette menace (ce que l'adversaire aurait joué, et ce que cela "
+        "aurait provoqué), puis explique pourquoi le coup la pare, et "
+        "seulement ensuite les points secondaires. Ne présente JAMAIS un "
+        "coup qui pare une telle menace comme un plan offensif ou une "
+        "expansion volontaire (constat réel : h4, qui pare uniquement "
+        "...gxh3+ et ...Qxh3+, présenté à tort comme préparant \"une "
+        "expansion à l'aile roi\") — un coup défensif ou préventif reste "
+        "défensif, même s'il a aussi des mérites secondaires. S'il n'y a "
+        "aucune menace marquée \"SIGNIFICATIVE\" et qu'aucune pièce ne perd "
+        "son attaque, n'invente AUCUNE menace."
+        "\n\n"
+        "Idées détectées pour ce coup (issue #80, points 5 et 6) : quand le "
+        "contexte fournit un bloc \"Idées détectées pour...\" à la suite "
+        "d'un coup cité, commence par énoncer ces idées dans l'ordre fourni "
+        "(c'est déjà l'ordre d'importance), puis précise pour chacune "
+        "comment elle se réalise concrètement (quelles pièces, quelles "
+        "cases, quelles menaces) à partir des descriptions mécaniques et "
+        "des listes de pièces fournies ailleurs dans ce contexte. N'ajoute "
+        "JAMAIS une idée absente de cette liste, et ne cite JAMAIS de valeur "
+        "chiffrée pour les justifier (ces idées sont de simples indications "
+        "tirées d'une décomposition interne de l'évaluation du moteur, pas "
+        "des vérités absolues — présente-les comme telles, par exemple \"le "
+        "moteur indique que...\", jamais comme un fait établi). Si ce bloc "
+        "est absent pour un coup cité (décomposition indisponible pour "
+        "cette version de Stockfish, ou aucune idée détectée), ne l'invente "
+        "jamais : dis que ce coup se justifie surtout par la ligne calculée "
+        "ou par la tactique. Quand le coup proposé diffère du meilleur coup "
+        "et que les deux ont leurs propres idées détectées, compare-les "
+        "explicitement."
+    )
 )
 
 # Complément au-dessus, spécifique à la source « Problèmes Lichess » du mode
@@ -905,6 +961,32 @@ def _build_context_text(context) -> str:
     # départ, et le coach a déjà nié la présence d'une pièce (un fou) pourtant
     # bien présente avant le coup, faute de pouvoir comparer les deux.
     fen_depart_exercice = (context.get("fen_depart_exercice") or "").strip()
+    # Listes des pièces de chaque camp, case par case, pour la position de
+    # DÉPART et la position ACTUELLE de l'exercice (issue #80, point 3,
+    # calculées par game_facts.describe_pieces_lists) — même présentation
+    # que le bloc de faits des modes de partie (build_game_facts_text), pour
+    # que le coach n'ait plus jamais à relire un FEN de mémoire : un FEN
+    # recopié à la main a déjà produit une erreur de transcription qui a
+    # fait disparaître un pion du contexte (cf. _EXERCISE_PIECES_ET_MENACE_
+    # ADDENDUM pour l'interdiction de citer un FEN qui accompagne ces listes).
+    pieces_depart_texte = (context.get("pieces_depart_texte") or "").strip()
+    pieces_actuelles_texte = (context.get("pieces_actuelles_texte") or "").strip()
+    # Menace adverse (issue #80, point 1), déjà calculée et décrite
+    # mécaniquement par app.py/game_facts (EngineManager.get_threats +
+    # describe_menace_adverse) : si Alain passait son tour, les meilleurs
+    # coups de l'adversaire, leur évaluation et la perte d'avantage qu'ils
+    # provoqueraient — pour que le coach explique un coup défensif comme tel
+    # (voir _EXERCISE_PIECES_ET_MENACE_ADDENDUM), au lieu de l'inventer comme
+    # un plan offensif (constat réel : h4, qui pare ...gxh3+/...Qxh3+,
+    # présenté à tort comme "une expansion à l'aile roi").
+    menace_adverse_texte = (context.get("menace_adverse_texte") or "").strip()
+    # Idées détectées pour chaque coup cité (issue #80, points 5 et 6),
+    # déjà traduites en français et limitées à 3 par coup (game_facts.
+    # build_idees_coup/format_idees_coup) — jamais de valeur chiffrée dans
+    # ce texte (voir _EXERCISE_PIECES_ET_MENACE_ADDENDUM).
+    idees_coup_propose_texte = (context.get("idees_coup_propose_texte") or "").strip()
+    idees_coup_reel_texte = (context.get("idees_coup_reel_texte") or "").strip()
+    idees_meilleur_coup_texte = (context.get("idees_meilleur_coup_texte") or "").strip()
     # Mode "Exercice" (issue #7) : comparaison coup proposé / coup réellement
     # joué / meilleur coup Stockfish, plutôt qu'un chat libre sur une partie.
     coup_propose  = (context.get("coup_propose") or "").strip()
@@ -1096,6 +1178,18 @@ def _build_context_text(context) -> str:
             "conclus jamais qu'une pièce \"n'existe pas\" ou \"n'est pas là\" "
             "sans comparer explicitement les deux positions."
         )
+    if pieces_depart_texte:
+        lines.append(
+            "Liste des pièces de la position de DÉPART de cet exercice, case "
+            f"par case (issue #80) :\n{pieces_depart_texte}"
+        )
+    if pieces_actuelles_texte:
+        lines.append(
+            "Liste des pièces de la position ACTUELLE, case par case (issue "
+            f"#80) :\n{pieces_actuelles_texte}"
+        )
+    if menace_adverse_texte:
+        lines.append(menace_adverse_texte)
     if move:
         lines.append(f"Coup actuel : {move}")
     if coup_propose:
@@ -1120,6 +1214,8 @@ def _build_context_text(context) -> str:
             )
         if pv_coup_propose_detail:
             lines.append(pv_coup_propose_detail)
+        if idees_coup_propose_texte:
+            lines.append(idees_coup_propose_texte)
     if coup_reel:
         lines.append(
             "Coup que le joueur avait réellement joué À L'ÉPOQUE, dans la "
@@ -1131,6 +1227,8 @@ def _build_context_text(context) -> str:
                 f"Description mécanique calculée de ce coup (depuis la "
                 f"position de départ) : {coup_reel_description_mecanique}"
             )
+        if idees_coup_reel_texte:
+            lines.append(idees_coup_reel_texte)
     if meilleur_coup:
         detail = f"Meilleur coup selon Stockfish : {meilleur_coup}."
         lines.append(detail)
@@ -1147,6 +1245,8 @@ def _build_context_text(context) -> str:
             )
         if pv_meilleur_coup_detail:
             lines.append(pv_meilleur_coup_detail)
+        if idees_meilleur_coup_texte:
+            lines.append(idees_meilleur_coup_texte)
     if rating_probleme is not None:
         lines.append(
             f"Ce problème est tiré de la base ouverte de problèmes Lichess "

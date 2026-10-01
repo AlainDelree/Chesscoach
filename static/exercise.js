@@ -86,6 +86,17 @@ let exerciseEvalAlainMat   = null;
 // reproposé : signale au coach que le coup/verdict discutés plus tôt dans le
 // chat libre concernent une tentative annulée, pas l'état réel actuel.
 let exerciseJustReprised   = false;
+// Listes de pièces (position de départ/actuelle), menace adverse et idées
+// détectées pour chacun des trois coups comparés (issue #80), reçues du
+// serveur avec le verdict — mêmes raisons que les champs ci-dessus : sans
+// eux, une question de suivi posée dans le chat libre perdrait ce contexte
+// dès le tour suivant.
+let exercisePiecesDepartTexte    = null;
+let exercisePiecesActuellesTexte = null;
+let exerciseMenaceAdverseTexte   = null;
+let exerciseIdeesCoupProposeTexte  = null;
+let exerciseIdeesCoupReelTexte     = null;
+let exerciseIdeesMeilleurCoupTexte = null;
 
 // Phase (catégorie) du dernier exercice tiré, quel que soit le sélecteur de
 // phase courant (issue #76, "Exercice suivant") — distincte de
@@ -602,6 +613,14 @@ function exerciseChatContextExtra() {
     eval_alain_cp: exerciseEvalAlainCp,
     eval_alain_mat: exerciseEvalAlainMat,
     reprise_recente: exerciseJustReprised,
+    // Listes de pièces, menace adverse et idées détectées (issue #80) —
+    // même raison que les champs ci-dessus.
+    pieces_depart_texte: exercisePiecesDepartTexte || "",
+    pieces_actuelles_texte: exercisePiecesActuellesTexte || "",
+    menace_adverse_texte: exerciseMenaceAdverseTexte || "",
+    idees_coup_propose_texte: exerciseIdeesCoupProposeTexte || "",
+    idees_coup_reel_texte: exerciseIdeesCoupReelTexte || "",
+    idees_meilleur_coup_texte: exerciseIdeesMeilleurCoupTexte || "",
     // Source "Problèmes Lichess" (issue #78) : absents (undefined, ignorés
     // par llm_coach._build_context_text) pour la source "mes erreurs".
     source_lichess: exerciseCurrentSource === "lichess",
@@ -895,6 +914,15 @@ if (typeof socket !== "undefined") {
     exerciseMeilleurCoupDescriptionMecanique = (data && data.meilleur_coup_description_mecanique) || null;
     exerciseEvalAlainCp  = (data && typeof data.eval_alain_cp === "number") ? data.eval_alain_cp : null;
     exerciseEvalAlainMat = (data && typeof data.eval_alain_mat === "number") ? data.eval_alain_mat : null;
+    // Listes de pièces, menace adverse et idées détectées (issue #80) —
+    // mémorisées pour être réinjectées dans une question de suivi du chat
+    // libre, comme les champs ci-dessus.
+    exercisePiecesDepartTexte    = (data && data.pieces_depart_texte) || null;
+    exercisePiecesActuellesTexte = (data && data.pieces_actuelles_texte) || null;
+    exerciseMenaceAdverseTexte   = (data && data.menace_adverse_texte) || null;
+    exerciseIdeesCoupProposeTexte  = (data && data.idees_coup_propose_texte) || null;
+    exerciseIdeesCoupReelTexte     = (data && data.idees_coup_reel_texte) || null;
+    exerciseIdeesMeilleurCoupTexte = (data && data.idees_meilleur_coup_texte) || null;
     // Niveau de la catégorie mis à jour après ce résultat (issue #78) — la
     // ligne d'état "Problème <note> · ton niveau en <catégorie> <niveau>"
     // reflète donc le niveau APRÈS ce résultat, pas celui du tirage.

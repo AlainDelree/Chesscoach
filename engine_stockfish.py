@@ -21,6 +21,8 @@ import chess
 import chess.engine
 import threading
 import logging
+import re
+import subprocess
 import time
 import collections
 import concurrent.futures
@@ -770,6 +772,144 @@ class EngineManager:
             self._ensure_engine_eval, self._set_engine_eval, self._creer_moteur_eval,
             _action, repli,
         )
+
+    def get_threats(self, board: chess.Board, depth: int = DEPTH_EXERCICE_TEMPS_REEL,
+                     n: int = 2) -> dict:
+        """Menace(s) de l'adversaire si le camp au trait de `board` pouvait
+        passer son tour (issue #80, point 1) : joue un coup nul
+        (chess.Move.null(), qui se contente de rendre le trait à
+        l'adversaire sans toucher aux pièces — technique standard d'analyse,
+        pas un coup réel) puis demande au moteur d'évaluation ses n meilleurs
+        coups sur cette position (get_multipv, déjà générique et réutilisé
+        tel quel). Fonction générique, réutilisable par n'importe quel mode
+        appelant (pas seulement le mode "Exercice") : ne fait aucune
+        hypothèse sur camp_alain ni sur le contexte d'un exercice.
+
+        Un coup nul est illégal quand le camp au trait est en échec (il doit
+        d'abord parer l'échec) : dans ce cas comme en cas de panne moteur
+        (cf. evaluate()["indisponible"]), rien n'est calculé — c'est à
+        l'appelant de le dire explicitement dans le contexte transmis au
+        coach plutôt que d'improviser une menace inexistante.
+
+        Retourne {"disponible": bool, "raison": str | None} et, si
+        disponible, {"baseline": {"cp": int|None, "mate": int|None}
+        (évaluation réelle de `board`, du point de vue du camp au trait),
+        "menaces": [{"move": str (UCI), "cp": int|None, "mate": int|None,
+        "perte_cp": int|None}, ...]} (au plus n éléments, triés par perte
+        décroissante comme déjà rendus par get_multipv — pas de recalcul
+        ici). "cp"/"mate" de chaque menace sont déjà convertis du point de
+        vue du camp au trait ORIGINAL (celui pour qui on calcule la menace,
+        pas l'adversaire qui jouerait réellement ce coup nul) ; "perte_cp"
+        est l'écart (toujours >= 0) entre "baseline" et l'évaluation
+        résultant de cette menace, sur le même barème mat/cp unique
+        (MATE_SCORE_SENTINEL) que evaluate_move — c'est cet écart qui mesure
+        la perte d'avantage que provoquerait la menace par rapport à
+        l'évaluation après le meilleur coup du camp au trait (qui est
+        justement ce que "baseline" représente : l'évaluation de la
+        position, meilleure réponse déjà supposée par le moteur)."""
+        if board.is_check():
+            return {"disponible": False, "raison": "en_echec"}
+
+        eval_avant = self.evaluate(board, depth=depth)
+        if eval_avant.get("indisponible"):
+            return {"disponible": False, "raison": "moteur_indisponible"}
+        val_avant = _score_valeur_joueur(eval_avant)
+
+        board_nul = board.copy()
+        board_nul.push(chess.Move.null())
+        menaces_brutes = self.get_multipv(board_nul, n=n, depth=depth)
+        if not menaces_brutes:
+            return {"disponible": False, "raison": "moteur_indisponible"}
+
+        menaces = []
+        for m in menaces_brutes:
+            val_adv = _score_valeur_joueur({"cp": m.get("cp"), "mate": m.get("mate")})
+            val_alain = -val_adv if val_adv is not None else None
+            perte_cp = (
+                max(0, val_avant - val_alain)
+                if val_avant is not None and val_alain is not None else None
+            )
+            menaces.append({
+                "move": m["move"],
+                "cp": -m["cp"] if m.get("cp") is not None else None,
+                "mate": -m["mate"] if m.get("mate") is not None else None,
+                "perte_cp": perte_cp,
+            })
+
+        return {
+            "disponible": True,
+            "raison": None,
+            "baseline": {"cp": eval_avant.get("cp"), "mate": eval_avant.get("mate")},
+            "menaces": menaces,
+        }
+
+    # ── Décomposition classique de l'évaluation (issue #80, point 5) ───────
+    # Commande UCI non standard, spécifique à Stockfish ("eval", retirée à
+    # partir de la 16.1 au profit d'un évaluateur NNUE pur sans décomposition
+    # par terme) : imprime directement sur stdout, hors protocole "info"/
+    # "bestmove" que python-chess sait interpréter — chess.engine ne l'expose
+    # donc pas. Lancée dans un sous-processus séparé des instances
+    # permanentes gérées par cette classe (_engine_play/_engine_eval/...),
+    # sans passer par _appel_protege (pas de reprise automatique à faire :
+    # chaque appel démarre et arrête son propre process, rien à relancer).
+    _TERMES_EVAL_CLASSIQUE = (
+        "Material", "Imbalance", "Pawns", "Knights", "Bishops", "Rooks",
+        "Queens", "Mobility", "King safety", "Threats", "Passed", "Space",
+        "Winnable",
+    )
+    TIMEOUT_EVAL_BREAKDOWN_SECONDES = 5.0
+
+    def get_eval_breakdown(self, fen: str, timeout: float = TIMEOUT_EVAL_BREAKDOWN_SECONDES) -> dict | None:
+        """Décomposition classique de l'évaluation Stockfish ("Contributing
+        terms for the classical eval") pour la position `fen` (issue #80,
+        point 5) — un tableau par terme (Material, Imbalance, Pawns,
+        Knights, Bishops, Rooks, Queens, Mobility, King safety, Threats,
+        Passed, Space, Winnable), valeurs de milieu de partie (MG) et de
+        finale (EG) de la colonne "Total" de la table (déjà le solde
+        Blancs-Noirs pour ce terme, du point de vue des Blancs), en pions.
+
+        Retourne {"Material": {"mg": float, "eg": float}, ...} (un sous-
+        ensemble de _TERMES_EVAL_CLASSIQUE, selon ce que la sortie contient
+        réellement), ou None si la décomposition n'a pas pu être obtenue —
+        binaire introuvable, délai dépassé, ou sortie sans cette table
+        (Stockfish 16.1 et versions ultérieures, ou tout autre moteur UCI
+        qui ne reconnaît pas "eval") : jamais une exception remontée à
+        l'appelant, cette décomposition reste une indication annexe, jamais
+        indispensable au fonctionnement du coach."""
+        fen = (fen or "").strip()
+        if not fen:
+            return None
+        try:
+            proc = subprocess.run(
+                [self._engine_path],
+                input=f"position fen {fen}\neval\nquit\n",
+                capture_output=True, text=True, timeout=timeout,
+            )
+            sortie = proc.stdout or ""
+        except Exception as e:
+            logger.warning(f"[ENGINE] get_eval_breakdown indisponible : {e}")
+            return None
+
+        if "Contributing terms for the classical eval" not in sortie:
+            return None
+
+        resultat = {}
+        for ligne in sortie.splitlines():
+            ligne = ligne.strip()
+            if not ligne.startswith("|"):
+                continue
+            cellules = [c.strip() for c in ligne.split("|") if c.strip()]
+            if len(cellules) < 4:
+                continue
+            terme = cellules[0]
+            if terme not in self._TERMES_EVAL_CLASSIQUE:
+                continue
+            nombres = re.findall(r"-?\d+\.\d+", cellules[-1])
+            if len(nombres) != 2:
+                continue
+            resultat[terme] = {"mg": float(nombres[0]), "eg": float(nombres[1])}
+
+        return resultat or None
 
     def _pv_to_san(self, board: chess.Board, moves: list[chess.Move]) -> str:
         """Convertit une suite de coups (objets chess.Move, calculés par le

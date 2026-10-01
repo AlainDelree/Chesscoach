@@ -109,6 +109,36 @@ e2) :
     seuil de 2 points des "moments clés" (ex. 6.Nxe5 sur la partie de test de
     l'issue #66, pion e5 laissé sans défense par 5...Nb6) et passaient donc
     inaperçues.
+
+Ajouté par l'issue #80, constat en usage réel sur le mode "Exercice" (coup
+h4, position avec un pion h3 attaqué par un pion g4 et par la dame adverse) :
+le coach avait présenté un coup purement défensif comme une "expansion
+offensive", puis — relancé sur la menace réelle — avait affirmé qu'un pion
+protégeait à tort une case qu'il n'attaque pas, recopié le FEN de mémoire
+avec une erreur de transcription, et fini par déclarer ce FEN invalide :
+  - describe_pieces_lists : liste des pièces de chaque camp par case pour une
+    position FEN isolée (même présentation que _liste_pieces/
+    build_game_facts_text), réutilisable par le mode "Exercice" qui ne rejoue
+    aucun PGN ;
+  - _decrit_coup_mecanique enrichie (_attaques_defenses_arrivee/
+    _resultat_echange_case/_pieces_amies_changement_attaque) : attaques et
+    défenses de la case d'arrivée d'un coup, résultat de l'échange si la
+    pièce qui vient de jouer est attaquée, et pièces amies qui gagnent ou
+    perdent l'attaque adverse ailleurs sur l'échiquier — propagée
+    automatiquement à describe_move_mechanically/describe_pv_mechanically/
+    describe_pv_with_balance, donc à tout coup cité (proposé, réel, meilleur,
+    PV) ;
+  - describe_menace_adverse : formate en texte de contexte le résultat de
+    EngineManager.get_threats (menace adverse via coup nul, calculée côté
+    app.py) — menace(s) décrite(s) mécaniquement, évaluation résultante et
+    perte d'avantage par rapport au meilleur coup, avec un seuil de gravité
+    réglable (SEUIL_MENACE_SIGNIFICATIVE_CP) ;
+  - build_idees_coup/format_idees_coup : idées détectées pour un coup cité,
+    combinant les variations de la décomposition classique de l'évaluation
+    Stockfish (EngineManager.get_eval_breakdown, calculée côté app.py) au-delà
+    de SEUIL_IDEE_PION, traduites en français, et des idées mécaniques
+    (parade d'une menace, échec/mat, développement/centralisation) — liste
+    courte (3 au plus), triée par importance, jamais de valeur chiffrée.
 """
 
 import io
@@ -174,6 +204,21 @@ _FEMININ = {chess.QUEEN, chess.ROOK}
 # au-delà de ce seuil, jamais en nombre.
 SEUIL_GRANDE_VALEUR_CP = 1000
 
+# Seuil de perte d'avantage (centipawns), au-delà duquel une menace adverse
+# calculée par EngineManager.get_threats (issue #80, point 1) est jugée
+# "significative" — réglable en ce seul endroit, réutilisé à la fois pour la
+# présentation (describe_menace_adverse ci-dessous) et pour la règle de
+# prompt qui impose d'expliquer la menace avant le reste (llm_coach.py,
+# _EXERCISE_SYSTEM_ADDENDUM). Valeur choisie dans l'ordre de grandeur demandé
+# par l'issue ("perte d'avantage supérieure à environ 100 centipions").
+SEUIL_MENACE_SIGNIFICATIVE_CP = 100
+
+# Seuil de variation (en pions) d'un terme de la décomposition classique de
+# l'évaluation Stockfish ("Contributing terms for the classical eval", issue
+# #80, point 5) au-delà duquel cette variation est retenue comme une "idée"
+# du coup — réglable en ce seul endroit (cf. diff_idees_evaluation).
+SEUIL_IDEE_PION = 0.3
+
 
 def _couleur_accordee(piece_type: int, est_blanc: bool) -> str:
     if est_blanc:
@@ -213,6 +258,131 @@ def _pieces_attaquees_apres(board_apres: "chess.Board", case: int) -> list[str]:
         if cible is not None and cible.color != piece.color and cible.piece_type != chess.KING:
             cibles.append(f"{_NOM_PIECE_MAJ[cible.piece_type]} {chess.square_name(sq)}")
     return cibles
+
+
+def _resultat_echange_case(board_apres: "chess.Board", case: int, camp_alain: str = "") -> str:
+    """Si la pièce qui vient d'arriver en `case` (sur board_apres) est
+    attaquée par l'adversaire, décrit le résultat si cet adversaire la
+    capture (attaquant le moins cher d'abord — hypothèse d'échange standard
+    —, puis reprise mécanique éventuelle comme _solde_net_apres_capture) —
+    issue #80, point 2, exemple attendu : "Qxh4 gxh4 perdrait la dame".
+    Chaîne vide si la pièce n'est pas attaquée, ou si la capture
+    géométriquement possible s'avère en fait illégale (clouage...)."""
+    piece = board_apres.piece_at(case)
+    if piece is None:
+        return ""
+    attaquants = sorted(
+        board_apres.attackers(not piece.color, case),
+        key=lambda sq: _VALEURS.get(board_apres.piece_at(sq).piece_type, 0),
+    )
+    if not attaquants:
+        return ""
+    coup_capture = chess.Move(attaquants[0], case)
+    if coup_capture not in board_apres.legal_moves:
+        return ""
+    board_echange = board_apres.copy()
+    try:
+        san_capture = board_echange.san(coup_capture)
+    except Exception:
+        san_capture = coup_capture.uci()
+    board_echange.push(coup_capture)
+    variation = _VALEURS.get(piece.piece_type, 0)
+    solde_net = _solde_net_apres_capture(board_echange, case, variation)
+    recapture_move = _premier_coup_vers(board_echange, case)
+    nom_piece_perdue = _nom_piece_capturee(piece.piece_type)
+    if recapture_move is None or solde_net is None:
+        return f" : {san_capture} perdrait {nom_piece_perdue}, aucune reprise possible"
+    try:
+        san_recapture = board_echange.san(recapture_move)
+    except Exception:
+        san_recapture = recapture_move.uci()
+    if solde_net < 0:
+        return f" : {san_capture} {san_recapture} perdrait {nom_piece_perdue}"
+    label = camp_label(piece.color, camp_alain)
+    return f" : {san_capture} {san_recapture}, échange favorable ou équilibré pour {label}"
+
+
+def _attaques_defenses_arrivee(board: "chess.Board", board_apres: "chess.Board",
+                                move: "chess.Move", camp_alain: str = "") -> str:
+    """Décrit, pour la pièce qui vient de jouer, les attaques/défenses de sa
+    case d'arrivée et les anciens attaquants de sa case de DÉPART qui ne
+    l'atteignent plus depuis qu'elle a bougé (issue #80, point 2 — exemple
+    attendu : "le pion blanc de h3... passe en h4 ; en h4, il n'est plus
+    attaqué par le pion g4 ; la dame h5 l'attaque encore mais il est défendu
+    par le pion g3"). Chaîne vide si rien à signaler."""
+    piece = board_apres.piece_at(move.to_square)
+    if piece is None:
+        return ""
+    segs = []
+    attaquants_apres = set(board_apres.attackers(not piece.color, move.to_square))
+    if attaquants_apres:
+        noms_attaquants = ", ".join(
+            f"{_NOM_PIECE_MAJ[board_apres.piece_at(sq).piece_type]} {chess.square_name(sq)}"
+            for sq in sorted(attaquants_apres)
+        )
+        defenseurs = sorted(board_apres.attackers(piece.color, move.to_square))
+        if defenseurs:
+            noms_defenseurs = ", ".join(
+                f"{_NOM_PIECE_MAJ[board_apres.piece_at(sq).piece_type]} {chess.square_name(sq)}"
+                for sq in defenseurs
+            )
+            echange = _resultat_echange_case(board_apres, move.to_square, camp_alain)
+            segs.append(
+                f"en {chess.square_name(move.to_square)}, attaqué(e) par {noms_attaquants}, "
+                f"défendu(e) par {noms_defenseurs}{echange}"
+            )
+        else:
+            segs.append(
+                f"en {chess.square_name(move.to_square)}, attaqué(e) par {noms_attaquants}, SANS défense"
+            )
+    attaquants_avant = set(board.attackers(not piece.color, move.from_square))
+    disparus = sorted(
+        sq for sq in attaquants_avant
+        if sq not in attaquants_apres and board_apres.piece_at(sq) is not None
+    )
+    if disparus:
+        noms_disparus = ", ".join(
+            f"{_NOM_PIECE_MAJ[board_apres.piece_at(sq).piece_type]} {chess.square_name(sq)}"
+            for sq in disparus
+        )
+        segs.append(f"n'est plus attaqué(e) par {noms_disparus}")
+    return " ; ".join(segs)
+
+
+def _pieces_amies_changement_attaque(board: "chess.Board", board_apres: "chess.Board",
+                                      move: "chess.Move", max_items: int = 3) -> str:
+    """Pièces amies (même camp que la pièce qui vient de jouer), hors sa
+    case de départ/arrivée (déjà couvertes par _attaques_defenses_arrivee),
+    dont le statut d'attaque par l'adversaire change entre AVANT et APRÈS ce
+    coup — attaque découverte ou pièce mise à l'abri (issue #80, point 2).
+    Limité à `max_items` par liste pour ne pas gonfler le contexte."""
+    piece = board.piece_at(move.from_square)
+    if piece is None:
+        return ""
+    exclues = {move.from_square, move.to_square}
+    plus_protegees, plus_attaquees = [], []
+    for sq in chess.SQUARES:
+        if sq in exclues:
+            continue
+        p_avant = board.piece_at(sq)
+        if p_avant is None or p_avant.color != piece.color:
+            continue
+        p_apres = board_apres.piece_at(sq)
+        if p_apres is None or p_apres.piece_type != p_avant.piece_type or p_apres.color != p_avant.color:
+            continue
+        etait = board.is_attacked_by(not piece.color, sq)
+        est = board_apres.is_attacked_by(not piece.color, sq)
+        nom = f"{_NOM_PIECE_MAJ[p_avant.piece_type]} {chess.square_name(sq)}"
+        if etait and not est:
+            plus_protegees.append(nom)
+        elif not etait and est:
+            plus_attaquees.append(nom)
+    segs = []
+    if plus_protegees:
+        segs.append(f"n'est/ne sont plus attaqué(e)(s) : {', '.join(plus_protegees[:max_items])}")
+    if plus_attaquees:
+        segs.append(f"désormais attaqué(e)(s) (découvert) : {', '.join(plus_attaquees[:max_items])}")
+    return " ; ".join(segs)
 
 
 def _decrit_coup_mecanique(board: "chess.Board", move: "chess.Move", camp_alain: str = "") -> str:
@@ -279,6 +449,18 @@ def _decrit_coup_mecanique(board: "chess.Board", move: "chess.Move", camp_alain:
     attaques = _pieces_attaquees_apres(board_apres, move.to_square)
     if attaques:
         segs.append(f"attaque désormais {', '.join(attaques)}")
+
+    # Attaques/défenses de la case d'arrivée et pièces amies dont le statut
+    # d'attaque change ailleurs (issue #80, point 2) — omis sur un mat (plus
+    # aucun coup adverse possible ensuite, l'échange hypothétique n'a plus de
+    # sens) pour ne pas gonfler inutilement une description déjà conclusive.
+    if not board_apres.is_checkmate():
+        arrivee_txt = _attaques_defenses_arrivee(board, board_apres, move, camp_alain)
+        if arrivee_txt:
+            segs.append(arrivee_txt)
+        amies_txt = _pieces_amies_changement_attaque(board, board_apres, move)
+        if amies_txt:
+            segs.append(amies_txt)
 
     return " ; ".join(segs)
 
@@ -461,6 +643,74 @@ def describe_perte_cp_clause(delta_cp) -> str:
     return f", perte de {delta_cp:g} centipawns par rapport au meilleur coup"
 
 
+def describe_menace_adverse(menace_data: dict, fen_avant: str, camp_alain: str = "") -> str:
+    """API publique (issue #80, point 1) : formate en texte de contexte le
+    résultat de EngineManager.get_threats — jusqu'à deux menaces adverses
+    (coup nul), chacune décrite mécaniquement (describe_move_mechanically,
+    réutilisé tel quel) avec son évaluation résultante et sa perte
+    d'avantage par rapport à l'évaluation de la position (baseline, déjà
+    calculée en supposant le meilleur coup du camp au trait).
+
+    menace_data : dict retourné par EngineManager.get_threats(board).
+    fen_avant : position AVANT tout coup (celle transmise à get_threats).
+
+    Retourne toujours une phrase explicite, même quand aucune menace n'a pu
+    être calculée (position en échec, Stockfish indisponible) — pour que le
+    contexte le dise clairement plutôt que de laisser le coach deviner
+    pourquoi ce bloc est absent (cf. tâche 1 : "Ne rien calculer... et le
+    dire dans le contexte")."""
+    if not menace_data or not menace_data.get("disponible"):
+        raison = (menace_data or {}).get("raison")
+        if raison == "en_echec":
+            return (
+                "Menace adverse (issue #80) : non calculée, le camp au trait est "
+                "en échec dans cette position (un coup nul n'est pas possible "
+                "pour détecter une menace adverse ici)."
+            )
+        return (
+            "Menace adverse (issue #80) : non calculée, Stockfish indisponible "
+            "pour ce calcul."
+        )
+
+    menaces = menace_data.get("menaces") or []
+    if not menaces:
+        return "Menace adverse (issue #80) : aucune menace calculable trouvée pour l'adversaire."
+
+    try:
+        board_nul = chess.Board(fen_avant)
+        board_nul.push(chess.Move.null())
+        fen_nul = board_nul.fen()
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] describe_menace_adverse a échoué : {e}")
+        return ""
+
+    lignes = [
+        "Menace(s) de l'adversaire si Alain passait son tour (coup nul, "
+        "calculé uniquement pour détecter la menace réelle — PAS un coup "
+        "qu'Alain va réellement jouer), chiffres INTERNES (jamais à citer "
+        "tels quels à Alain) :"
+    ]
+    for i, m in enumerate(menaces, start=1):
+        desc = describe_move_mechanically(fen_nul, m["move"], camp_alain) or (
+            f"{m['move']} (description indisponible)"
+        )
+        perte = m.get("perte_cp")
+        if m.get("mate") is not None:
+            eval_txt = f"mat en {abs(m['mate'])} coup(s) contre Alain"
+        elif m.get("cp") is not None:
+            eval_txt = f"{m['cp']:+d} centipawns pour Alain"
+        else:
+            eval_txt = "indéterminée"
+        if perte is None:
+            gravite = "gravité indéterminée"
+        elif perte > SEUIL_MENACE_SIGNIFICATIVE_CP:
+            gravite = f"perte de {perte} centipawns par rapport au meilleur coup d'Alain — menace SIGNIFICATIVE"
+        else:
+            gravite = f"perte de {perte} centipawns par rapport au meilleur coup d'Alain — menace mineure"
+        lignes.append(f"  Menace n°{i} : {desc} ; évaluation résultante : {eval_txt} ({gravite}).")
+    return "\n".join(lignes)
+
+
 # Pseudo Lichess/Chess.com d'Alain (issue #56) — même constante que
 # build_patterns_erreurs.py/build_repertoire_ouvertures.py (scripts autonomes
 # non importés par app.py, donc dupliquée ici plutôt que factorisée entre des
@@ -515,6 +765,35 @@ def _liste_pieces(board: "chess.Board", est_blanc: bool) -> str:
         for square in sorted(board.pieces(pt, est_blanc)):
             pieces.append(f"{_NOM_PIECE_MAJ[pt]} {chess.square_name(square)}")
     return ", ".join(pieces) if pieces else "aucune pièce restante"
+
+
+def describe_pieces_lists(fen: str, camp_alain: str = "") -> str:
+    """API publique (issue #80, point 3) : liste des pièces de chaque camp
+    par case, pour une position FEN isolée — même présentation que le bloc
+    de faits des modes de partie (_liste_pieces/build_game_facts_text), mais
+    réutilisable pour le mode "Exercice" qui ne rejoue pas de PGN. Jointe au
+    contexte pour la position de DÉPART et la position ACTUELLE de
+    l'exercice, afin que le coach n'ait plus jamais à lire les pièces depuis
+    un FEN recopié de mémoire (cause du bug source : un FEN mal recopié,
+    "p1" devenu "g1", avait fait disparaître un pion du contexte).
+
+    Retourne "Blancs (...) : ...\\nNoirs (...) : ..." (camp_label applique
+    déjà "(Alain)"/"(adversaire)" si camp_alain est connu), ou "" si fen est
+    vide ou illisible."""
+    fen = (fen or "").strip()
+    if not fen:
+        return ""
+    try:
+        board = chess.Board(fen)
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] describe_pieces_lists a échoué : {e}")
+        return ""
+    label_blancs = camp_label(True, camp_alain)
+    label_noirs = camp_label(False, camp_alain)
+    return (
+        f"{label_blancs} : {_liste_pieces(board, True)}\n"
+        f"{label_noirs} : {_liste_pieces(board, False)}"
+    )
 
 
 def _numero_coup(board: "chess.Board", est_blanc: bool) -> str:
@@ -1140,3 +1419,225 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
             )
 
     return "\n\n".join(parties)
+
+
+# ── Idées du coup (issue #80, point 5) ──────────────────────────────────────
+# Traduction en français des termes de la décomposition classique de
+# l'évaluation Stockfish (EngineManager.get_eval_breakdown) en "idées"
+# compréhensibles par le coach — seuls les termes explicitement demandés par
+# l'issue sont mappés ; "Queens" et "Winnable" restent volontairement hors de
+# cette table (aucune traduction demandée), leur variation éventuelle n'est
+# donc jamais retenue comme idée. "Material"/"Imbalance" partagent le même
+# libellé ("matériel") : leurs variations sont sommées plutôt que remontées
+# comme deux idées distinctes sur un même coup.
+_IDEE_LIBELLES = {
+    "King safety": "sécurité du roi",
+    "Threats": "menaces sur les pièces adverses",
+    "Mobility": "activité des pièces",
+    "Passed": "pion passé",
+    "Space": "espace",
+    "Pawns": "structure de pions",
+    "Knights": "meilleur placement du cavalier",
+    "Bishops": "meilleur placement du fou",
+    "Rooks": "meilleur placement de la tour",
+    "Material": "matériel",
+    "Imbalance": "matériel",
+}
+
+# Cases de départ standard des cavaliers/fous (issue #80, point 5, idée
+# mécanique "pièce développée") — ne sert qu'à l'heuristique d'ouverture,
+# aucune prétention à détecter un développement plus tardif ou atypique.
+_CASES_DEPART_DEVELOPPEMENT = {
+    (chess.KNIGHT, True): {chess.B1, chess.G1},
+    (chess.KNIGHT, False): {chess.B8, chess.G8},
+    (chess.BISHOP, True): {chess.C1, chess.F1},
+    (chess.BISHOP, False): {chess.C8, chess.F8},
+}
+
+# Cases centrales (issue #80, point 5, idée mécanique "pièce centralisée") —
+# le carré central au sens strict, pas l'étendue plus large parfois utilisée
+# en théorie des ouvertures (c3-f6), pour rester une heuristique simple et
+# non ambiguë.
+_CASES_CENTRALES = {chess.D4, chess.D5, chess.E4, chess.E5}
+
+
+def _phase_mg_ou_eg(board: "chess.Board") -> str:
+    """"mg"/"eg" selon le matériel restant sur l'échiquier (issue #80, point
+    5) — même heuristique que la phase "finale" déjà utilisée ailleurs
+    (app.py _analyse_full_game : 12 pièces ou moins sur l'échiquier)."""
+    return "eg" if chess.popcount(board.occupied) <= 12 else "mg"
+
+
+def _diff_termes_evaluation(breakdown_avant: dict | None, breakdown_apres: dict | None,
+                             phase: str, camp_alain: str) -> list[dict]:
+    """Variation de chaque terme de la décomposition classique de
+    l'évaluation Stockfish entre AVANT et APRÈS un coup, du point de vue
+    d'Alain, pour les termes au-delà de SEUIL_IDEE_PION (issue #80, point 5).
+    "Material"/"Imbalance" sont fusionnés sous le même libellé ("matériel").
+
+    Retourne une liste de {"libelle": str, "poids": float} (poids = delta en
+    pions, signé, du point de vue d'Alain) — [] si l'une des deux
+    décompositions est absente (commande "eval" indisponible/échouée) ou si
+    camp_alain n'est ni "blancs" ni "noirs"."""
+    if not breakdown_avant or not breakdown_apres or camp_alain not in ("blancs", "noirs"):
+        return []
+    signe = 1 if camp_alain == "blancs" else -1
+    par_libelle: dict[str, float] = {}
+    for terme, libelle in _IDEE_LIBELLES.items():
+        avant = (breakdown_avant.get(terme) or {}).get(phase)
+        apres = (breakdown_apres.get(terme) or {}).get(phase)
+        if avant is None or apres is None:
+            continue
+        par_libelle[libelle] = par_libelle.get(libelle, 0.0) + signe * (apres - avant)
+    return [
+        {"libelle": libelle, "poids": poids}
+        for libelle, poids in par_libelle.items()
+        if abs(poids) >= SEUIL_IDEE_PION
+    ]
+
+
+def _idee_parade_menace(board_avant: "chess.Board", move: "chess.Move",
+                         menace_data: dict | None) -> dict | None:
+    """Idée mécanique "pare une menace adverse" (issue #80, points 1 et 5) :
+    si la menace la plus sévère calculée par EngineManager.get_threats sur
+    `board_avant` n'est plus légale sur la position résultant de `move`,
+    c'est que ce coup la pare — jamais déduit autrement qu'en rejouant
+    mécaniquement la menace sur la position réelle. None si aucune menace
+    significative n'a été calculée, ou si la menace reste jouable après ce
+    coup (ce coup ne la pare pas)."""
+    if not menace_data or not menace_data.get("disponible"):
+        return None
+    menaces = menace_data.get("menaces") or []
+    if not menaces:
+        return None
+    principale = menaces[0]
+    perte_cp = principale.get("perte_cp")
+    if not perte_cp or perte_cp <= SEUIL_MENACE_SIGNIFICATIVE_CP:
+        return None
+    try:
+        menace_move = chess.Move.from_uci(principale["move"])
+        board_apres = board_avant.copy()
+        board_apres.push(move)
+        if menace_move in board_apres.legal_moves:
+            return None
+        case = chess.square_name(menace_move.to_square)
+        origine = chess.square_name(menace_move.from_square)
+    except Exception:
+        return None
+    return {
+        "libelle": "pare une menace adverse",
+        "poids": perte_cp / 100,
+        "detail": f"empêche {origine}-{case}",
+    }
+
+
+def _idee_developpement_centralisation(board_avant: "chess.Board", move: "chess.Move") -> dict | None:
+    """Idée mécanique "pièce développée"/"pièce centralisée" (issue #80,
+    point 5) — heuristiques simples sur la case de départ (case initiale du
+    cavalier/fou) et la case d'arrivée (carré central), jamais combinées
+    pour un même coup (la centralisation prime si les deux s'appliquent, un
+    développement qui centralise directement étant plus parlant qu'un
+    développement seul)."""
+    piece = board_avant.piece_at(move.from_square)
+    if piece is None:
+        return None
+    if move.to_square in _CASES_CENTRALES and piece.piece_type in (
+        chess.KNIGHT, chess.BISHOP, chess.QUEEN, chess.PAWN,
+    ):
+        return {
+            "libelle": "centralise une pièce",
+            "poids": 0.4,
+            "detail": f"{_NOM_PIECE[piece.piece_type]} en {chess.square_name(move.to_square)}",
+        }
+    if move.from_square in _CASES_DEPART_DEVELOPPEMENT.get((piece.piece_type, piece.color), set()):
+        return {
+            "libelle": "développe une pièce",
+            "poids": 0.5,
+            "detail": f"{_NOM_PIECE[piece.piece_type]} vers {chess.square_name(move.to_square)}",
+        }
+    return None
+
+
+def build_idees_coup(fen_avant: str, coup, camp_alain: str,
+                      breakdown_avant: dict | None, breakdown_apres: dict | None,
+                      menace_data: dict | None = None, max_idees: int = 3) -> list[dict]:
+    """API publique (issue #80, point 5) : idées détectées pour UN coup cité
+    (coup proposé, coup réellement joué, meilleur coup), combinant :
+      - les variations de la décomposition classique de l'évaluation
+        Stockfish au-delà de SEUIL_IDEE_PION (_diff_termes_evaluation),
+        traduites en français (_IDEE_LIBELLES) ;
+      - les idées mécaniques calculées avec python-chess : parade d'une
+        menace adverse de la tâche 1 (_idee_parade_menace), échec/mat
+        (board.is_checkmate/is_check), pièce développée ou centralisée
+        (_idee_developpement_centralisation).
+    Triées par importance (valeur absolue du poids — pions pour les idées
+    moteur, échelle comparable pour les idées mécaniques) et limitées à
+    `max_idees` (3 par défaut, demandé par l'issue) : sans plafond, un coup
+    qui change beaucoup de termes gonflerait le contexte envoyé au coach,
+    contrairement à la liste courte demandée.
+
+    Retourne une liste de {"libelle": str, "detail": str} (SANS aucune
+    valeur chiffrée — jamais transmise au coach, cf. llm_coach.py) : []
+    si fen_avant/coup sont illisibles/illégaux, ou si rien ne dépasse les
+    seuils (ne pas inventer une idée en l'absence de signal réel)."""
+    fen_avant = (fen_avant or "").strip()
+    if not fen_avant or not coup:
+        return []
+    try:
+        board_avant = chess.Board(fen_avant)
+        move = _parse_coup(board_avant, coup)
+        if move is None:
+            return []
+        board_apres = board_avant.copy()
+        board_apres.push(move)
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] build_idees_coup a échoué : {e}")
+        return []
+
+    # Trois paliers d'importance (issue #80, point 5) avant le tri par
+    # magnitude à l'intérieur de chacun : un mat ou un échec prime toujours
+    # sur tout le reste (palier 0) ; les idées tirées de la décomposition de
+    # l'évaluation Stockfish — l'objet principal de cette tâche, qui mesure
+    # l'effet réel du coup sur la position — passent avant les idées
+    # mécaniques complémentaires de la tâche 2/1 comme la parade d'une
+    # menace ou le développement (palier 2), qui restent des COMPLÉMENTS
+    # explicatifs, pas le signal principal, même quand leur magnitude brute
+    # (ex. perte évitée en centipawns/100) dépasserait numériquement celle
+    # d'un terme d'évaluation (constat sur l'exemple de l'issue : h4 doit
+    # présenter "sécurité du roi" en tête, la parade de gxh3+ ensuite).
+    idees = []
+
+    if board_apres.is_checkmate():
+        idees.append({"libelle": "échec et mat", "poids": 1000.0, "detail": "", "palier": 0})
+    elif board_apres.is_check():
+        idees.append({"libelle": "échec", "poids": 1.5, "detail": "", "palier": 0})
+
+    phase = _phase_mg_ou_eg(board_apres)
+    for idee_eval in _diff_termes_evaluation(breakdown_avant, breakdown_apres, phase, camp_alain):
+        idees.append({**idee_eval, "detail": "", "palier": 1})
+
+    parade = _idee_parade_menace(board_avant, move, menace_data)
+    if parade:
+        idees.append({**parade, "palier": 2})
+
+    developpement = _idee_developpement_centralisation(board_avant, move)
+    if developpement:
+        idees.append({**developpement, "palier": 2})
+
+    idees.sort(key=lambda d: (d["palier"], -abs(d["poids"])))
+    return [{"libelle": d["libelle"], "detail": d["detail"]} for d in idees[:max_idees]]
+
+
+def format_idees_coup(label: str, idees: list[dict]) -> str:
+    """Formate le résultat de build_idees_coup en texte de contexte (issue
+    #80, point 5) — une ligne par idée, numérotée dans l'ordre d'importance
+    déjà trié, avec la ou les pièces/cases concernées quand il y en a.
+    Chaîne vide si idees est vide (rien à transmettre, cf. tâche 5 : "ne
+    rien transmettre" si la décomposition est indisponible ou vide)."""
+    if not idees:
+        return ""
+    lignes = [f"Idées détectées pour {label} (indication du moteur, dans l'ordre d'importance) :"]
+    for i, idee in enumerate(idees, start=1):
+        detail = f" ({idee['detail']})" if idee.get("detail") else ""
+        lignes.append(f"  {i}. {idee['libelle']}{detail}")
+    return "\n".join(lignes)
