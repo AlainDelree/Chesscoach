@@ -31,6 +31,18 @@ let exerciseExploring  = false;
 // "Reprendre mon coup" de rouvrir une attente de réponse officielle une fois
 // le verdict déjà rendu.
 let exerciseVerdictObtenu = false;
+// Dernier coup UCI soumis à exercise_answer (issue #79) — mémorisé pour que
+// le bouton "Réessayer" (affiché quand l'analyse Stockfish échoue, cf.
+// socket.on("exercise_error") ci-dessous) puisse rejouer exactement le même
+// appel sans redemander le coup à Alain (déjà joué sur l'échiquier local).
+let exerciseLastSubmittedUci = null;
+// Identifiant du minuteur de garde (issue #79, point 3) : si le verdict ne
+// revient pas sous ~30s (délai côté interface, indépendant de la reprise
+// automatique côté serveur), affiche le message d'indisponibilité et
+// débloque le plateau plutôt que de rester bloqué indéfiniment sur "Le
+// coach réfléchit...".
+let exerciseAnalysisTimeoutId = null;
+const EXERCISE_ANALYSIS_TIMEOUT_MS = 30000;
 let exerciseLastMove   = null; // { from, to } (cases algébriques) du dernier coup joué/exploré
 
 // État de la tentative en cours, transmis au chat libre pendant l'exercice
@@ -530,9 +542,16 @@ function exerciseLinesRestore() {
 
 function askExerciseCoach() {
   // "Demander l'avis du coach" mutualisé (controls.js/MODE_CAPS), disponible
-  // à tout moment pendant l'exercice — y compris pendant l'exploration libre
-  // après verdict (issue #21) — pour un commentaire ponctuel sur la position
-  // affichée, sans passer par le circuit exercise_answer/exercise_comment.
+  // pendant l'exploration libre après verdict (issue #21) pour un
+  // commentaire ponctuel sur la position affichée, sans passer par le
+  // circuit exercise_answer/exercise_comment.
+  //
+  // Issue #79, point 4a : désactivé et grisé tant qu'aucun verdict n'a été
+  // obtenu pour la tentative en cours (cf. MODE_CAPS.exercise.
+  // askCoachAvailable, controls.js, qui pilote déjà le disabled du bouton
+  // partagé) — ce garde-fou ici est redondant avec le bouton désactivé
+  // (qui ne déclenche alors aucun clic), gardé par prudence en défense en
+  // profondeur, comme le reste des garde-fous ajoutés par cette issue.
   //
   // Issue #75, point 5 : ce bouton ne transmettait jusqu'ici que la position
   // actuelle et le camp d'Alain (comme les autres modes), sans la position
@@ -542,7 +561,7 @@ function askExerciseCoach() {
   // On transmet donc ce même contexte enrichi en 4e argument, fusionné
   // côté serveur (app.py on_coach_comment_on_demand) dans le contexte
   // envoyé au coach.
-  if (!exerciseGame) return;
+  if (!exerciseGame || !exerciseVerdictObtenu) return;
   askCoachOnDemand(exerciseGame.fen(), null, exerciseCampAlain, exerciseChatContextExtra());
 }
 
@@ -723,7 +742,71 @@ function submitExerciseAnswer(move) {
   if (typeof _coachHistory !== "undefined") {
     _coachHistory.push({ role: "user", content: messageUtilisateur });
   }
-  socket.emit("exercise_answer", { uci: move.from + move.to + (move.promotion || "") });
+  exerciseLastSubmittedUci = move.from + move.to + (move.promotion || "");
+  _exerciseStartAnalysisWatchdog();
+  socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci });
+}
+
+function _exerciseClearAnalysisWatchdog() {
+  if (exerciseAnalysisTimeoutId !== null) {
+    clearTimeout(exerciseAnalysisTimeoutId);
+    exerciseAnalysisTimeoutId = null;
+  }
+}
+
+function _exerciseStartAnalysisWatchdog() {
+  _exerciseClearAnalysisWatchdog();
+  exerciseAnalysisTimeoutId = setTimeout(_exerciseShowAnalysisIndisponible, EXERCISE_ANALYSIS_TIMEOUT_MS);
+}
+
+function _exerciseShowAnalysisIndisponible() {
+  // Issue #79, point 3 : si le verdict n'est pas revenu après ~30s côté
+  // interface (indépendant de la reprise automatique côté serveur, qui a
+  // son propre délai par appel), remplace "Le coach réfléchit..." par un
+  // message clair avec un bouton "Réessayer" — l'exercice reste utilisable
+  // (plateau explorable, "Exercice suivant" toujours cliquable) plutôt que
+  // bloqué indéfiniment. N'affecte jamais exerciseVerdictObtenu : tant
+  // qu'aucun vrai verdict n'est arrivé, le champ de question/les boutons du
+  // coach restent désactivés (issue #79, point 4a).
+  exerciseAnalysisTimeoutId = null;
+  const statusEl = document.getElementById("exercise-status");
+  if (statusEl) statusEl.textContent = "L'analyse Stockfish est indisponible.";
+  const retryBtn = document.getElementById("exercise-retry-btn");
+  if (retryBtn) retryBtn.style.display = exerciseLastSubmittedUci ? "inline-block" : "none";
+  exerciseExploring = true;
+}
+
+function exerciseRetryAnalysis() {
+  const retryBtn = document.getElementById("exercise-retry-btn");
+  if (retryBtn) retryBtn.style.display = "none";
+  if (!exerciseLastSubmittedUci) return;
+  const statusEl = document.getElementById("exercise-status");
+  if (statusEl) statusEl.textContent = "Le coach réfléchit...";
+  // Redevient bloqué pendant cette nouvelle tentative, comme au premier
+  // essai — remis à true par exercise_comment (succès) ou par l'échec
+  // suivant (exercise_error/watchdog), jamais laissé à false entre-temps.
+  exerciseExploring = false;
+  _exerciseStartAnalysisWatchdog();
+  socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci });
+}
+
+function _exerciseUpdateCoachInputGating() {
+  // Issue #79, point 4a : champ de question + bouton "Envoyer" du chat
+  // libre désactivés et grisés tant qu'aucun verdict n'a été obtenu pour
+  // l'exercice en cours (y compris la source « Problèmes Lichess », qui
+  // réutilise exactement les mêmes drapeaux) — le bouton partagé "Demander
+  // l'avis du coach" est géré séparément par controls.js (MODE_CAPS.exercise.
+  // askCoachAvailable). Rappelée au changement de mode (cf. setActiveMode,
+  // controls.js) pour ne pas laisser le champ désactivé en quittant
+  // l'exercice vers un autre mode.
+  const gated = activeMode === "exercise" && exerciseActive && !exerciseVerdictObtenu;
+  const input = document.getElementById("coach-input");
+  const sendBtn = document.getElementById("coach-send-btn");
+  if (input) {
+    input.disabled = gated;
+    input.placeholder = gated ? "Disponible après le verdict" : "Votre question...";
+  }
+  if (sendBtn) sendBtn.disabled = gated;
 }
 
 if (typeof socket !== "undefined") {
@@ -736,6 +819,10 @@ if (typeof socket !== "undefined") {
     exerciseExploring = false;
     exerciseVerdictObtenu = false;
     exerciseLastMove  = null;
+    exerciseLastSubmittedUci = null;
+    _exerciseClearAnalysisWatchdog();
+    const retryBtnReset = document.getElementById("exercise-retry-btn");
+    if (retryBtnReset) retryBtnReset.style.display = "none";
     exerciseFenAvant  = data.fen;
     exerciseCampAlain = data.camp_alain;
     exerciseCurrentPhase  = data.phase || "toutes";
@@ -751,6 +838,7 @@ if (typeof socket !== "undefined") {
     _exerciseUpdateDejaFaitDisplay(data);
     _exerciseUpdateLichessInfoDisplay();
     setActiveMode("exercise");
+    _exerciseUpdateCoachInputGating();
 
     _boardFlipped = (data.camp_alain === "noirs");
     buildBoard();
@@ -766,6 +854,12 @@ if (typeof socket !== "undefined") {
   });
 
   socket.on("exercise_comment", (data) => {
+    // Issue #79 : le verdict est bien arrivé — plus besoin du minuteur de
+    // garde ni du bouton "Réessayer" affiché par un échec précédent (ex.
+    // panne transitoire suivie d'un "Réessayer" réussi).
+    _exerciseClearAnalysisWatchdog();
+    const retryBtnOk = document.getElementById("exercise-retry-btn");
+    if (retryBtnOk) retryBtnOk.style.display = "none";
     // Verdict rendu : le plateau devient librement explorable (issue #21),
     // sans plus jamais redéclencher exercise_answer pour cette tentative.
     exerciseExploring = true;
@@ -773,6 +867,11 @@ if (typeof socket !== "undefined") {
     // "Reprendre mon coup" ne doit rouvrir une attente de réponse officielle
     // (issue #22) — seul un nouvel exercice remet ce drapeau à false.
     exerciseVerdictObtenu = true;
+    // Issue #79, point 4a : champ de question/bouton "Envoyer" du chat
+    // libre et bouton "Demander l'avis du coach" (ce dernier via
+    // updateSharedControlBar, controls.js) redeviennent disponibles.
+    _exerciseUpdateCoachInputGating();
+    if (typeof updateSharedControlBar === "function") updateSharedControlBar();
     const statusEl = document.getElementById("exercise-status");
     if (statusEl) {
       statusEl.textContent = 'Verdict rendu — déplace librement les pièces pour explorer la suite, ou clique sur "Nouvel exercice" pour continuer.';
@@ -818,8 +917,22 @@ if (typeof socket !== "undefined") {
   });
 
   socket.on("exercise_error", (data) => {
+    _exerciseClearAnalysisWatchdog();
     const statusEl = document.getElementById("exercise-status");
     const err = data && data.error;
+    // Issue #79, point 3 : un échec pendant exercise_answer (coup déjà joué
+    // sur l'échiquier local) ne doit plus jamais laisser le plateau bloqué
+    // sur "Le coach réfléchit..." — le plateau redevient explorable (comme
+    // après un verdict normal) et "Réessayer" permet de relancer exactement
+    // la même tentative. Ne s'applique qu'après un exercise_answer en
+    // attente (exerciseAnswered && !exerciseExploring) : une erreur de
+    // tirage (exercise_new, ex. "aucune_erreur_disponible") n'a jamais mis
+    // le plateau dans cet état.
+    if (exerciseAnswered && !exerciseExploring) {
+      exerciseExploring = true;
+      const retryBtn = document.getElementById("exercise-retry-btn");
+      if (retryBtn) retryBtn.style.display = exerciseLastSubmittedUci ? "inline-block" : "none";
+    }
     if (err === "credit_insuffisant") {
       if (typeof _coachRenderCreditInsuffisant === "function") _coachRenderCreditInsuffisant();
       console.warn("[exercice]", "credit_insuffisant", data);
@@ -833,6 +946,12 @@ if (typeof socket !== "undefined") {
       ? "Source « Problèmes Lichess » indisponible (lancer preparer_puzzles_lichess.py)."
       : (err === "no_api_key")
       ? "Clé API Claude manquante — configurez-la dans les paramètres."
+      // pas_de_verdict_exercice (issue #79, point 4b) : le serveur a
+      // refusé d'appeler le modèle faute de verdict Stockfish — message
+      // cohérent avec celui du minuteur de garde ci-dessus
+      // (_exerciseShowAnalysisIndisponible), qu'il arrive avant ou après.
+      : (err === "pas_de_verdict_exercice")
+      ? "L'analyse Stockfish est indisponible."
       : "Le coach n'a pas pu répondre, réessayez.";
     if (statusEl) statusEl.textContent = msg;
     console.warn("[exercice]", msg, data);

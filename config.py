@@ -50,6 +50,18 @@ COACH_CALLS_LOG_PATH = DATA_DIR / "logs" / "coach_calls.log"
 # données ; pas de rotation à ce stade (même pattern que COACH_CALLS_LOG_PATH).
 ANALYSE_ERREURS_LOG_PATH = DATA_DIR / "logs" / "analyse_erreurs.log"
 
+# Log des pannes du moteur Stockfish lui-même (issue #79) : heure, opération
+# en cours, message d'erreur, code de sortie du processus et dernières
+# lignes de son flux d'erreur standard quand ils sont disponibles, nombre de
+# relances déjà tentées — distinct d'ANALYSE_ERREURS_LOG_PATH ci-dessus (qui
+# trace l'échec du bouton "Analyser cette partie" côté application) : ce
+# fichier-ci trace la panne du moteur lui-même (boucle d'événements morte,
+# processus Stockfish terminé, délai dépassé), quel que soit le mode qui
+# l'utilisait au moment de la panne. Sous DATA_DIR, donc gitignoré comme le
+# reste des données ; pas de rotation à ce stade (même pattern que les deux
+# logs ci-dessus).
+MOTEUR_ERREURS_LOG_PATH = DATA_DIR / "logs" / "moteur_erreurs.log"
+
 # Compteur cumulé de tokens consommés par l'API Claude (issue #54) — pas de
 # notion de prix ni de table de coût par modèle, seulement les tokens bruts
 # renvoyés par chaque réponse de l'API, cumulés par modèle depuis une date de

@@ -1004,6 +1004,13 @@ function coachClear() {
 
 function coachSend() {
   if (_coachBusy) return;
+  // Issue #79, point 4a : défense en profondeur — le champ/bouton sont déjà
+  // désactivés côté DOM en mode exercice sans verdict (cf.
+  // _exerciseUpdateCoachInputGating, exercise.js), ce qui bloque déjà le
+  // clic/la frappe clavier ; ce garde-fou protège un appel programmatique
+  // qui contournerait l'état disabled.
+  if (typeof activeMode !== "undefined" && activeMode === "exercise"
+      && typeof exerciseVerdictObtenu !== "undefined" && !exerciseVerdictObtenu) return;
   const input = document.getElementById("coach-input");
   if (!input || !input.value.trim()) return;
   const question = input.value.trim();
@@ -1069,6 +1076,12 @@ if (typeof socket !== "undefined") {
     } else {
       const msg = (err === "no_api_key")
         ? "Clé API Claude manquante — configurez-la dans les paramètres."
+        // pas_de_verdict_exercice (issue #79, point 4b) : filet de sécurité
+        // côté serveur — ne devrait normalement jamais être atteint ici, le
+        // champ/bouton étant déjà désactivés tant qu'aucun verdict n'est
+        // obtenu (cf. exercise.js _exerciseUpdateCoachInputGating).
+        : (err === "pas_de_verdict_exercice")
+        ? "L'analyse Stockfish est indisponible."
         : "Le coach n'a pas pu répondre, réessayez.";
       console.warn("[coach]", msg, data);
     }
@@ -1176,6 +1189,11 @@ if (typeof socket !== "undefined") {
 
   socket.on("coach_on_demand_error", (data) => {
     setCoachOnDemandButtonsDisabled(false);
+    // Issue #79 : réapplique l'état réel (ex. bouton redésactivé si
+    // exerciseVerdictObtenu est toujours faux) après le ré-activation
+    // générique ci-dessus, qui ne connaît pas la condition spécifique au
+    // mode exercice (MODE_CAPS.exercise.askCoachAvailable).
+    if (typeof updateSharedControlBar === "function") updateSharedControlBar();
     const err = data && data.error;
     if (err === "credit_insuffisant") {
       _coachRenderCreditInsuffisant();
@@ -1187,6 +1205,8 @@ if (typeof socket !== "undefined") {
       ? "Stockfish indisponible sur ce système."
       : (err === "no_api_key")
       ? "Clé API Claude manquante — configurez-la dans les paramètres."
+      : (err === "pas_de_verdict_exercice")
+      ? "L'analyse Stockfish est indisponible."
       : "Le coach n'a pas pu répondre, réessayez.";
     console.warn("[coach à la demande]", msg, data);
   });

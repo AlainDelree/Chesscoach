@@ -39,7 +39,13 @@ const MODE_CAPS = {
   pedagogic: { abandon: () => abandonPedagogicGame(),     reprendre: () => reprendrePedagogicCoup(),  askCoach: () => askPedagogicCoach(),  askCoachAvailable: () => pedagogicActive && !!pedagogicGame && !pedagogicGameOver, hasComment: true  },
   opening:   { abandon: () => abandonOpeningGame(),       reprendre: () => reprendreOpeningCoup(),    askCoach: () => askOpeningCoach(),    askCoachAvailable: () => openingActive && !!openingGame && !openingGameOver,       hasComment: true  },
   finale:    { abandon: () => abandonFinaleGame(),        reprendre: () => reprendreFinaleCoup(),     askCoach: () => askFinaleCoach(),     askCoachAvailable: () => finaleActive && !!finaleGame && !finaleGameOver,          hasComment: true  },
-  exercise:  { abandon: null,                             reprendre: () => reprendreExerciceCoup(),   askCoach: () => askExerciseCoach(),   askCoachAvailable: () => !!exerciseGame,                                          hasComment: false },
+  // askCoachAvailable (issue #79, point 4a) : exige désormais un verdict
+  // déjà rendu pour la tentative en cours (exerciseVerdictObtenu), en plus
+  // d'un exercice chargé — avant ce correctif, un contexte sans verdict
+  // (ex. moteur en panne) pouvait quand même interroger le coach, qui
+  // inventait alors un verdict faute d'en recevoir un réel (constat réel,
+  // cf. rapport de clôture).
+  exercise:  { abandon: null,                             reprendre: () => reprendreExerciceCoup(),   askCoach: () => askExerciseCoach(),   askCoachAvailable: () => !!exerciseGame && exerciseVerdictObtenu,                 hasComment: false },
   // Éditeur de position (issue #16) : pas de partie jouée, donc pas de
   // "reprendre mon coup" ni de coach à la demande — juste un moyen de
   // quitter le panneau via le bouton "Abandonner" mutualisé.
@@ -77,6 +83,12 @@ function setActiveMode(mode) {
   // revue (issue #68) au passage vers exercice/éditeur, même si des lignes
   // restaient affichées d'un mode précédent pas encore réinitialisé.
   if (typeof renderGameCoachLinesTable === "function") renderGameCoachLinesTable();
+  // Issue #79, point 4a : le champ de question/bouton "Envoyer" du chat
+  // libre, désactivés pendant un exercice sans verdict, redeviennent
+  // disponibles dès qu'on quitte le mode exercice vers un autre mode — sans
+  // cet appel ici, quitter un exercice non répondu laissait le champ grisé
+  // même dans un mode qui n'a pas cette restriction.
+  if (typeof _exerciseUpdateCoachInputGating === "function") _exerciseUpdateCoachInputGating();
 }
 
 // ── Onglets par mode (issue #23) ────────────────────────────────────────────
@@ -351,7 +363,12 @@ function updateSharedControlBar() {
   if (askCoachHelp) {
     const hasAskCoach = !!(caps && caps.askCoach);
     askCoachHelp.style.display = hasAskCoach ? "" : "none";
-    askCoachHelp.textContent = hasAskCoach ? (MODE_ASK_COACH_HELP[activeMode] || "") : "";
+    // Issue #79, point 4a : "Disponible après le verdict" remplace l'aide
+    // habituelle en mode exercice tant qu'aucun verdict n'a été rendu pour
+    // la tentative en cours — sans ça, le bouton grisé restait accompagné
+    // du texte "à tout moment de l'exercice", devenu faux pour ce mode.
+    const indisponibleAvantVerdict = activeMode === "exercise" && typeof exerciseVerdictObtenu !== "undefined" && !exerciseVerdictObtenu;
+    askCoachHelp.textContent = !hasAskCoach ? "" : indisponibleAvantVerdict ? "Disponible après le verdict." : (MODE_ASK_COACH_HELP[activeMode] || "");
   }
   if (statusEl) statusEl.textContent = activeMode ? MODE_LABELS[activeMode] : "Aucun mode interactif actif.";
 

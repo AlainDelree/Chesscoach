@@ -350,15 +350,26 @@ def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
 
     Retourne {"meilleur_coup": str, "verdict_qualite": str|None,
     "verdict_delta_cp": int|None, "pv_coup_propose": str,
-    "pv_meilleur_coup": str} — clés directement fusionnables dans le context
-    de get_coach_response. Best-effort : valeurs vides/None si Stockfish est
-    indisponible ou si l'évaluation échoue."""
+    "pv_meilleur_coup": str, "analyse_indisponible": bool} — clés
+    directement fusionnables dans le context de get_coach_response.
+    Best-effort : valeurs vides/None si Stockfish est indisponible ou si
+    l'évaluation échoue.
+
+    analyse_indisponible (issue #79) : True si aucun verdict réel n'a pu
+    être obtenu (moteur absent, panne malgré la reprise automatique de
+    EngineManager, ou exception inattendue ici) — à distinguer de
+    verdict_qualite=None sur un coup illégal (l'appelant ne devrait de toute
+    façon jamais arriver ici dans ce cas). Avant ce correctif,
+    EngineManager.evaluate_move retournait "bon"/0 dans ce cas de panne —
+    un verdict INVENTÉ, transmis tel quel au coach (constat réel, cf.
+    rapport de clôture) — désormais qualite vaut None, propagé ici."""
     result = {
         "meilleur_coup": "",
         "verdict_qualite": None,
         "verdict_delta_cp": None,
         "pv_coup_propose": "",
         "pv_meilleur_coup": "",
+        "analyse_indisponible": True,
     }
     if not engine_manager:
         return result
@@ -371,6 +382,7 @@ def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
         result["verdict_delta_cp"] = verdict_delta_cp
         result["pv_coup_propose"] = pv_info.get("pv_coup_propose", "")
         result["pv_meilleur_coup"] = pv_info.get("pv_meilleur_coup", "")
+        result["analyse_indisponible"] = verdict_qualite is None
         if meilleur_coup_uci:
             try:
                 result["meilleur_coup"] = board.san(chess.Move.from_uci(meilleur_coup_uci))
@@ -883,6 +895,12 @@ def on_coach_comment_on_demand(data):
         "eval_alain_mat": eval_alain_mat,
         "theme_finale": theme_finale,
         "mode_origine": mode_origine,
+        # Issue #79 : True si l'évaluation générique ci-dessus (profondeur 8,
+        # commune aux modes pédagogique/ouverture/finales) a échoué malgré
+        # la reprise automatique de EngineManager — écrasé plus bas si le
+        # contexte enrichi d'un exercice transmet son propre indicateur
+        # (verdict obtenu séparément, à DEPTH_EXERCICE_TEMPS_REEL).
+        "analyse_indisponible": bool(eval_now.get("indisponible")),
     }
     # Contexte enrichi transmis par le client pendant un exercice (issue #75,
     # point 5 — static/exercise.js exerciseChatContextExtra(), fusionné dans
@@ -1415,6 +1433,12 @@ def on_exercise_answer(data):
     meilleur_coup_recalcule_san = None
     pv_coup_propose = ""
     pv_meilleur_coup = ""
+    # Analyse Stockfish indisponible (issue #79) : True par défaut — ne
+    # passe à False que si evaluate_move a réellement rendu un verdict
+    # ci-dessous. Un coup illégal (ne devrait pas arriver, l'interface ne
+    # propose que des coups légaux) laisse donc aussi ce drapeau à True,
+    # cohérent avec l'absence de verdict dans ce cas.
+    analyse_indisponible = True
     try:
         board = chess.Board(fen_avant)
         move = chess.Move.from_uci(uci)
@@ -1434,6 +1458,7 @@ def on_exercise_answer(data):
             pv_coup_propose = eval_result["pv_coup_propose"]
             pv_meilleur_coup = eval_result["pv_meilleur_coup"]
             meilleur_coup_recalcule_san = eval_result["meilleur_coup"]
+            analyse_indisponible = eval_result["analyse_indisponible"]
             board.push(move)
             fen_apres = board.fen()
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
@@ -1552,6 +1577,7 @@ def on_exercise_answer(data):
         "profondeur_reeval": DEPTH_EXERCICE_TEMPS_REEL if meilleur_coup_recalcule_san else None,
         "mode_exercice": True,
         "mode_origine": "exercice",
+        "analyse_indisponible": analyse_indisponible,
     }
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
@@ -1632,6 +1658,11 @@ def _on_exercise_answer_lichess(uci: str) -> None:
     pv_coup_propose = ""
     coup_legal = False
     coup_reussi = False
+    # Verdict final transmis au coach (None = indéterminable, issue #79) :
+    # distinct de coup_reussi ci-dessus, qui reste un booléen Python interne
+    # utilisé pour l'historique/le niveau — cf. ci-dessous.
+    verdict_final = None
+    analyse_indisponible = True
     try:
         board = chess.Board(fen_avant)
         move = chess.Move.from_uci(uci)
@@ -1642,6 +1673,7 @@ def _on_exercise_answer_lichess(uci: str) -> None:
             verdict_qualite_moteur = eval_result["verdict_qualite"]
             verdict_delta_cp = eval_result["verdict_delta_cp"]
             pv_coup_propose = eval_result["pv_coup_propose"]
+            analyse_indisponible = eval_result["analyse_indisponible"]
             board.push(move)
             fen_apres = board.fen()
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
@@ -1651,14 +1683,28 @@ def _on_exercise_answer_lichess(uci: str) -> None:
                 verdict_delta_cp < SEUIL_PUZZLE_EQUIVALENT_CP
                 or (verdict_qualite_moteur == "imprecision" and verdict_delta_cp >= SEUIL_IMPRECISION)
             )
-            coup_reussi = (uci == premier_coup_solution_uci) or coup_est_mat or coup_equivalent
+            coup_correspond_solution = uci == premier_coup_solution_uci
+            coup_reussi = coup_correspond_solution or coup_est_mat or coup_equivalent
+
+            # Issue #79 : si le moteur est indisponible ET que le coup ne
+            # correspond ni à la solution connue ni à un mat immédiat (les
+            # deux seuls cas vérifiables SANS Stockfish), l'équivalence ne
+            # peut pas être vérifiée — jamais rendre "erreur" par défaut
+            # dans ce cas (ce serait un verdict inventé, exactement le bug
+            # constaté en usage réel sur la source "mes erreurs", cf.
+            # rapport de clôture), ni enregistrer de résultat dans
+            # l'historique (cf. ci-dessous).
+            if analyse_indisponible and not coup_correspond_solution and not coup_est_mat:
+                verdict_final = None
+            else:
+                verdict_final = "bon" if coup_reussi else "erreur"
     except Exception:
         pass
 
     categorie = _current_exercise.get("categorie_tirage")
     cle_historique = _current_exercise.get("cle_historique")
     niveau_affiche = _current_exercise.get("niveau_tirage")
-    if coup_legal and categorie and cle_historique:
+    if coup_legal and categorie and cle_historique and verdict_final is not None:
         exercise_history.enregistrer_resultat(config.EXERCICE_HISTORIQUE_PATH, cle_historique, coup_reussi)
         niveau_affiche = round(lichess_puzzles.mettre_a_jour_niveau(
             _lichess_niveaux, config.LICHESS_NIVEAUX_PATH, categorie,
@@ -1740,10 +1786,16 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         # et le coach ne doit voir qu'un seul verdict, décisif et cohérent
         # avec coup_reussi (cf. _EXERCISE_SYSTEM_ADDENDUM : "ce verdict fait
         # foi").
-        "verdict_qualite": "bon" if coup_reussi else "erreur",
+        #
+        # verdict_final (issue #79) vaut None quand l'équivalence n'a pas pu
+        # être vérifiée (moteur indisponible, coup différent de la solution
+        # connue et non mat) — jamais "erreur" par défaut dans ce cas, qui
+        # serait un verdict inventé (cf. ci-dessus).
+        "verdict_qualite": verdict_final,
         "verdict_delta_cp": verdict_delta_cp,
         "mode_exercice": True,
         "mode_origine": "exercice_lichess",
+        "analyse_indisponible": analyse_indisponible if verdict_final is None else False,
         # Déclenche l'addendum système dédié (réponse courte, pas de "coup
         # réel à l'époque") et le bloc thèmes/note/niveau de
         # _build_context_text (issue #78).
@@ -1771,7 +1823,7 @@ def _on_exercise_answer_lichess(uci: str) -> None:
             "coup_propose": coup_propose_san,
             "coup_reel": "",
             "meilleur_coup": meilleur_coup,
-            "verdict_qualite": "bon" if coup_reussi else "erreur",
+            "verdict_qualite": verdict_final,
             "verdict_delta_cp": verdict_delta_cp,
             "pv_coup_propose": pv_coup_propose,
             "pv_meilleur_coup": pv_meilleur_coup,
@@ -1930,6 +1982,7 @@ def on_pedagogic_move(data):
         "pv_coup_propose": eval_result["pv_coup_propose"],
         "pv_meilleur_coup": eval_result["pv_meilleur_coup"],
         "mode_origine": "pedagogique",
+        "analyse_indisponible": eval_result["analyse_indisponible"],
     }
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
@@ -2227,6 +2280,7 @@ def on_opening_move(data):
         context["verdict_delta_cp"] = eval_result["verdict_delta_cp"]
         context["pv_coup_propose"] = eval_result["pv_coup_propose"]
         context["pv_meilleur_coup"] = eval_result["pv_meilleur_coup"]
+        context["analyse_indisponible"] = eval_result["analyse_indisponible"]
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
@@ -2703,6 +2757,7 @@ def on_finale_move(data):
         "pv_coup_propose": eval_result["pv_coup_propose"],
         "pv_meilleur_coup": eval_result["pv_meilleur_coup"],
         "mode_origine": "finales",
+        "analyse_indisponible": eval_result["analyse_indisponible"],
     }
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,

@@ -145,9 +145,16 @@ def choisir_exercice(pool: list, historique: dict, dernier_sous_type: str | None
             jamais_vues.append(entree)
             continue
         jours = _jours_ecoules(info.get("derniere_date"), maintenant)
+        # Issue #79, point 6 : seul un résultat "reussi" explicite donne le
+        # délai long — un résultat "rate" ET l'absence de résultat
+        # (dernier_resultat=None, verdict jamais calculé ou exercice proposé
+        # puis jamais répondu/abandonné) reçoivent tous deux le délai court,
+        # pour être reproposés plus tôt plutôt que d'être traités comme
+        # "maîtrisés" par erreur (avant ce correctif, None tombait dans le
+        # même cas que "reussi" via le simple "else" ci-dessous).
         delai = (
-            DELAI_REVISION_RATE_JOURS if info.get("dernier_resultat") == "rate"
-            else DELAI_REVISION_REUSSI_JOURS
+            DELAI_REVISION_REUSSI_JOURS if info.get("dernier_resultat") == "reussi"
+            else DELAI_REVISION_RATE_JOURS
         )
         if jours is None or jours >= delai:
             dues.append(entree)

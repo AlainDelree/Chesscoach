@@ -167,6 +167,35 @@ _DEMONSTRATION_ADDENDUM = (
     "comme si elles venaient de se reproduire dans cette démonstration."
 )
 
+# Complément de system prompt pour une analyse Stockfish indisponible (issue
+# #79) : ajouté dès que context["analyse_indisponible"] est vrai (cf.
+# _build_context_text, qui écrit alors explicitement dans le contexte
+# qu'aucun verdict/évaluation/meilleur coup n'est disponible), indépendamment
+# des autres compléments — y compris en mode exercice, où get_coach_response
+# refuse normalement l'appel API avant d'en arriver là (cf. plus bas) : ce
+# complément reste donc surtout utile aux AUTRES modes (pédagogique,
+# ouverture hors-livre, finales, "Demander l'avis du coach"), qui n'ont pas
+# ce garde-fou serveur strict et peuvent légitimement continuer la
+# conversation sans verdict Stockfish. Constat réel ayant motivé ce
+# correctif (cf. rapport de clôture) : contexte sans aucun verdict ni
+# évaluation (exercice), le coach a quand même affirmé disposer d'un
+# "verdict final", inventé un coup de capture inexistant et contredit la
+# réalité (le moteur classait en fait le coup proposé meilleur coup).
+_ANALYSE_INDISPONIBLE_ADDENDUM = (
+    "Analyse Stockfish indisponible (issue #79) : le contexte indique "
+    "explicitement qu'aucun verdict, aucune évaluation et aucun meilleur "
+    "coup n'ont pu être calculés pour ce coup ou cette position — panne ou "
+    "délai dépassé du moteur, jamais un choix délibéré. N'invente JAMAIS un "
+    "verdict (\"bon\", \"gaffe\", \"imprécision\"...), un chiffre "
+    "d'évaluation, un meilleur coup ou une ligne de coups pour combler ce "
+    "vide, même si Alain insiste, reformule sa question ou affirme "
+    "lui-même qu'un coup est bon ou mauvais : dis-lui explicitement que tu "
+    "n'as pas le résultat du moteur pour ce coup ou cette position "
+    "actuellement, propose de réessayer plus tard, et limite-toi à décrire "
+    "ce qui est factuellement donné (listes de pièces, description "
+    "mécanique d'un coup, FEN) sans te prononcer sur la qualité d'un coup."
+)
+
 # Complément de system prompt spécifique au mode "Exercice" (issue #17),
 # ajouté à _SYSTEM_PROMPT quand context["mode_exercice"] est vrai — que ce
 # soit pour le commentaire du coup proposé (exercise_answer) ou pour une
@@ -908,6 +937,15 @@ def _build_context_text(context) -> str:
     # _EXERCISE_SYSTEM_ADDENDUM).
     verdict_qualite  = (context.get("verdict_qualite") or "").strip()
     verdict_delta_cp = context.get("verdict_delta_cp")
+    # Analyse Stockfish indisponible (issue #79) : panne moteur malgré la
+    # reprise automatique de EngineManager (ou quota de relances épuisé),
+    # distincte d'un contexte qui ne demande simplement aucune évaluation
+    # (chat libre général). Transmis explicitement par app.py dès qu'un
+    # appel moteur a été tenté et a échoué (cf. _evaluate_move_for_coach/
+    # on_coach_comment_on_demand) — jamais déduit ici de la seule absence
+    # des champs verdict/eval/meilleur_coup, qui serait aussi le cas normal
+    # d'un message sans rapport avec un coup précis.
+    analyse_indisponible = bool(context.get("analyse_indisponible")) and not verdict_qualite
     # Réfutation réelle d'un coup flagué (issue #62) : la réponse réellement
     # jouée ensuite dans la partie et sa conséquence matérielle immédiate,
     # calculée mécaniquement par app.py (game_facts.describe_reponse_suivante)
@@ -1118,7 +1156,26 @@ def _build_context_text(context) -> str:
             f"c'est difficile). Niveau actuel d'Alain dans cette catégorie "
             f"(\"{categorie_libelle}\") : {niveau_categorie}."
         )
-    if verdict_qualite:
+    if analyse_indisponible:
+        # Issue #79, point 4c (deuxième ligne de défense) : même en mode
+        # exercice (où get_coach_response refuse normalement déjà l'appel
+        # API avant d'arriver ici, cf. point 4b), ce message explicite
+        # protège aussi les AUTRES modes (pédagogique, ouverture hors-livre,
+        # finales, "Demander l'avis du coach") qui n'ont pas ce garde-fou
+        # serveur strict. Constat réel ayant motivé ce correctif (cf.
+        # rapport de clôture) : sans cette ligne, le coach a affirmé
+        # disposer d'un "verdict final" alors qu'aucun verdict ni évaluation
+        # n'avait pu être calculé, et a contredit la réalité (inventé une
+        # capture inexistante, qualifié de gaffe un coup que Stockfish
+        # classait en fait meilleur coup).
+        sujet = "cet exercice" if context.get("mode_exercice") else "cette position"
+        lines.append(
+            f"Analyse Stockfish indisponible pour {sujet} : aucun verdict, "
+            "aucune évaluation, aucun meilleur coup (panne ou délai dépassé "
+            "du moteur — voir _ANALYSE_INDISPONIBLE_ADDENDUM pour la règle "
+            "complète à appliquer ici)."
+        )
+    elif verdict_qualite:
         # describe_perte_cp_clause (issue #75, point 1) : en mots dès que la
         # magnitude dépasse SEUIL_GRANDE_VALEUR_CP (ex. le delta sentinelle
         # DELTA_CP_MAT_CONTRE d'un coup qui permet un mat forcé contre
@@ -1131,6 +1188,38 @@ def _build_context_text(context) -> str:
             "explique pourquoi il est justifié, ne le confirme ni ne le "
             "contredis par ton propre jugement."
         )
+        # Données partielles (issue #79, point 5) : le verdict a été rendu,
+        # mais un champ auxiliaire attendu peut manquer (panne ponctuelle
+        # d'un appel moteur distinct, cf. app.py _eval_blancs_apres/
+        # _evaluate_move_for_coach) — l'indiquer explicitement champ par
+        # champ plutôt que de laisser le prompt en inventer une valeur
+        # plausible à partir du seul verdict.
+        if eval_alain_cp is None and eval_alain_mat is None:
+            lines.append(
+                "Évaluation de la position résultant de ce coup proposé : "
+                "indisponible. N'invente AUCUN chiffre ni mot d'ampleur "
+                "(\"léger avantage\", \"position gagnée\"...) pour la "
+                "remplacer — dis simplement que tu n'as pas cette évaluation "
+                "si Alain la demande."
+            )
+        if not meilleur_coup:
+            lines.append(
+                "Coup de référence (meilleur coup selon Stockfish) : "
+                "indisponible pour cette position. N'en invente AUCUN à la "
+                "place."
+            )
+        if coup_propose and not pv_coup_propose:
+            lines.append(
+                "Ligne principale (suite calculée) du coup proposé : "
+                "indisponible. Décris ce coup sans supposer de suite "
+                "tactique calculée."
+            )
+        if meilleur_coup and not pv_meilleur_coup:
+            lines.append(
+                "Ligne principale (suite calculée) du meilleur coup : "
+                "indisponible. Décris ce coup sans supposer de suite "
+                "tactique calculée."
+            )
     if reponse_suivante:
         lines.append(
             f"Réfutation calculée mécaniquement de ce coup (issue #62), à "
@@ -1547,6 +1636,22 @@ def get_coach_response(messages, context, coach_memory, config):
     if not clean_messages:
         return None, "empty"
 
+    # Issue #79, point 4b : refuse l'appel au modèle quand le contexte d'un
+    # exercice ne contient aucun verdict Stockfish — AVANT tout appel API,
+    # pour qu'aucun chemin (rechargement de page, reconnexion, événement
+    # tardif) ne puisse contourner le blocage côté interface (cf.
+    # exercise.js/#4a) : même un rechargement qui rejouerait un vieux
+    # payload sans verdict se heurte à ce garde-fou serveur. Couvre
+    # uniformément exercise_answer, la source « Problèmes Lichess » et toute
+    # question de suivi posée pendant l'exercice (coach_ask/
+    # coach_comment_on_demand, qui transmettent tous mode_exercice=True —
+    # cf. app.py exerciseChatContextExtra). Message fixe, sans journaliser
+    # ni appeler l'API : un exercice sans verdict n'a rien à journaliser
+    # côté appel LLM, la panne moteur elle-même est déjà tracée dans
+    # MOTEUR_ERREURS_LOG_PATH (cf. engine_stockfish.py).
+    if (context or {}).get("mode_exercice") and not (context or {}).get("verdict_qualite"):
+        return None, "pas_de_verdict_exercice"
+
     model = (config or {}).get("llm_model", "")
     prompt_sys = _SYSTEM_PROMPT
     if (context or {}).get("mode_exercice"):
@@ -1586,6 +1691,14 @@ def get_coach_response(messages, context, coach_memory, config):
         # (ex. pédagogique avec verdict Stockfish sur le coup courant, ET
         # faits calculés sur la partie en cours).
         prompt_sys = f"{prompt_sys}\n\n{_GAME_FACTS_ADDENDUM}"
+    if (context or {}).get("analyse_indisponible") and not (context or {}).get("verdict_qualite"):
+        # Indépendant des branches ci-dessus (issue #79) : s'ajoute dès que
+        # le contexte signale une analyse Stockfish indisponible SANS
+        # verdict déjà obtenu par ailleurs (cf. _build_context_text, même
+        # condition) — en mode exercice ce cas ne devrait jamais atteindre
+        # l'appel API (garde-fou ci-dessus), ce complément reste donc
+        # surtout utile aux autres modes.
+        prompt_sys = f"{prompt_sys}\n\n{_ANALYSE_INDISPONIBLE_ADDENDUM}"
 
     memory_text = _build_memory_text(coach_memory)
     if memory_text:

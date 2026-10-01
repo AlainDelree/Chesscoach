@@ -21,15 +21,151 @@ import chess
 import chess.engine
 import threading
 import logging
+import time
+import collections
+import concurrent.futures
 from pathlib import Path
 
 # ── À câbler côté ChessCoach ─────────────────────────────────────────────────
 # Remplacer cet import par le point d'entrée de config du nouveau projet.
 # Valeur attendue : un pathlib.Path pointant vers le dossier contenant les
 # exécutables moteurs (ex. Path.home() / "ChessCoach" / "engines").
-from config import ENGINES_DIR, SYZYGY_PATH
+from config import ENGINES_DIR, SYZYGY_PATH, MOTEUR_ERREURS_LOG_PATH
 
 logger = logging.getLogger("EngineManager")
+
+# ── Reprise automatique après une panne moteur (issue #79) ──────────────────
+# Constat en usage réel : une fois la boucle d'événements python-chess d'une
+# instance SimpleEngine morte (processus Stockfish terminé pour une raison
+# quelconque — tué, crashé, délai dépassé —, ou protocole UCI corrompu par un
+# accès concurrent), chess.engine.SimpleEngine ne se relance JAMAIS tout
+# seul : tout appel suivant échoue immédiatement avec EngineTerminatedError
+# ("engine event loop dead"), en boucle, jusqu'à un redémarrage complet de
+# l'appli. Reproduit en conditions contrôlées (cf. rapport de clôture) en
+# tuant le processus Stockfish sous-jacent pendant un appel analyse() : le
+# message et le comportement (panne permanente) correspondent exactement au
+# constat d'Alain.
+#
+# Au plus MAX_RELANCES_PAR_FENETRE relances par fenêtre glissante de
+# FENETRE_RELANCES_SECONDES (partagées entre toutes les instances du moteur,
+# play/eval/pédagogique/finales — une panne systémique, ex. exécutable
+# manquant ou bibliothèque système incompatible, ne doit pas autoriser 3
+# relances par instance, soit 12 au total, avant de renoncer), avec une pause
+# croissante avant chaque relance pour laisser le temps à une panne
+# transitoire de se résorber sans tourner en boucle serrée.
+MAX_RELANCES_PAR_FENETRE  = 3
+FENETRE_RELANCES_SECONDES = 60.0
+PAUSE_BASE_SECONDES       = 1.0
+PAUSE_MAX_SECONDES        = 5.0
+
+# Délai maximal d'un appel moteur individuel (issue #79, point 1 : "délai
+# dépassé" comme cause de panne au même titre qu'un processus terminé) —
+# chess.engine.SimpleEngine n'applique son propre timeout interne (10s par
+# défaut) qu'aux appels bornés en TEMPS (ex. get_move) ; un appel borné en
+# PROFONDEUR (evaluate(), la majorité des appels ici) n'a aucun délai limite
+# côté python-chess et bloquerait indéfiniment le fil d'exécution appelant si
+# le moteur restait silencieux sans jamais répondre "bestmove". Valeur choisie
+# largement au-dessus des temps mesurés en usage réel (DEPTH_EXERCICE_TEMPS_REEL
+# reste sous la seconde par appel, cf. plus bas) tout en laissant, combiné à
+# une seule relance, de la marge sous les ~30s au-delà desquels l'interface
+# bascule sur son propre message d'erreur (cf. app.py/exercise.js).
+TIMEOUT_APPEL_SECONDES = 12.0
+
+# Mémoire/threads explicites par instance (issue #79, point 7) : jusqu'ici
+# jamais configurés, Stockfish démarre donc avec ses valeurs par défaut
+# (Hash=16 Mo, Threads=1) — pas identifiées comme la cause de la panne
+# observée (aucun processus tué pour manque de mémoire, cf. rapport de
+# clôture), mais fixées explicitement ici par prudence : jusqu'à 4 instances
+# simultanées (play/eval/pédagogique/finales) sur une machine mono-
+# utilisateur, un seul thread chacune et une table de hachage sobre évitent
+# de dépendre d'une valeur par défaut qui peut varier d'une distribution à
+# l'autre, sans rien changer aux profondeurs de recherche utilisées ailleurs
+# dans ce fichier (8 à 18).
+HASH_MO = 64
+THREADS = 1
+
+# Exécuteur partagé pour imposer TIMEOUT_APPEL_SECONDES aux appels moteur
+# bornés en profondeur (cf. _appeler_avec_delai ci-dessous) — 4 workers, un
+# par instance de moteur possible (chacune déjà sérialisée par son propre
+# verrou, donc jamais plus de 4 appels réellement concurrents).
+_EXECUTEUR_APPELS = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="EngineCall"
+)
+
+# Capture des dernières lignes de stderr des processus Stockfish (issue #79,
+# point 2), sans toucher à python-chess : chess.engine.Protocol.
+# error_line_received journalise déjà chaque ligne de stderr via
+# logging.getLogger("chess.engine").warning("%s: stderr >> %s", ...) — un
+# handler dédié sur ce logger suffit à les intercepter pour les reporter dans
+# MOTEUR_ERREURS_LOG_PATH au moment d'une panne, sans dupliquer la logique de
+# lecture du flux d'erreur déjà faite en interne par la bibliothèque.
+_DERNIERES_LIGNES_STDERR = collections.deque(maxlen=20)
+
+
+class _CaptureStderrMoteur(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return
+        marqueur = "stderr >> "
+        idx = message.find(marqueur)
+        if idx != -1:
+            _DERNIERES_LIGNES_STDERR.append(message[idx + len(marqueur):])
+
+
+logging.getLogger("chess.engine").addHandler(_CaptureStderrMoteur())
+
+
+def _code_sortie_moteur(engine: chess.engine.SimpleEngine) -> int | None:
+    """Code de sortie du processus Stockfish sous-jacent, si déjà connu (le
+    processus a terminé) — None tant qu'il tourne encore ou si l'information
+    n'est pas disponible."""
+    try:
+        if engine.returncode.done():
+            return engine.returncode.result()
+    except Exception:
+        pass
+    return None
+
+
+class _LimiteurRelances:
+    """Fenêtre glissante de relances automatiques (issue #79) — voir
+    MAX_RELANCES_PAR_FENETRE/FENETRE_RELANCES_SECONDES ci-dessus. Partagée
+    entre toutes les instances du moteur d'un même EngineManager."""
+
+    def __init__(self) -> None:
+        self._horodatages: collections.deque = collections.deque()
+        self._lock = threading.Lock()
+
+    def prochaine_relance(self) -> int | None:
+        """Enregistre une tentative de relance et retourne son rang (1, 2,
+        3...) dans la fenêtre courante, ou None si le quota est épuisé (plus
+        aucune relance autorisée tant que la fenêtre ne s'est pas vidée)."""
+        with self._lock:
+            maintenant = time.monotonic()
+            while self._horodatages and maintenant - self._horodatages[0] > FENETRE_RELANCES_SECONDES:
+                self._horodatages.popleft()
+            if len(self._horodatages) >= MAX_RELANCES_PAR_FENETRE:
+                return None
+            self._horodatages.append(maintenant)
+            return len(self._horodatages)
+
+
+def _appeler_avec_delai(action, engine: chess.engine.SimpleEngine):
+    """Exécute action(engine) avec un délai maximal (TIMEOUT_APPEL_SECONDES,
+    issue #79 point 1) — nécessaire uniquement pour les appels bornés en
+    profondeur, que chess.engine.SimpleEngine n'assortit lui-même d'aucun
+    timeout (cf. commentaire de TIMEOUT_APPEL_SECONDES). En cas de délai
+    dépassé, l'appel abandonné continue de tourner en arrière-plan sur
+    l'instance moteur, de toute façon remplacée par l'appelant (cf.
+    EngineManager._appel_protege) — son résultat, s'il arrive malgré tout
+    plus tard, est simplement ignoré."""
+    future = _EXECUTEUR_APPELS.submit(action, engine)
+    try:
+        return future.result(timeout=TIMEOUT_APPEL_SECONDES)
+    except concurrent.futures.TimeoutError:
+        raise TimeoutError(f"délai dépassé ({TIMEOUT_APPEL_SECONDES}s)")
 
 # ── Seuils d'évaluation (centipawns de perte) ────────────────────────────────
 SEUIL_BON         =  50   # < 50cp  → bon coup
@@ -215,17 +351,88 @@ class EngineManager:
         self._supports_wdl     = False
         self._supports_elo_limit = False
         self._supports_syzygy  = False
+        self._supports_hash    = False
+        self._supports_threads = False
         self._engine_name      = "Moteur UCI"
+
+        # Limiteur de relances automatiques (issue #79) partagé entre les 4
+        # instances — cf. _LimiteurRelances ci-dessus.
+        self._limiteur_relances = _LimiteurRelances()
 
         self._init_engines()
 
     # ── Initialisation ────────────────────────────────────────────────────────
 
+    def _configurer_ressources(self, engine: chess.engine.SimpleEngine) -> None:
+        """Fixe Hash/Threads explicitement sur une instance (issue #79, point
+        7) — cf. commentaire de HASH_MO/THREADS plus haut. À appeler avant
+        toute autre option, sur chaque instance créée (démarrage ou
+        relance)."""
+        reglages = {}
+        if self._supports_hash:
+            reglages["Hash"] = HASH_MO
+        if self._supports_threads:
+            reglages["Threads"] = THREADS
+        if reglages:
+            engine.configure(reglages)
+
+    def _creer_moteur_play(self) -> chess.engine.SimpleEngine:
+        engine = chess.engine.SimpleEngine.popen_uci(self._engine_path)
+        self._configurer_ressources(engine)
+        self._apply_elo(engine)
+        self._configure_syzygy(engine)
+        return engine
+
+    def _creer_moteur_eval(self) -> chess.engine.SimpleEngine:
+        engine = chess.engine.SimpleEngine.popen_uci(self._engine_path)
+        self._configurer_ressources(engine)
+        if self._supports_wdl:
+            engine.configure({"UCI_ShowWDL": True})
+        self._configure_syzygy(engine)
+        return engine
+
+    def _creer_moteur_pedagogique(self) -> chess.engine.SimpleEngine:
+        engine = chess.engine.SimpleEngine.popen_uci(self._engine_path)
+        self._configurer_ressources(engine)
+        if self._supports_skill_level:
+            engine.configure({
+                "UCI_LimitStrength": False,
+                "Skill Level": PEDAGOGIQUE_SKILL_LEVEL,
+            })
+        else:
+            logger.warning(f"{self._engine_name} ne supporte pas Skill Level.")
+        self._configure_syzygy(engine)
+        return engine
+
+    def _creer_moteur_finales(self) -> chess.engine.SimpleEngine:
+        engine = chess.engine.SimpleEngine.popen_uci(self._engine_path)
+        self._configurer_ressources(engine)
+        if self._supports_elo_limit:
+            engine.configure({"UCI_LimitStrength": False})
+        if self._supports_wdl:
+            engine.configure({"UCI_ShowWDL": True})
+        self._configure_syzygy(engine)
+        return engine
+
+    def _set_engine_play(self, engine) -> None:
+        self._engine_play = engine
+
+    def _set_engine_eval(self, engine) -> None:
+        self._engine_eval = engine
+
+    def _set_engine_pedagogique(self, engine) -> None:
+        self._engine_pedagogique = engine
+
+    def _set_engine_finales(self, engine) -> None:
+        self._engine_finales = engine
+
     def _init_engines(self) -> None:
-        """Lance les deux instances du moteur et détecte les capacités."""
+        """Lance les deux instances permanentes du moteur et détecte les
+        capacités (une seule fois, sur la toute première instance — ces
+        capacités dépendent du binaire Stockfish, pas de l'instance, et
+        restent donc valables après une relance, cf. _appel_protege)."""
         try:
             self._engine_play = chess.engine.SimpleEngine.popen_uci(self._engine_path)
-            self._engine_eval = chess.engine.SimpleEngine.popen_uci(self._engine_path)
             self._engine_name = self._engine_play.id.get("name", "Moteur UCI")
 
             # Détecter les options supportées
@@ -236,15 +443,16 @@ class EngineManager:
             self._supports_wdl = "UCI_ShowWDL" in options
             self._supports_skill_level = "Skill Level" in options
             self._supports_syzygy = "SyzygyPath" in options
+            self._supports_hash = "Hash" in options
+            self._supports_threads = "Threads" in options
 
             # Configurer le moteur de jeu (Elo limité)
+            self._configurer_ressources(self._engine_play)
             self._apply_elo(self._engine_play)
             self._configure_syzygy(self._engine_play)
 
             # Configurer le moteur d'évaluation (pleine force, rapide)
-            if self._supports_wdl:
-                self._engine_eval.configure({"UCI_ShowWDL": True})
-            self._configure_syzygy(self._engine_eval)
+            self._engine_eval = self._creer_moteur_eval()
 
             logger.info(f"Moteur : {self._engine_name}")
             logger.info(f"Elo limité : {self._supports_elo_limit} | WDL : {self._supports_wdl} | Syzygy : {self._supports_syzygy}")
@@ -252,6 +460,87 @@ class EngineManager:
         except Exception as e:
             logger.error(f"Impossible de lancer le moteur : {e}")
             raise
+
+    # ── Reprise automatique après panne (issue #79) ─────────────────────────
+
+    def _log_erreur_moteur(self, operation: str, message: str,
+                            code_sortie: int | None, nb_relances) -> None:
+        """Consigne une panne moteur dans MOTEUR_ERREURS_LOG_PATH (issue #79,
+        point 2) : heure, opération en cours, message d'erreur, code de
+        sortie du processus et dernières lignes de stderr si disponibles,
+        nombre de relances déjà tentées pour cette panne. Best-effort : une
+        erreur d'écriture du journal ne doit jamais faire échouer l'appel
+        moteur lui-même."""
+        logger.error(f"Erreur {operation} : {message}")
+        try:
+            path = MOTEUR_ERREURS_LOG_PATH
+            path.parent.mkdir(parents=True, exist_ok=True)
+            horodatage = time.strftime("%Y-%m-%d %H:%M:%S")
+            stderr_tail = " | ".join(_DERNIERES_LIGNES_STDERR) or "(indisponible)"
+            with path.open("a", encoding="utf-8") as f:
+                f.write(
+                    f"{horodatage}\topération={operation}\terreur={message}\t"
+                    f"code_sortie={code_sortie}\trelances={nb_relances}\t"
+                    f"stderr={stderr_tail}\n"
+                )
+        except OSError:
+            logger.error("Impossible d'écrire dans MOTEUR_ERREURS_LOG_PATH", exc_info=True)
+
+    def _appel_protege(self, nom_operation: str, lock: threading.Lock,
+                        obtenir, assigner, creer, action, repli):
+        """Exécute action(engine) sous `lock`, avec reprise automatique
+        (issue #79) si l'instance est morte (processus Stockfish terminé,
+        boucle d'événements morte, délai dépassé — TIMEOUT_APPEL_SECONDES —
+        ou toute autre exception de la bibliothèque UCI, ex. protocole
+        corrompu par un accès concurrent) : consigne la panne dans
+        MOTEUR_ERREURS_LOG_PATH, relance une nouvelle instance si le quota de
+        relances n'est pas épuisé (cf. _LimiteurRelances) et rejoue l'appel
+        une seule fois sur cette nouvelle instance. Retourne `repli` (valeur
+        de repli propre à l'appelant) si la panne persiste après relance, si
+        la relance elle-même échoue, ou si le quota est épuisé.
+
+        `obtenir`/`assigner` lisent/écrivent l'attribut _engine_* concerné
+        (ex. self._set_engine_eval) ; `creer` reconstruit une instance
+        fraîchement configurée (ex. self._creer_moteur_eval)."""
+        with lock:
+            engine = obtenir()
+            if engine is None:
+                return repli
+            try:
+                return _appeler_avec_delai(action, engine)
+            except Exception as premiere_exc:
+                code_sortie = _code_sortie_moteur(engine)
+                rang = self._limiteur_relances.prochaine_relance()
+                if rang is None:
+                    self._log_erreur_moteur(
+                        nom_operation,
+                        f"{premiere_exc} (relances épuisées, quota de "
+                        f"{MAX_RELANCES_PAR_FENETRE}/{FENETRE_RELANCES_SECONDES:.0f}s atteint)",
+                        code_sortie, MAX_RELANCES_PAR_FENETRE,
+                    )
+                    return repli
+                self._log_erreur_moteur(nom_operation, str(premiere_exc), code_sortie, rang)
+                if rang > 1:
+                    time.sleep(min(PAUSE_BASE_SECONDES * (rang - 1), PAUSE_MAX_SECONDES))
+                try:
+                    engine.close()
+                except Exception:
+                    pass
+                try:
+                    nouveau = creer()
+                except Exception as e_creation:
+                    self._log_erreur_moteur(nom_operation, f"relance impossible : {e_creation}", None, rang)
+                    assigner(None)
+                    return repli
+                assigner(nouveau)
+                try:
+                    return _appeler_avec_delai(action, nouveau)
+                except Exception as deuxieme_exc:
+                    self._log_erreur_moteur(
+                        nom_operation, f"échec après relance : {deuxieme_exc}",
+                        _code_sortie_moteur(nouveau), rang,
+                    )
+                    return repli
 
     def _apply_elo(self, engine: chess.engine.SimpleEngine) -> None:
         """Applique la limitation de force Elo sur une instance du moteur."""
@@ -310,6 +599,31 @@ class EngineManager:
             if self._engine_play:
                 self._apply_elo(self._engine_play)
 
+    def _ensure_engine_play(self):
+        """Relance paresseusement le moteur de jeu si une tentative de
+        relance précédente avait échoué et laissé _engine_play à None
+        (issue #79) — sans ça, un échec de _appel_protege lors de la
+        reconstruction (ex. binaire temporairement indisponible) aurait
+        bloqué get_move() de façon permanente jusqu'au redémarrage complet
+        de l'appli, au lieu de simplement retenter au prochain appel."""
+        if self._engine_play is None:
+            try:
+                self._engine_play = self._creer_moteur_play()
+            except Exception as e:
+                logger.error(f"Impossible de relancer le moteur de jeu : {e}")
+                self._engine_play = None
+        return self._engine_play
+
+    def _ensure_engine_eval(self):
+        """Pendant du ci-dessus pour le moteur d'évaluation (issue #79)."""
+        if self._engine_eval is None:
+            try:
+                self._engine_eval = self._creer_moteur_eval()
+            except Exception as e:
+                logger.error(f"Impossible de relancer le moteur d'évaluation : {e}")
+                self._engine_eval = None
+        return self._engine_eval
+
     def get_move(self, board: chess.Board, think_time: float = 1.0) -> chess.Move | None:
         """
         Demande le meilleur coup au moteur de jeu (Elo limité).
@@ -318,20 +632,15 @@ class EngineManager:
           board      : position actuelle
           think_time : temps de réflexion en secondes
 
-        Retourne le coup ou None en cas d'erreur.
-        """
-        with self._lock_play:
-            if not self._engine_play:
-                return None
-            try:
-                result = self._engine_play.play(
-                    board,
-                    chess.engine.Limit(time=think_time),
-                )
-                return result.move
-            except Exception as e:
-                logger.error(f"Erreur get_move : {e}")
-                return None
+        Retourne le coup ou None en cas d'erreur (y compris après une panne
+        moteur dont la reprise automatique, issue #79, n'a pas abouti)."""
+        def _action(engine):
+            return engine.play(board, chess.engine.Limit(time=think_time)).move
+        return self._appel_protege(
+            "get_move", self._lock_play,
+            self._ensure_engine_play, self._set_engine_play, self._creer_moteur_play,
+            _action, None,
+        )
 
     def _ensure_engine_pedagogique(self) -> None:
         """Lance à la demande la 3e instance, dédiée à l'adversaire automatique
@@ -340,16 +649,7 @@ class EngineManager:
         if self._engine_pedagogique:
             return
         try:
-            engine = chess.engine.SimpleEngine.popen_uci(self._engine_path)
-            if self._supports_skill_level:
-                engine.configure({
-                    "UCI_LimitStrength": False,
-                    "Skill Level": PEDAGOGIQUE_SKILL_LEVEL,
-                })
-            else:
-                logger.warning(f"{self._engine_name} ne supporte pas Skill Level.")
-            self._configure_syzygy(engine)
-            self._engine_pedagogique = engine
+            self._engine_pedagogique = self._creer_moteur_pedagogique()
         except Exception as e:
             logger.error(f"Impossible de lancer le moteur pédagogique : {e}")
             self._engine_pedagogique = None
@@ -359,19 +659,16 @@ class EngineManager:
         """Demande un coup à l'adversaire automatique affaibli du mode "partie
         pédagogique" (issue #8) — instance séparée de get_move(), qui reste à
         la disposition du mode partie libre à pleine force inchangée."""
-        with self._lock_pedagogique:
+        def _obtenir():
             self._ensure_engine_pedagogique()
-            if not self._engine_pedagogique:
-                return None
-            try:
-                result = self._engine_pedagogique.play(
-                    board,
-                    chess.engine.Limit(time=think_time),
-                )
-                return result.move
-            except Exception as e:
-                logger.error(f"Erreur get_move_pedagogique : {e}")
-                return None
+            return self._engine_pedagogique
+        def _action(engine):
+            return engine.play(board, chess.engine.Limit(time=think_time)).move
+        return self._appel_protege(
+            "get_move_pedagogique", self._lock_pedagogique,
+            _obtenir, self._set_engine_pedagogique,
+            self._creer_moteur_pedagogique, _action, None,
+        )
 
     def _ensure_engine_finales(self) -> None:
         """Lance à la demande la 4e instance, dédiée au mode "travail de
@@ -384,13 +681,7 @@ class EngineManager:
         if self._engine_finales:
             return
         try:
-            engine = chess.engine.SimpleEngine.popen_uci(self._engine_path)
-            if self._supports_elo_limit:
-                engine.configure({"UCI_LimitStrength": False})
-            if self._supports_wdl:
-                engine.configure({"UCI_ShowWDL": True})
-            self._configure_syzygy(engine)
-            self._engine_finales = engine
+            self._engine_finales = self._creer_moteur_finales()
         except Exception as e:
             logger.error(f"Impossible de lancer le moteur du mode finales : {e}")
             self._engine_finales = None
@@ -400,19 +691,16 @@ class EngineManager:
         démonstration, issue #32) — instance dédiée à pleine force, plus
         adaptée aux mats techniques longs (ex. cavalier+fou, jusqu'à 33 coups)
         que get_move(), qui reste Elo limité pour le mode partie libre."""
-        with self._lock_finales:
+        def _obtenir():
             self._ensure_engine_finales()
-            if not self._engine_finales:
-                return None
-            try:
-                result = self._engine_finales.play(
-                    board,
-                    chess.engine.Limit(time=think_time),
-                )
-                return result.move
-            except Exception as e:
-                logger.error(f"Erreur get_move_finales : {e}")
-                return None
+            return self._engine_finales
+        def _action(engine):
+            return engine.play(board, chess.engine.Limit(time=think_time)).move
+        return self._appel_protege(
+            "get_move_finales", self._lock_finales,
+            _obtenir, self._set_engine_finales,
+            self._creer_moteur_finales, _action, None,
+        )
 
     def evaluate(self, board: chess.Board, depth: int = 8, time_limit: float | None = None) -> dict:
         """
@@ -435,47 +723,53 @@ class EngineManager:
             "mate"    : int | None,   # coups avant mat (négatif = on se fait mater)
             "wdl"     : (int, int, int) | None,  # (victoire, nulle, défaite) /1000
             "best_move": str | None,  # meilleur coup UCI
+            "indisponible": bool,     # True si Stockfish n'a pas pu répondre
           }
-        """
-        with self._lock_eval:
-            if not self._engine_eval:
-                return {"cp": None, "mate": None, "wdl": None, "best_move": None}
-            try:
-                limit = chess.engine.Limit(time=time_limit) if time_limit else chess.engine.Limit(depth=depth)
-                info = self._engine_eval.analyse(
-                    board,
-                    limit,
-                    info=chess.engine.INFO_ALL,
-                )
-                score = info.get("score")
-                pv    = info.get("pv", [])
 
-                cp   = None
-                mate = None
-                wdl  = None
+        "indisponible" (issue #79) distingue une VRAIE panne moteur (panne
+        malgré la reprise automatique, ou quota de relances épuisé) d'une
+        position terminale légitime (cp et mate tous deux None, mais
+        "indisponible" absent/False) : avant ce correctif, les deux cas
+        étaient indiscernables pour evaluate_move/les appelants côté app.py,
+        qui pouvaient alors rendre un verdict "bon" inventé alors qu'aucune
+        analyse réelle n'avait eu lieu (constat réel, cf. rapport de
+        clôture)."""
+        repli = {"cp": None, "mate": None, "wdl": None, "best_move": None, "pv": [], "indisponible": True}
 
-                if score:
-                    pov_score = score.pov(board.turn)
-                    if pov_score.is_mate():
-                        mate = pov_score.mate()
-                    else:
-                        cp = pov_score.score()
-                    # WDL du point de vue du joueur actif
-                    if self._supports_wdl and score.wdl():
-                        w = score.wdl().pov(board.turn)
-                        wdl = (w.wins, w.draws, w.losses)
+        def _action(engine):
+            limit = chess.engine.Limit(time=time_limit) if time_limit else chess.engine.Limit(depth=depth)
+            info = engine.analyse(board, limit, info=chess.engine.INFO_ALL)
+            score = info.get("score")
+            pv    = info.get("pv", [])
 
-                best_move = pv[0].uci() if pv else None
+            cp   = None
+            mate = None
+            wdl  = None
 
-                # Ligne complète calculée par le moteur (pas seulement son
-                # premier coup), gardée en objets chess.Move bruts — issue #20 :
-                # evaluate_move s'en sert pour reconstituer en SAN la suite
-                # réellement calculée par Stockfish, à transmettre au coach.
-                return {"cp": cp, "mate": mate, "wdl": wdl, "best_move": best_move, "pv": pv}
+            if score:
+                pov_score = score.pov(board.turn)
+                if pov_score.is_mate():
+                    mate = pov_score.mate()
+                else:
+                    cp = pov_score.score()
+                # WDL du point de vue du joueur actif
+                if self._supports_wdl and score.wdl():
+                    w = score.wdl().pov(board.turn)
+                    wdl = (w.wins, w.draws, w.losses)
 
-            except Exception as e:
-                logger.error(f"Erreur evaluate : {e}")
-                return {"cp": None, "mate": None, "wdl": None, "best_move": None, "pv": []}
+            best_move = pv[0].uci() if pv else None
+
+            # Ligne complète calculée par le moteur (pas seulement son
+            # premier coup), gardée en objets chess.Move bruts — issue #20 :
+            # evaluate_move s'en sert pour reconstituer en SAN la suite
+            # réellement calculée par Stockfish, à transmettre au coach.
+            return {"cp": cp, "mate": mate, "wdl": wdl, "best_move": best_move, "pv": pv, "indisponible": False}
+
+        return self._appel_protege(
+            "evaluate", self._lock_eval,
+            self._ensure_engine_eval, self._set_engine_eval, self._creer_moteur_eval,
+            _action, repli,
+        )
 
     def _pv_to_san(self, board: chess.Board, moves: list[chess.Move]) -> str:
         """Convertit une suite de coups (objets chess.Move, calculés par le
@@ -557,6 +851,18 @@ class EngineManager:
             s'appliquerait sinon (un coup qui transforme un mat forcé EN
             FAVEUR du joueur en mat forcé CONTRE lui reste une gaffe,
             jamais relativisée).
+
+        Issue #79 : si l'analyse est réellement indisponible (panne moteur
+        malgré la reprise automatique, cf. evaluate()["indisponible"]) —
+        PAS une simple position terminale légitime —, qualite vaut None (et
+        delta_cp/best_move_uci valent aussi None, pv_info des chaînes vides
+        si return_pv=True). Avant ce correctif, ce cas de panne totale
+        retombait sur le même repli "bon", 0, None qu'une position
+        terminale normale : un verdict "bon" était donc rendu à l'appelant
+        (et transmis tel quel au coach) alors qu'aucune analyse réelle
+        n'avait eu lieu — un faux verdict, constaté en usage réel (cf.
+        rapport de clôture). Les appelants (app.py) doivent traiter
+        qualite is None comme "aucun verdict", jamais comme "bon".
         """
         if not self._analyse_active:
             if return_pv:
@@ -590,10 +896,16 @@ class EngineManager:
                     return qualite_f, delta_f, best_f, {"pv_coup_propose": pv_propose, "pv_meilleur_coup": pv_meilleur}
                 return qualite_f, delta_f, best_f
 
+            if eval_avant.get("indisponible") or eval_apres.get("indisponible"):
+                # Panne moteur réelle (issue #79), distincte d'une position
+                # terminale légitime ci-dessous : aucun verdict inventé.
+                if return_pv:
+                    return None, None, None, {"pv_coup_propose": "", "pv_meilleur_coup": ""}
+                return None, None, None
+
             if val_avant is None or val_apres_joueur is None:
-                # Position terminale ou évaluation indisponible (cas limite,
-                # ne devrait pas arriver en pratique sur un coup légal) :
-                # repli neutre.
+                # Position terminale légitime (cas limite, ne devrait pas
+                # arriver en pratique sur un coup légal) : repli neutre.
                 return _finish("bon", 0, best_move if always_return_best else None)
 
             delta_brut = max(0, val_avant - val_apres_joueur)
@@ -617,23 +929,26 @@ class EngineManager:
             best = best_move if best_move and best_move != move.uci() else None
 
             # Si coup mauvais mais pas de meilleur coup alternatif trouvé,
-            # relancer en MultiPV=2 pour obtenir le vrai meilleur coup
+            # relancer en MultiPV=2 pour obtenir le vrai meilleur coup —
+            # best-effort (issue #79) : passe par _appel_protege comme les
+            # autres appels moteur (reprise automatique + journalisation en
+            # cas de panne), mais une panne ici ne dégrade jamais le verdict
+            # déjà obtenu ci-dessus en "indisponible" — seul `best` reste
+            # None, exactement comme avant ce correctif.
             if qualite != "bon" and best is None:
-                try:
-                    with self._lock_eval:
-                        info_mpv = self._engine_eval.analyse(
-                            board,
-                            chess.engine.Limit(depth=depth),
-                            multipv=2,
-                        )
+                def _action_mpv(engine):
+                    info_mpv = engine.analyse(board, chess.engine.Limit(depth=depth), multipv=2)
                     if isinstance(info_mpv, list):
                         for entry in info_mpv:
                             pv = entry.get("pv", [])
                             if pv and pv[0].uci() != move.uci():
-                                best = pv[0].uci()
-                                break
-                except Exception as e:
-                    logger.warning(f"MultiPV fallback échoué : {e}")
+                                return pv[0].uci()
+                    return None
+                best = self._appel_protege(
+                    "evaluate_move_multipv", self._lock_eval,
+                    self._ensure_engine_eval, self._set_engine_eval, self._creer_moteur_eval,
+                    _action_mpv, None,
+                )
 
             best_final = (best if best is not None else best_move) if always_return_best else best
             return _finish(qualite, delta, best_final)
@@ -647,26 +962,22 @@ class EngineManager:
     def get_punishment_line(self, board: chess.Board, move: chess.Move,
                              depth: int = 12, max_moves: int = 3) -> list[str]:
         """
-        Retourne la ligne punitive après un coup humain.
-        """
-        with self._lock_eval:
-            if not self._engine_eval:
-                return []
-            try:
-                board_after = board.copy()
-                board_after.push(move)
-                info = self._engine_eval.analyse(
-                    board_after,
-                    chess.engine.Limit(depth=depth),
-                    info=chess.engine.INFO_PV,
-                )
-                pv = info.get("pv", [])
-                result = [m.uci() for m in pv[:max_moves]]
-                logger.debug(f"get_punishment_line: {result}")
-                return result
-            except Exception as e:
-                logger.error(f"Erreur get_punishment_line : {e}")
-                return []
+        Retourne la ligne punitive après un coup humain. Liste vide en cas
+        de panne moteur persistante (issue #79, reprise automatique déjà
+        tentée par _appel_protege) — comportement de repli inchangé."""
+        def _action(engine):
+            board_after = board.copy()
+            board_after.push(move)
+            info = engine.analyse(board_after, chess.engine.Limit(depth=depth), info=chess.engine.INFO_PV)
+            pv = info.get("pv", [])
+            result = [m.uci() for m in pv[:max_moves]]
+            logger.debug(f"get_punishment_line: {result}")
+            return result
+        return self._appel_protege(
+            "get_punishment_line", self._lock_eval,
+            self._ensure_engine_eval, self._set_engine_eval, self._creer_moteur_eval,
+            _action, [],
+        )
 
     def get_multipv(self, board: chess.Board, n: int = 3,
                     depth: int = 12) -> list[dict]:
@@ -676,37 +987,31 @@ class EngineManager:
 
         Retourne une liste de dict :
           [{"move": str (UCI), "cp": int, "mate": int | None}, ...]
-        """
-        with self._lock_eval:
-            if not self._engine_eval:
-                return []
-            try:
-                infos = self._engine_eval.analyse(
-                    board,
-                    chess.engine.Limit(depth=depth),
-                    multipv=n,
-                    info=chess.engine.INFO_ALL,
-                )
-                result = []
-                for info in infos:
-                    pv    = info.get("pv", [])
-                    score = info.get("score")
-                    if not pv:
-                        continue
-                    move_uci = pv[0].uci()
-                    cp   = None
-                    mate = None
-                    if score:
-                        pov = score.pov(board.turn)
-                        if pov.is_mate():
-                            mate = pov.mate()
-                        else:
-                            cp = pov.score()
-                    result.append({"move": move_uci, "cp": cp, "mate": mate})
-                return result
-            except Exception as e:
-                logger.error(f"Erreur get_multipv : {e}")
-                return []
+        Liste vide en cas de panne moteur persistante (issue #79)."""
+        def _action(engine):
+            infos = engine.analyse(board, chess.engine.Limit(depth=depth), multipv=n, info=chess.engine.INFO_ALL)
+            result = []
+            for info in infos:
+                pv    = info.get("pv", [])
+                score = info.get("score")
+                if not pv:
+                    continue
+                move_uci = pv[0].uci()
+                cp   = None
+                mate = None
+                if score:
+                    pov = score.pov(board.turn)
+                    if pov.is_mate():
+                        mate = pov.mate()
+                    else:
+                        cp = pov.score()
+                result.append({"move": move_uci, "cp": cp, "mate": mate})
+            return result
+        return self._appel_protege(
+            "get_multipv", self._lock_eval,
+            self._ensure_engine_eval, self._set_engine_eval, self._creer_moteur_eval,
+            _action, [],
+        )
 
     def analyser_partie(self, moves_uci: list[str],
                         callback=None,

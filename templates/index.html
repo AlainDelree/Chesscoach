@@ -1760,6 +1760,12 @@
             <button onclick="startNextExercise()">Exercice suivant</button>
           </div>
           <div id="exercise-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+          <!-- Bouton "Réessayer" (issue #79, point 3) : masqué par défaut,
+               affiché par exercise.js quand l'analyse Stockfish du coup
+               proposé échoue (panne moteur persistante ou délai dépassé
+               côté interface) — rejoue exercise_answer avec le même coup,
+               sans jamais bloquer "Exercice suivant" ci-dessus. -->
+          <button type="button" id="exercise-retry-btn" onclick="exerciseRetryAnalysis()" style="display:none; margin-top:4px; padding:6px 10px; font-size:0.8rem;">Réessayer</button>
           <!-- Ligne d'état dédiée à la source "Problèmes Lichess" (issue
                #78) : "Problème <note> · ton niveau en <catégorie> <niveau>" —
                masquée pour la source "mes erreurs" (aucun changement visuel
