@@ -47,8 +47,6 @@ const GAME_ALWAYS_RELOCATE = [
   ["game-coach-lines",    "game-tab-panel-lignes"],
   ["game-analysis-panel", "game-tab-panel-analyse"],
   ["historique",          "game-tab-panel-coups"],
-  ["llm-model-selector",  "game-model-popup"],
-  ["usage-tokens-widget", "game-menu-usage"],
   ["review-controls",              "board-sticky-wrap"],
   ["shared-mode-controls",         "board-sticky-wrap"],
   ["mobile-pedagogic-start-slot",  "board-sticky-wrap"],
@@ -57,6 +55,18 @@ const GAME_ALWAYS_RELOCATE = [
   ["mobile-game-idle-msg",         "board-sticky-wrap"],
   ["mobile-game-over-bar",         "board-sticky-wrap"],
   ["game-tab-bar",                 "board-sticky-wrap"],
+];
+
+// Pastille de modèle + compteur de jetons (issue #81 point 4) : rejoignent la
+// rangée d'en-tête commune (#game-model-popup/#game-menu-usage) dès qu'on est
+// sur mobile, quel que soit le mode affiché — contrairement à
+// GAME_ALWAYS_RELOCATE ci-dessus (réservé aux 4 modes de partie), placé/
+// restauré uniquement selon le seuil <900px (_gameUiQuery), pas selon
+// isGameUiActive(). Mêmes id/logique (llm_model.js/usage_tokens.js), aucune
+// duplication.
+const HEADER_ALWAYS_RELOCATE = [
+  ["llm-model-selector",  "game-model-popup"],
+  ["usage-tokens-widget", "game-menu-usage"],
 ];
 
 // Contrôles propres à chaque mode (issue #70 point 8 — choix retenu : le
@@ -76,7 +86,9 @@ const _gameRelocatableHomes = {};
 
 function _ensureGameRelocatablesRegistered() {
   if (_gameRelocatablesReady) return;
-  const ids = GAME_ALWAYS_RELOCATE.map(([id]) => id).concat(Object.values(GAME_MODE_EXTRA));
+  const ids = GAME_ALWAYS_RELOCATE.map(([id]) => id)
+    .concat(HEADER_ALWAYS_RELOCATE.map(([id]) => id))
+    .concat(Object.values(GAME_MODE_EXTRA));
   ids.forEach((id) => {
     const el = document.getElementById(id);
     if (el) _gameRelocatableHomes[id] = { homeParent: el.parentElement, homeNextSibling: el.nextSibling };
@@ -115,6 +127,10 @@ function switchGameTab(tabKey) {
     }
     if (panel) panel.classList.toggle("active", isActive);
   });
+  // Issue #81 point 1 : un onglet dont le contenu dépasse la zone visible
+  // (ex. Coups sur une longue partie) passe tout de suite au plateau réduit,
+  // plutôt que de laisser Alain découvrir après coup qu'il doit défiler.
+  if (typeof _autoCompactForOverflow === "function") _autoCompactForOverflow();
 }
 
 // Point de nouveauté (point 7) : appelé depuis game_coach_lines.js/
@@ -151,9 +167,14 @@ function gameMenuToggleModelPopup() {
   if (mp) mp.classList.toggle("open");
 }
 
+// Issue #81 point 4 : le menu est désormais accessible dans tous les modes
+// sur mobile (pas seulement les 4 modes de partie) — ferme sur un clic
+// extérieur dès que la page est en disposition mobile, plutôt que
+// isGameUiActive() (gameMenuClose() est un no-op si le menu n'était pas
+// ouvert, sans risque à l'appeler plus largement).
 document.addEventListener("click", (e) => {
   const slot = document.getElementById("mobile-mode-bar-slot");
-  if (!slot || !isGameUiActive()) return;
+  if (!slot || !_gameUiQuery.matches) return;
   if (!slot.contains(e.target)) gameMenuClose();
 });
 
@@ -186,21 +207,30 @@ document.addEventListener("click", (e) => {
 const GAME_BOARD_MIN_SIZE = 170;
 
 // ── Réglage utilisateur "Taille du plateau" (issue #74) ─────────────────────
-// Menu "..." des modes de partie mobile — 3 choix simples, Normal reprenant
-// le comportement de l'issue #71 (44% de la hauteur d'écran visée, ~180px de
-// contenu visible garantis sous les onglets). SEUL endroit où ces 3
-// pourcentages et leurs garanties associées sont définis (point 3) : ni
+// Menu "..." des modes de partie mobile — 3 choix simples. SEUL endroit où
+// ces 3 pourcentages et leurs garanties associées sont définis (point 3) : ni
 // board.css ni index.html ne redéfinissent ces nombres, --bd-size-game-pct
 // (posée par _applyGameBoardSizeChoice ci-dessous) et minVisibleBelowTabs
 // (consommée par _updateGameBoardMaxSize) sont l'unique chemin par lequel
-// ils atteignent le CSS/le calcul de --bd-size-game-max. Grand abaisse la
-// garantie de contenu visible (120px) plutôt que de la conserver à 180px :
-// le choix explicite d'Alain prime sur cette garantie, qui n'est là que pour
-// éviter qu'un plateau trop grand n'avale tout l'écran à son insu.
+// ils atteignent le CSS/le calcul de --bd-size-game-max.
+//
+// minVisibleBelowTabs distinct par préréglage (issue #81 point 2) : avec une
+// seule valeur partagée (180px avant cette issue), Compact et Normal
+// retombaient quasi systématiquement sur le MÊME plafond mesuré
+// (--bd-size-game-max) sur un téléphone courant — la garantie de contenu
+// visible écrasait alors le choix explicite d'Alain, qui constatait une
+// taille identique pour les deux réglages (rapport de test GSM). Mesuré avec
+// Playwright (free_play, 1 coup joué, chrome au-dessus/en dessous du plateau
+// ≈350px à 390×750 et 360×640) : 150/100/60px laissent respectivement Compact
+// (32%) et Normal (40%) atteindre leur propre pourcentage SANS être clampés
+// au même plafond à 390×750, Grand restant toujours le plus grand des trois
+// aux deux largeurs. Grand garde la garantie la plus basse (le choix exprès
+// d'un plateau plus grand prime sur elle), Compact la plus haute (il a de
+// toute façon le moins besoin d'un grand plateau).
 const GAME_BOARD_SIZE_PRESETS = {
-  compact: { pct: 38, minVisibleBelowTabs: 180 },
-  normal:  { pct: 44, minVisibleBelowTabs: 180 },
-  grand:   { pct: 52, minVisibleBelowTabs: 120 },
+  compact: { pct: 32, minVisibleBelowTabs: 150 },
+  normal:  { pct: 40, minVisibleBelowTabs: 100 },
+  grand:   { pct: 52, minVisibleBelowTabs: 60 },
 };
 const GAME_BOARD_SIZE_DEFAULT = "normal";
 // Propre à l'appareil (localStorage, pas de synchronisation compte/serveur) :
@@ -236,8 +266,25 @@ function _currentGameBoardSizePreset() {
   return GAME_BOARD_SIZE_PRESETS[_gameBoardSizeChoice] || GAME_BOARD_SIZE_PRESETS[GAME_BOARD_SIZE_DEFAULT];
 }
 
+// Familles Exercice/Bibliothèque-Éditeur (issue #81 point 4) : même réglage
+// Compact/Normal/Grand que GAME_BOARD_SIZE_PRESETS ci-dessus (une seule
+// valeur stockée, "commune aux modes"), mais rapporté à la plage de hauteur
+// déjà en place pour chacun de ces modes avant cette issue plutôt qu'à celle
+// des 4 modes de partie — Normal reproduit exactement l'ancienne valeur fixe
+// (30dvh pour l'Exercice, 58dvh pour Bibliothèque/Éditeur) pour qu'activer ce
+// réglage ne change rien par défaut. Pas de garantie de contenu visible ici
+// (pas d'onglets Coach/Lignes/Analyse/Coups dans ces modes) : un simple
+// pourcentage suffit, bordé par la même largeur d'écran qu'avant (calc(100vw
+// - 76px) pour l'Exercice qui garde coordonnées/barre d'éval visibles,
+// calc(100vw - 52px) pour Bibliothèque/Éditeur qui les masquent, cf. <style>).
+const EXERCISE_BOARD_SIZE_PCT = { compact: 22, normal: 30, grand: 38 };
+const WIDE_BOARD_SIZE_PCT     = { compact: 46, normal: 58, grand: 68 };
+
 function _applyGameBoardSizeChoice() {
+  const key = _gameBoardSizeChoice;
   document.documentElement.style.setProperty("--bd-size-game-pct", `${_currentGameBoardSizePreset().pct}dvh`);
+  document.documentElement.style.setProperty("--bd-size-exercise-pct", `${EXERCISE_BOARD_SIZE_PCT[key] || EXERCISE_BOARD_SIZE_PCT[GAME_BOARD_SIZE_DEFAULT]}dvh`);
+  document.documentElement.style.setProperty("--bd-size-wide-pct", `${WIDE_BOARD_SIZE_PCT[key] || WIDE_BOARD_SIZE_PCT[GAME_BOARD_SIZE_DEFAULT]}dvh`);
 }
 
 function _refreshGameBoardSizeMenuUI() {
@@ -361,10 +408,67 @@ function _updateBoardCompactState() {
   wrap.classList.toggle("board-compact", focused || scrolled);
 }
 
+// Contenu de l'onglet actif plus haut que la zone visible restante (issue
+// #81 point 1) — mesuré depuis sa position RÉELLE à l'écran (scroll courant
+// compris), donc vrai aussi bien tout en haut de page (plateau encore
+// complet) qu'après défilement. Marge de tolérance (BOARD_COMPACT_SCROLL_
+// THRESHOLD, déjà utilisé pour le déclenchement au scroll ci-dessous) : la
+// garantie de contenu visible sous les onglets (minVisibleBelowTabs,
+// 60-150px selon le préréglage) est déjà volontairement étroite — sans cette
+// marge, le simple message d'état vide ("Aucune ligne pour l'instant...",
+// mesuré à ~112px) dépasserait de quelques px et basculerait le plateau en
+// réduit dès l'ouverture de l'onglet, avant même d'avoir un vrai contenu à
+// lire (repéré avec Playwright, cf. rapport de clôture).
+function _activeTabContentOverflows() {
+  const panel = document.querySelector(".game-tab-panel.active");
+  if (!panel) return false;
+  return (panel.getBoundingClientRect().top + panel.scrollHeight) > (window.innerHeight + BOARD_COMPACT_SCROLL_THRESHOLD);
+}
+
+// Déclenche le plateau réduit quand le contenu de l'onglet actif déborde de
+// l'écran (point 1) — appelée seulement aux points de coupure concernés
+// (ouverture d'un onglet, arrivée d'une réponse du coach), jamais depuis le
+// scroll/focus ci-dessus : ADDITIVE uniquement (ne referme jamais le plateau
+// réduit tout seul), pour ne pas annuler un retour au plateau complet
+// explicite (boardCompactExpand) si le contenu déborde toujours juste après.
+function _autoCompactForOverflow() {
+  if (!isGameUiActive() || _linePlaybackActive() || !_isCurrentGameRunning()) return;
+  const wrap = document.getElementById("board-sticky-wrap");
+  if (!wrap) return;
+  if (_activeTabContentOverflows()) wrap.classList.add("board-compact");
+}
+
+// Retour au plateau complet forcé (point 1 : coup joué) — plus léger que
+// boardCompactExpand() ci-dessous, ne déplace pas le défilement ni le focus
+// (jouer un coup ne doit pas faire sauter la page, seulement redonner sa
+// taille normale au plateau).
+function _forceBoardFull() {
+  const wrap = document.getElementById("board-sticky-wrap");
+  if (wrap) wrap.classList.remove("board-compact");
+}
+
 function boardCompactExpand() {
   if (document.activeElement && typeof document.activeElement.blur === "function") document.activeElement.blur();
   if (typeof window.scrollTo === "function") window.scrollTo({ top: 0, behavior: "smooth" });
   _updateBoardCompactState();
+}
+
+// Appelée depuis renderHistory() (board.js, déjà invoquée après chaque coup,
+// tous modes confondus) — un coup réellement joué (le compte de coups
+// augmente) redonne sa taille complète au plateau (point 1), même si le
+// contenu d'un onglet encore affiché déborde toujours de l'écran (ex. rejouer
+// juste après avoir consulté l'onglet Coups d'une longue partie).
+let _lastLiveMoveCount = 0;
+function _mobileGameOnMoveCountChanged(count) {
+  if (isGameUiActive() && count > _lastLiveMoveCount) _forceBoardFull();
+  _lastLiveMoveCount = count;
+}
+
+// Appelée depuis _coachRenderBubble() (board.js) à l'arrivée de chaque
+// réponse du coach (point 1) — une réponse longue mérite la place de lecture
+// maximale, même si Alain n'a pas encore défilé ni touché le plateau réduit.
+function _mobileGameOnCoachMessage() {
+  if (typeof _autoCompactForOverflow === "function") _autoCompactForOverflow();
 }
 
 // onclick de #board-full-view (issue #71 point 4) : n'agit qu'en état
@@ -497,6 +601,21 @@ function onGameUiRefresh() {
   if (typeof placeOpeningStartButtonsForViewport === "function") placeOpeningStartButtonsForViewport();
   if (typeof placeFinaleStartButtonsForViewport === "function") placeFinaleStartButtonsForViewport();
 
+  // Pastille de modèle + compteur de jetons (issue #81 point 4) : rejoignent
+  // la rangée d'en-tête commune dès qu'on est sur mobile, quel que soit le
+  // mode — indépendant de isGameUiActive() ci-dessous (HEADER_ALWAYS_RELOCATE,
+  // contrairement à GAME_ALWAYS_RELOCATE, n'est jamais réservé aux 4 modes de
+  // partie).
+  const mobile = _gameUiQuery.matches;
+  HEADER_ALWAYS_RELOCATE.forEach(([id, target]) => {
+    if (mobile) _placeRelocatable(id, target); else _restoreRelocatable(id);
+  });
+
+  // Issue #81 point 3 : état (grisé + explication) du bouton "Analyser cette
+  // partie" — recalculé à chaque rafraîchissement (mode/onglet/coup/fin de
+  // partie), que l'écran de jeu mobile soit actif ou non (game_analysis.js).
+  if (typeof _updateGameAnalysisAvailability === "function") _updateGameAnalysisAvailability();
+
   const active = isGameUiActive();
   document.body.classList.toggle("mobile-game-active", active);
   // Issue #71 point 3 : plateau élargi de Bibliothèque/Revue PGN et de
@@ -506,6 +625,19 @@ function onGameUiRefresh() {
     "mobile-wide-board",
     !active && (currentModeTab === "library" || currentModeTab === "editor")
   );
+  // Issue #81 point 4 : famille de taille de plateau propre au mode Exercice
+  // (coordonnées/barre d'éval gardées visibles, contrairement à
+  // "mobile-wide-board" ci-dessus).
+  document.body.classList.toggle(
+    "mobile-size-exercise-active",
+    !active && currentModeTab === "exercise"
+  );
+  // Issue #81 point 5 : la collection de parties PGN/l'import/le programme
+  // d'entraînement (#mobile-bottom-slot) et le panneau d'analyse de partie
+  // (#mobile-analysis-slot) ne concernent que la Bibliothèque/Revue PGN —
+  // posée pour tous les autres onglets (Exercice/Éditeur ; les 4 modes de
+  // partie ont déjà leur propre règle "body.mobile-game-active", <style>).
+  document.body.classList.toggle("mobile-non-library-tab", currentModeTab !== "library");
 
   if (!active) {
     gameMenuClose();

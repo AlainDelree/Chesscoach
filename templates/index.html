@@ -270,6 +270,16 @@
     #board-file-column { display: flex; flex-direction: column; align-items: center; gap: 4px; }
     #coord-file { display: flex; justify-content: space-around; width: var(--bd-size); }
     .material-row { min-height: 22px; }
+    /* État vide (issue #81 point 3) : onglets Lignes/Coups mobiles ET
+       #historique-column grand écran — même style que #coach-empty/
+       #mobile-game-idle-msg (texte atténué, centré), hors media query pour
+       s'appliquer aussi au grand écran. */
+    .game-tab-empty-msg {
+      color: var(--cc-text-muted);
+      font-size: 0.82rem;
+      text-align: center;
+      padding: 20px 8px;
+    }
     /* #board-sticky-wrap (issue #69 point 1) : même display:flex/align-items/
        gap que #board-column, pour que ses enfants (mobile-pedagogic-start-slot,
        bandeau de fin de partie, matériel, plateau, barre de lecture des
@@ -472,13 +482,26 @@
          mobile_game.js (onGameUiRefresh), mêmes deux onglets que
          placeModeTabBarForViewport. Mode exercice volontairement hors de
          cette classe (n'utilise pas ce plateau élargi, cf. rapport de
-         clôture). */
+         clôture). --bd-size-wide-pct (issue #81 point 4, mobile_game.js) :
+         "58dvh" par défaut (valeur Normal, inchangée) — rendu réglable par
+         Compact/Normal/Grand, partagé avec #mobile-size-exercise-active et
+         body.mobile-game-active ci-dessous (même réglage, 3 familles de
+         pourcentage distinctes). */
       body.mobile-wide-board {
-        --bd-size: min(58vh, 480px, calc(100vw - 52px));
+        --bd-size: min(var(--bd-size-wide-pct, 58dvh), 480px, calc(100vw - 52px));
       }
       body.mobile-wide-board #coord-rank,
       body.mobile-wide-board #coord-file {
         display: none;
+      }
+
+      /* Mode exercice (issue #81 point 4) : garde ses propres coordonnées/
+         barre d'éval visibles (pas .mobile-wide-board, cf. rapport de
+         clôture de l'issue #71) — famille de pourcentage dédiée, "30dvh" par
+         défaut (valeur Normal, reprend exactement l'ancien --bd-size de
+         :root ci-dessus pour ce mode). */
+      body.mobile-size-exercise-active {
+        --bd-size: min(var(--bd-size-exercise-pct, 30dvh), 420px, calc(100vw - 76px));
       }
 
       /* Issue #69 point 4 : petite barre de commande (Stop / "Revenir à la
@@ -806,11 +829,18 @@
     /* ── Issue #70 : écran de partie mobile (plateau fixe, onglets, bande
        compacte) — d'après la maquette design/partie_mobile/ (Claude Design,
        référence de disposition/comportement, pas de code ni de couleurs).
-       Tout ce qui suit n'est actif que sous <body class="mobile-game-active">
-       (posée par mobile_game.js : <900px ET onglet de mode parmi
-       free/pedagogic/opening/finale) — les modes exercice/bibliothèque/
-       éditeur et le grand écran gardent la disposition existante (issues
-       #50/#63/#65/#69), entièrement inchangée en dehors de cette classe. */
+       La rangée d'en-tête combinée (pastille de modèle + menu "...", juste
+       en dessous) s'applique désormais à TOUS les modes sur mobile (issue
+       #81 point 4 — auparavant réservée à <body class="mobile-game-active">,
+       free/pedagogic/opening/finale) : Bibliothèque/Exercice/Éditeur y
+       gagnent l'accès au réglage "Taille du plateau"/au compteur de jetons/
+       à "Coût API", sans dupliquer le menu (une seule instance globale,
+       réglage commun). "Extraire le FEN"/"Importer un PGN"/les contrôles
+       propres à un mode de partie (.game-menu-item-gameonly,
+       #game-menu-mode-extra) restent, eux, réservés aux 4 modes de partie
+       (masqués ci-dessous hors de mobile-game-active) ; le reste de ce bloc
+       (onglets Coach/Lignes/Analyse/Coups, plateau réduit...) reste lui
+       entièrement conditionné à mobile-game-active, inchangé. */
     @media (max-width: 900px) {
       /* En-tête combiné (point 1) : sélecteur de mode existant + pastille de
          modèle + menu "..." sur une seule ligne, dans #mobile-mode-bar-slot
@@ -821,38 +851,30 @@
          (mobile_game.js), sans dupliquer leur logique (llm_model.js/
          usage_tokens.js retrouvent leurs éléments par id, peu importe leur
          parent réel — même principe que placeModeTabBarForViewport). */
-      body.mobile-game-active header { display: none; }
+      header { display: none; }
       /* #mobile-mode-bar-slot est maintenant sticky+position dans tous les
-         modes (règle générale ci-dessus, issue #71 point 1) — reste ici
-         uniquement ce qui est spécifique au mode jeu (répartition flex avec
-         la pastille de modèle/le menu "..."). Ancre déjà #game-model-popup/
-         #game-menu-dropdown (position:absolute, top:100%) via ce même
-         sticky, plus besoin d'un position:relative dédié. */
-      body.mobile-game-active #mobile-mode-bar-slot .mode-tab-bar {
+         modes (règle générale ci-dessus, issue #71 point 1) — reste ici la
+         répartition flex avec la pastille de modèle/le menu "...". Ancre
+         déjà #game-model-popup/#game-menu-dropdown (position:absolute,
+         top:100%) via ce même sticky, plus besoin d'un position:relative
+         dédié. */
+      #mobile-mode-bar-slot .mode-tab-bar {
         order: 1;
         flex: 1;
         min-width: 0;
         padding: 0;
       }
-      #game-model-pill, #game-menu-btn { display: none; }
-      body.mobile-game-active #game-model-pill {
+      #game-model-pill, #game-menu-btn {
         display: inline-flex;
-        order: 2;
         flex-shrink: 0;
-        padding: 8px 12px;
         min-height: 0;
       }
-      body.mobile-game-active #game-menu-btn {
-        display: inline-flex;
-        order: 3;
-        flex-shrink: 0;
-        padding: 8px 10px;
-        min-height: 0;
-      }
+      #game-model-pill { order: 2; padding: 8px 12px; }
+      #game-menu-btn   { order: 3; padding: 8px 10px; }
       #game-model-popup, #game-menu-dropdown { display: none; }
       #game-model-popup.open, #game-menu-dropdown.open { display: block; }
-      body.mobile-game-active #game-model-popup,
-      body.mobile-game-active #game-menu-dropdown {
+      #game-model-popup,
+      #game-menu-dropdown {
         position: absolute;
         right: 8px;
         top: 100%;
@@ -866,7 +888,7 @@
         max-width: calc(100vw - 16px);
         box-sizing: border-box;
       }
-      body.mobile-game-active #game-model-popup #llm-model-selector { width: 100%; justify-content: center; }
+      #game-model-popup #llm-model-selector { width: 100%; justify-content: center; }
       .game-menu-item {
         display: block;
         width: 100%;
@@ -884,6 +906,11 @@
       .game-menu-section-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--cc-text-muted); padding: 8px 6px 2px; }
       #game-menu-usage { font-size: 0.78rem; color: var(--cc-text-muted); padding: 6px; }
       #game-menu-mode-extra:empty { display: none; }
+      /* Réservé aux 4 modes de partie (issue #81 point 5) : "Extraire le
+         FEN"/"Importer un PGN" n'ont de sens que là (Bibliothèque a sa
+         propre navigation/import dans son onglet, Exercice/Éditeur n'ont pas
+         de PGN à extraire/importer au sens de ces boutons). */
+      body:not(.mobile-game-active) .game-menu-item-gameonly { display: none; }
 
       /* Réglage "Taille du plateau" (issue #74) : 3 boutons pleine largeur
          côte à côte (plutôt qu'un <select>, moins sûr au toucher) — hauteur
@@ -1192,14 +1219,19 @@
       body.mobile-game-active #historique-column {
         display: none;
       }
-      /* Issue #70 point 3 : la collection de parties, le programme
-         d'entraînement et les parties enregistrées ne figurent plus sur
-         l'écran de partie (ils restent dans la Bibliothèque) — "Importer un
-         PGN" y est remplacé par l'entrée du menu "...". Ce slot continue de
-         recevoir ces blocs par _placeMobileRelocatablesForViewport
-         (controls.js, issue #69, inchangé) pour les autres modes mobiles ;
-         masqué ici uniquement le temps que le mode jeu est actif. */
-      body.mobile-game-active #mobile-bottom-slot { display: none; }
+      /* Issue #70 point 3, généralisé issue #81 point 5 : la collection de
+         parties, l'import PGN et le programme d'entraînement ne figurent
+         plus que dans la Bibliothèque/Revue PGN — ni dans les 4 modes de
+         partie (masqué ici), ni en Exercice/Éditeur (masqué par la classe
+         générale ci-dessous, posée par mobile_game.js dès que l'onglet
+         actif n'est pas "library"). #mobile-analysis-slot (reçoit
+         #game-analysis-panel, lui-même désormais dans l'onglet Bibliothèque,
+         cf. templates/index.html) suit la même règle. */
+      body.mobile-game-active #mobile-bottom-slot,
+      body.mobile-non-library-tab #mobile-bottom-slot,
+      body.mobile-non-library-tab #mobile-analysis-slot {
+        display: none;
+      }
       .game-tab-bar {
         display: flex;
         gap: 2px;
@@ -1290,8 +1322,8 @@
     <div id="game-model-popup"></div>
     <button type="button" id="game-menu-btn" onclick="gameMenuToggleDropdown()">⋯</button>
     <div id="game-menu-dropdown">
-      <button type="button" class="game-menu-item" onclick="extraireFen(); gameMenuClose();">Extraire le FEN</button>
-      <label class="game-menu-item" style="cursor:pointer;">Importer un PGN
+      <button type="button" class="game-menu-item game-menu-item-gameonly" onclick="extraireFen(); gameMenuClose();">Extraire le FEN</button>
+      <label class="game-menu-item game-menu-item-gameonly" style="cursor:pointer;">Importer un PGN
         <input type="file" accept=".pgn,.txt" style="display:block; margin-top:4px; font-size:0.78rem;" onchange="loadPgnFile(event); gameMenuClose();">
       </label>
       <div class="game-menu-section-title">Taille du plateau</div>
@@ -1435,16 +1467,6 @@
         <span id="review-best-move-san" style="display:none; color:#1a9bc0;"></span>
       </div>
       <div id="fen-extract-status" style="font-size:0.78rem; color:var(--cc-text-muted); word-break:break-all;"></div>
-      <!-- Issue #69 point 2 : déplacé en bas de page sur mobile par JS
-           (placeMobileBottomBlocksForViewport, controls.js) — ne sert pas
-           pendant la partie ; emplacement et logique (loadPgnFile) inchangés
-           sur grand écran. -->
-      <div id="single-pgn-import-block">
-        <label style="font-size:0.82rem;">Importer un PGN :
-          <input type="file" accept=".pgn,.txt" onchange="loadPgnFile(event)">
-        </label>
-      </div>
-
       <!-- ── Barre de contrôle mutualisée (issue #15) ──────────────────────
            Agit sur le mode interactif actuellement actif (au plus un à la
            fois, cf. controls.js/activeMode) : les panneaux ci-dessous ne
@@ -1522,7 +1544,14 @@
         <button type="button" class="game-tab-btn" id="game-tab-btn-coups" onclick="switchGameTab('coups')">Coups<span class="game-tab-dot"></span></button>
       </div>
       <div class="game-tab-panel" id="game-tab-panel-coach"></div>
-      <div class="game-tab-panel" id="game-tab-panel-lignes"></div>
+      <!-- #game-tab-lignes-empty (issue #81 point 3) : état vide explicite,
+           affiché par renderGameCoachLinesTable (game_coach_lines.js) tant
+           qu'aucune ligne n'a été citée par le coach — #game-coach-lines
+           (déplacé ici par mobile_game.js) reste display:none dans ce cas,
+           l'onglet n'était donc auparavant que silencieux. -->
+      <div class="game-tab-panel" id="game-tab-panel-lignes">
+        <div id="game-tab-lignes-empty" class="game-tab-empty-msg">Aucune ligne pour l'instant. Demande au coach, par exemple : « Que devais-je jouer au coup 8 ? »</div>
+      </div>
       <div class="game-tab-panel" id="game-tab-panel-analyse"></div>
       <div class="game-tab-panel" id="game-tab-panel-coups">
         <h2 style="font-size:1rem; font-family:var(--cc-font-heading); font-weight:400; margin:0 0 8px; color:var(--cc-text);">Historique des coups</h2>
@@ -1593,6 +1622,12 @@
                "Expliquer ce coup" à la demande (pas d'appel automatique). -->
           <div id="game-analysis-panel" style="margin-top:10px; padding-top:8px; border-top:1px solid #dde6ee;">
             <button id="game-analysis-btn" onclick="analyserPartieCourante()">Analyser cette partie</button>
+            <!-- #game-analysis-help (issue #81 point 3) : phrase d'explication
+                 affichée tant que l'analyse n'est pas possible (bouton grisé en
+                 même temps, cf. _updateGameAnalysisAvailability, game_analysis.js) —
+                 remplace l'ancien silence total de l'onglet Analyse avant tout
+                 clic, repéré lors du test GSM. -->
+            <div id="game-analysis-help" style="font-size:0.78rem; color:var(--cc-text-muted); margin-top:2px; font-style:italic;"></div>
             <!-- Indicateur d'attente sans compteur (issue #70 point 4) —
                  classe "show" posée/retirée par game_analysis.js, sans effet
                  hors du mode jeu mobile (cf. <style>). -->
@@ -1600,6 +1635,30 @@
             <div id="game-analysis-status" style="font-size:0.8rem; color:var(--cc-text-muted); margin-top:4px;"></div>
             <div id="game-analysis-coach-status" style="font-size:0.8rem; color:var(--cc-text-muted); margin-top:2px; font-style:italic;"></div>
             <ul id="game-analysis-report" style="list-style:none; margin:6px 0 0; padding:0; max-height:260px; overflow-y:auto;"></ul>
+          </div>
+
+          <!-- #single-pgn-import-block/#training-program-panel (issue #81
+               point 5) : déplacés ici depuis #board-column/#coach-column, où
+               ils restaient visibles dans TOUS les modes (grand écran comme
+               mobile, cf. rapport de clôture) — la Bibliothèque/Revue PGN est
+               désormais leur seul emplacement, mêmes id/logique (loadPgnFile/
+               buildTrainingProgram), inchangés. -->
+          <div id="single-pgn-import-block">
+            <label style="font-size:0.82rem;">Importer un PGN :
+              <input type="file" accept=".pgn,.txt" onchange="loadPgnFile(event)">
+            </label>
+          </div>
+          <div class="panel" id="training-program-panel" style="margin-top:10px;">
+            <h2>Programme d'entraînement</h2>
+            <ul id="training-program-list" style="margin:0 0 6px; padding-left:18px; font-size:0.85rem;">
+              {% for objectif in objectifs_courants %}
+              <li>{{ objectif }}</li>
+              {% else %}
+              <li id="training-program-empty" style="list-style:none; padding-left:0; color:var(--cc-text-muted);">Aucun programme établi pour l'instant.</li>
+              {% endfor %}
+            </ul>
+            <button id="training-program-btn" onclick="buildTrainingProgram()">Établir mon programme d'entraînement</button>
+            <div id="training-program-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
           </div>
         </div>
 
@@ -1902,18 +1961,6 @@
              de rester sous la liste des parties importées — vide et sans
              effet ailleurs (display:contents). -->
         <div id="mobile-analysis-slot"></div>
-      </div>
-      <div class="panel" id="training-program-panel">
-        <h2>Programme d'entraînement</h2>
-        <ul id="training-program-list" style="margin:0 0 6px; padding-left:18px; font-size:0.85rem;">
-          {% for objectif in objectifs_courants %}
-          <li>{{ objectif }}</li>
-          {% else %}
-          <li id="training-program-empty" style="list-style:none; padding-left:0; color:var(--cc-text-muted);">Aucun programme établi pour l'instant.</li>
-          {% endfor %}
-        </ul>
-        <button id="training-program-btn" onclick="buildTrainingProgram()">Établir mon programme d'entraînement</button>
-        <div id="training-program-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
       </div>
     </div>
 

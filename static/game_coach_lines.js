@@ -291,6 +291,10 @@ function _updateBoardLinesCommandBar() {
 function renderGameCoachLinesTable() {
   const wrap = document.getElementById("game-coach-lines");
   const body = document.getElementById("game-coach-lines-body");
+  // #game-tab-lignes-empty (issue #81 point 3) : état vide explicite de
+  // l'onglet Lignes mobile, visible tant que #game-coach-lines (déplacé dans
+  // ce même onglet par mobile_game.js) reste masqué faute de lignes citées.
+  const emptyMsg = document.getElementById("game-tab-lignes-empty");
   if (!wrap || !body) { _updateBoardLinesCommandBar(); return; }
   // Non applicable en mode exercice (son propre tableau, exercise.js) ni en
   // mode éditeur (pas de partie) — masqué immédiatement au changement de
@@ -301,9 +305,11 @@ function renderGameCoachLinesTable() {
   if (!modeOk || !gameCoachLines.length) {
     wrap.style.display = "none";
     body.innerHTML = "";
+    if (emptyMsg) emptyMsg.style.display = modeOk ? "block" : "none";
     _updateBoardLinesCommandBar();
     return;
   }
+  if (emptyMsg) emptyMsg.style.display = "none";
   wrap.style.display = "block";
   body.innerHTML = "";
   gameCoachLines.forEach((line, idx) => {

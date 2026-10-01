@@ -284,12 +284,14 @@ function startExercise(phaseOverride, sourceOverride) {
   _exerciseUpdateCoupReelDisplay();
   _exerciseUpdateDejaFaitDisplay(null);
   _exerciseUpdateLichessInfoDisplay();
-  // Nouvel exercice (issue #64) : l'historique envoyé à l'API repart de
-  // zéro (celui de l'exercice précédent n'a plus rien à voir avec la
-  // position/le coup en cours), mais reste visible à l'écran, seulement
-  // démarqué par un trait discret — coachClear() (bouton "Effacer") reste le
-  // seul moyen de vider entièrement l'affichage.
-  if (typeof coachNewSegment === "function") coachNewSegment("Nouvel exercice");
+  // Nouvel exercice (issue #64, affiné issue #81 point 6) : contrairement aux
+  // autres modes (simple trait "Nouvelle partie", coachNewSegment), la
+  // conversation affichée est intégralement vidée à chaque nouvel exercice —
+  // comme coachClear() (bouton "Effacer", qui garde par ailleurs son effet
+  // inchangé). Repéré lors du test GSM : enchaîner "Exercice suivant"
+  // laissait les messages (et le dernier verdict) de l'exercice précédent
+  // affichés indéfiniment, séparés par un simple trait.
+  if (typeof coachClear === "function") coachClear();
   // Issue #71 point 6 : le rapport d'analyse affiché (Bibliothèque/Revue)
   // n'a plus de rapport avec l'exercice qui démarre.
   if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();

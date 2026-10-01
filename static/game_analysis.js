@@ -160,6 +160,31 @@ function _appliquerEntetesPgn(pgnText) {
   } catch (e) { /* ignore */ }
 }
 
+// Disponibilité du bouton "Analyser cette partie" sur l'onglet Analyse mobile
+// (issue #81 point 3) — repéré vide/silencieux lors du test GSM tant qu'on
+// n'avait pas encore cliqué dessus. "En place" (un des 4 modes de partie
+// affichés dans l'écran de jeu mobile, _gameAnalysisLiveMoves() non nul) :
+// grisé + phrase d'explication tant que la partie n'est pas terminée
+// (analyser un rapport partiel n'a pas de sens) ; hors de ce contexte
+// (Bibliothèque/Revue PGN, grand écran ou mobile), une partie chargée en
+// revue est par définition terminée — toujours disponible, comportement
+// inchangé. Appelée depuis onGameUiRefresh (mobile_game.js), à chaque
+// changement d'onglet/mode et après chaque coup/fin de partie.
+function _updateGameAnalysisAvailability() {
+  const btn = document.getElementById("game-analysis-btn");
+  const help = document.getElementById("game-analysis-help");
+  const status = document.getElementById("game-analysis-status");
+  if (!btn || !help) return;
+  if (_gameAnalysisBusy) return; // analyserPartieCourante gère déjà disabled/status pendant l'analyse elle-même.
+  const enPlace = _gameAnalysisLiveMoves() !== null;
+  const running = enPlace && typeof _isCurrentGameRunning === "function" && _isCurrentGameRunning();
+  btn.disabled = running;
+  help.textContent = running ? "Disponible quand la partie est terminée." : "";
+  if (status && !_gameAnalysisResults.length) {
+    status.textContent = "Analyse non lancée.";
+  }
+}
+
 function analyserPartieCourante() {
   const liveMoves = _gameAnalysisLiveMoves();
   const enPlace = liveMoves !== null;

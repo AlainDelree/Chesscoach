@@ -432,33 +432,45 @@ function renderHistory(activeIdx) {
     const liveMoves = getActiveModeMoves();
     if (liveMoves) { moves = liveMoves; activeIdx = moves.length; liveMode = true; }
   }
+  // Retour au plateau complet mobile sur coup joué (issue #81 point 1) —
+  // renderHistory() est déjà appelée après chaque coup, tous modes confondus.
+  if (liveMode && typeof _mobileGameOnMoveCountChanged === "function") _mobileGameOnMoveCountChanged(moves.length);
 
   const whites = moves.map((m, i) => ({...m, _idx: i + 1})).filter(m => m.color === "white");
   const blacks = moves.map((m, i) => ({...m, _idx: i + 1})).filter(m => m.color === "black");
   const total  = Math.max(whites.length, blacks.length);
-  let html = '<table style="width:100%;border-collapse:collapse;">';
-  html += `<tr><th style="color:#1a2a3a;font-weight:600;padding:2px 4px;">Blancs</th><th style="color:#1a2a3a;font-weight:600;padding:2px 4px;">Noirs</th></tr>`;
-  for (let i = 0; i < total; i++) {
-      const mw   = whites[i];
-      const mb   = blacks[i];
-      const idxW = mw ? mw._idx : -1;
-      const idxB = mb ? mb._idx : -1;
-      const activeW = activeIdx === idxW ? "font-weight:bold;" : "";
-      const activeB = activeIdx === idxB ? "font-weight:bold;" : "";
-      const colorW  = activeIdx === idxW ? "#e94560" : qualiteColor(mw ? mw.qualite : "bon");
-      const colorB  = activeIdx === idxB ? "#e94560" : qualiteColor(mb ? mb.qualite : "bon");
-      const attrsW  = liveMode
-        ? `style="padding:2px 4px;color:${colorW};${activeW}"`
-        : `style="padding:2px 4px;cursor:pointer;color:${colorW};${activeW}" onclick="reviewGoTo(${idxW})"`;
-      const attrsB  = liveMode
-        ? `style="padding:2px 4px;color:${colorB};${activeB}"`
-        : `style="padding:2px 4px;cursor:pointer;color:${colorB};${activeB}" onclick="reviewGoTo(${idxB})"`;
-      html += `<tr>`;
-      html += mw ? `<td ${attrsW}>${i+1}. ${mw.san}${qualiteSymbole(mw.qualite)}</td>` : `<td></td>`;
-      html += mb ? `<td ${attrsB}>${mb.san}${qualiteSymbole(mb.qualite)}</td>` : `<td></td>`;
-      html += `</tr>`;
+  let html;
+  // État vide explicite (issue #81 point 3) : auparavant une table réduite à
+  // sa seule ligne d'en-tête ("Blancs"/"Noirs"), silencieuse — repris ici
+  // plutôt que dans l'onglet Coups (templates/index.html) pour couvrir aussi
+  // #historique-column (grand écran/mobile hors mode jeu), même logique.
+  if (total === 0) {
+    html = '<div class="game-tab-empty-msg">Aucun coup pour l\'instant.</div>';
+  } else {
+    html = '<table style="width:100%;border-collapse:collapse;">';
+    html += `<tr><th style="color:#1a2a3a;font-weight:600;padding:2px 4px;">Blancs</th><th style="color:#1a2a3a;font-weight:600;padding:2px 4px;">Noirs</th></tr>`;
+    for (let i = 0; i < total; i++) {
+        const mw   = whites[i];
+        const mb   = blacks[i];
+        const idxW = mw ? mw._idx : -1;
+        const idxB = mb ? mb._idx : -1;
+        const activeW = activeIdx === idxW ? "font-weight:bold;" : "";
+        const activeB = activeIdx === idxB ? "font-weight:bold;" : "";
+        const colorW  = activeIdx === idxW ? "#e94560" : qualiteColor(mw ? mw.qualite : "bon");
+        const colorB  = activeIdx === idxB ? "#e94560" : qualiteColor(mb ? mb.qualite : "bon");
+        const attrsW  = liveMode
+          ? `style="padding:2px 4px;color:${colorW};${activeW}"`
+          : `style="padding:2px 4px;cursor:pointer;color:${colorW};${activeW}" onclick="reviewGoTo(${idxW})"`;
+        const attrsB  = liveMode
+          ? `style="padding:2px 4px;color:${colorB};${activeB}"`
+          : `style="padding:2px 4px;cursor:pointer;color:${colorB};${activeB}" onclick="reviewGoTo(${idxB})"`;
+        html += `<tr>`;
+        html += mw ? `<td ${attrsW}>${i+1}. ${mw.san}${qualiteSymbole(mw.qualite)}</td>` : `<td></td>`;
+        html += mb ? `<td ${attrsB}>${mb.san}${qualiteSymbole(mb.qualite)}</td>` : `<td></td>`;
+        html += `</tr>`;
+    }
+    html += '</table>';
   }
-  html += '</table>';
   histEl.innerHTML = html;
 
   if (typeof updateGameStatusLine === "function") updateGameStatusLine();
@@ -933,6 +945,12 @@ function _coachRenderBubble(role, text, allowPageScroll, extraClass) {
   // son message envoyé). Réponse du coach : afficher le DÉBUT de la réponse
   // en haut de la zone plutôt que sa fin (issue #53).
   _coachScrollReveal(history, bubble, !isUser, allowPageScroll);
+  // Plateau réduit mobile sur réponse du coach (issue #81 point 1) — pas pour
+  // les annonces automatiques "je joue ..." (extraClass dédié, moins
+  // dignes de prendre toute la place de lecture qu'une vraie réponse).
+  if (!isUser && extraClass !== "coach-bubble-auto-move" && typeof _mobileGameOnCoachMessage === "function") {
+    _mobileGameOnCoachMessage();
+  }
 }
 
 // Même lien que le "Coût API" de l'en-tête (issue #54) — la Console est
