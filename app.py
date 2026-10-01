@@ -11,7 +11,6 @@ import atexit
 import ipaddress
 import json
 import logging
-import random
 import time
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 
 import config
+import exercise_history
 import finales
 import game_facts
 import llm_coach
@@ -109,6 +109,13 @@ erreurs_detectees = _load_erreurs_detectees(config.ERREURS_DETECTEES_PATH)
 # État de l'exercice en cours — application locale mono-utilisateur (cf.
 # CONTEXTE.md), un seul exercice actif à la fois suffit.
 _current_exercise: dict | None = None
+
+# Sous-type (matériel/positionnel) du dernier exercice tiré (issue #76) —
+# mémoire de processus, volontairement non persistée : sert uniquement à
+# éviter si possible deux exercices de suite de la même nature au sein d'une
+# même session (cf. exercise_history.choisir_exercice), pas un historique à
+# conserver entre deux lancements de l'appli.
+_dernier_sous_type_tire: str | None = None
 
 # Moteur Stockfish partagé, utilisé par le mode "partie libre" (bouton "Coup
 # Stockfish" / case "Stockfish joue auto") — cf. socketio_pgn_handlers.py pour
@@ -1169,15 +1176,27 @@ def on_free_play_stockfish_move(data):
 
 @socketio.on("exercise_new")
 def on_exercise_new(data=None):
-    """Tire au sort une entrée de erreurs_detectees.json (mode "Exercice",
-    issue #7) et l'envoie au client — tirage uniforme parmi les entrées
-    retenues, pas de pondération (hors périmètre de cette issue).
+    """Tire une entrée de erreurs_detectees.json (mode "Exercice", issue #7)
+    et l'envoie au client.
+
+    Issue #76 : le tirage uniforme avec remise d'origine (random.choice sur
+    tout le pool) est remplacé par exercise_history.choisir_exercice, qui
+    privilégie les positions jamais proposées, espace la révision des
+    positions déjà réussies (~2 semaines) tout en reproposant plus tôt les
+    positions ratées, et replie sur les positions les plus anciennes quand
+    la catégorie est épuisée — cf. ce module pour le détail des règles et
+    config.EXERCICE_HISTORIQUE_PATH pour le fichier (donnée personnelle hors
+    git). L'indicateur "déjà fait" transmis ci-dessous reflète l'historique
+    TEL QU'IL ÉTAIT AVANT ce tirage (nombre de fois proposé/résultat des
+    fois précédentes) — enregistrer_proposition, qui l'incrémente pour ce
+    tirage-ci, n'est appelé qu'après avoir lu cet état.
 
     Issue #13 : filtre optionnel par phase (data.phase parmi "ouverture" /
     "milieu_de_partie" / "finale" ; absent ou "toutes" = pas de filtre), pour
     cibler spécifiquement un axe faible identifié par le coach plutôt que de
-    tirer uniformément sur toutes les phases confondues."""
-    global _current_exercise
+    tirer uniformément sur toutes les phases confondues — conservé tel quel,
+    seul le choix À L'INTÉRIEUR du pool filtré change."""
+    global _current_exercise, _dernier_sous_type_tire
 
     phase = ((data or {}).get("phase") or "toutes").strip()
     pool = erreurs_detectees
@@ -1188,12 +1207,25 @@ def on_exercise_new(data=None):
         emit("exercise_error", {"error": "aucune_erreur_disponible"})
         return
 
-    _current_exercise = random.choice(pool)
+    historique = exercise_history.charger_historique(config.EXERCICE_HISTORIQUE_PATH)
+    _current_exercise = exercise_history.choisir_exercice(
+        pool, historique, dernier_sous_type=_dernier_sous_type_tire
+    )
+    fen = _current_exercise["fen_avant"]
+    info_avant = historique.get(fen)
+    _dernier_sous_type_tire = _current_exercise.get("sous_type")
+    exercise_history.enregistrer_proposition(config.EXERCICE_HISTORIQUE_PATH, fen)
+
     emit("exercise_position", {
-        "fen": _current_exercise["fen_avant"],
+        "fen": fen,
         "camp_alain": _current_exercise["camp_alain"],
         "phase": _current_exercise["phase"],
         "sous_type": _current_exercise["sous_type"],
+        # Indicateur "déjà fait" (issue #76, exercise.js) — absent
+        # (deja_fait=False) pour une position jamais proposée.
+        "deja_fait": info_avant is not None,
+        "nb_fois": (info_avant or {}).get("nb_fois", 0),
+        "dernier_resultat": (info_avant or {}).get("dernier_resultat"),
     })
 
 
@@ -1243,6 +1275,19 @@ def on_exercise_answer(data):
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
     except Exception:
         pass
+
+    # Historique des exercices (issue #76) : réussi si le premier coup
+    # proposé reçoit le verdict "bon" (cf. exercise_history.enregistrer_resultat
+    # pour pourquoi ça couvre aussi "coup proposé == meilleur coup"), raté
+    # sinon. Seulement si un verdict a pu être rendu (coup légal et Stockfish
+    # disponible) — sinon rien à enregistrer plutôt qu'un faux "raté". Une
+    # reprise ("Reprendre mon coup") qui aboutit à un nouveau verdict réécrit
+    # simplement le résultat le plus récent, sans republier de proposition
+    # (déjà faite au tirage, cf. on_exercise_new).
+    if verdict_qualite is not None:
+        exercise_history.enregistrer_resultat(
+            config.EXERCICE_HISTORIQUE_PATH, fen_avant, verdict_qualite == "bon"
+        )
 
     # Conversion vers le point de vue d'Alain (issue #73) — cf.
     # _vers_point_de_vue_alain, plus aucun chiffre "point de vue des Blancs"

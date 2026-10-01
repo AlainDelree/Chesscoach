@@ -692,15 +692,21 @@
          Pilote sharedReprendreCoup() (déjà existant, controls.js) et
          l'ouverture de la feuille de phase ci-dessous — visible uniquement
          quand l'onglet Exercice est actif (classe .show posée par
-         switchModeTab, controls.js). */
+         switchModeTab, controls.js).
+         Issue #76 : passée de 2 à 3 boutons (ajout "Exercice suivant") —
+         gap/padding/font-size resserrés par rapport à l'origine pour que les
+         trois restent lisibles sur un écran de 390px de large (texte le
+         plus long, "Exercice suivant", encore tronqué proprement par
+         l'ellipsis ci-dessous si la police système est large, sans jamais
+         provoquer de débordement horizontal — overflow:hidden). */
       .mobile-exercise-bar.show {
         display: flex;
-        gap: 8px;
+        gap: 6px;
         position: fixed;
         left: 0;
         right: 0;
         bottom: 0;
-        padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+        padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
         background: var(--cc-bg);
         box-shadow: var(--cc-shadow-lg);
         z-index: 30;
@@ -708,8 +714,8 @@
       .mobile-exercise-bar.show button {
         flex: 1;
         min-height: 44px;
-        padding: 8px 6px;
-        font-size: 0.82rem;
+        padding: 8px 4px;
+        font-size: 0.74rem;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1683,8 +1689,22 @@
           </div>
           <div class="exercise-desktop-controls" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button onclick="startExercise()">Nouvel exercice</button>
+            <!-- "Exercice suivant" (issue #76) : relance la même catégorie
+                 (phase) que l'exercice en cours, sans repasser par le
+                 sélecteur ci-dessus — cf. startNextExercise(), exercise.js. -->
+            <button onclick="startNextExercise()">Exercice suivant</button>
           </div>
           <div id="exercise-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+          <!-- Indicateur "déjà fait" (issue #76) : mention discrète et non
+               cliquable (--cc-text-muted, jamais --cc-accent/terracotta
+               réservé au cliquable), dans la même ligne d'état que
+               #exercise-status ci-dessus — élément séparé plutôt que fondu
+               dans #exercise-status pour ne pas entrer en conflit avec les
+               messages d'état déjà gérés là (textContent réécrit à chaque
+               étape de l'exercice) — rempli par
+               _exerciseUpdateDejaFaitDisplay (exercise.js), absent pour une
+               position jamais proposée. -->
+          <div id="exercise-deja-fait" style="display:none; font-size:0.78rem; color:var(--cc-text-muted); margin-top:2px;"></div>
           <div id="exercise-coup-reel" style="display:none; font-size:0.82rem; color:var(--cc-text); margin-top:4px; padding:6px 10px; background:var(--cc-accent-2-200); border-radius:var(--cc-radius-pill);">
             Coup réellement joué à l'époque : <strong id="exercise-coup-reel-value"></strong>
           </div>
@@ -1835,10 +1855,18 @@
        switchModeTab (controls.js) — et pilote sharedReprendreCoup() déjà
        existant. La feuille pilote le <select id="exercise-phase-select">
        existant (source de vérité, exercisePhaseFiltre() dans exercise.js) et
-       appelle startExercise() sans le réécrire. -->
+       appelle startExercise() sans le réécrire.
+
+       Issue #76 : troisième bouton "Exercice suivant" (startNextExercise(),
+       exercise.js), devenu l'action principale (.btn-filled) — enchaîner des
+       exercices d'une même catégorie est le geste le plus fréquent. "Nouvel
+       exercice" devient "Autre catégorie" sur cette barre (texte plus clair
+       une fois les deux actions côte à côte), mais ouvre toujours la même
+       feuille de choix de phase, sans aucun changement de comportement. -->
   <div id="mobile-exercise-bar" class="mobile-exercise-bar">
-    <button type="button" onclick="sharedReprendreCoup()">Reprendre mon coup</button>
-    <button type="button" class="btn-filled" onclick="openExercisePhaseSheet()">Nouvel exercice</button>
+    <button type="button" onclick="sharedReprendreCoup()">Reprendre</button>
+    <button type="button" class="btn-filled" onclick="startNextExercise()">Exercice suivant</button>
+    <button type="button" onclick="openExercisePhaseSheet()">Autre catégorie</button>
   </div>
   <div id="exercise-phase-sheet-backdrop" class="phase-sheet-backdrop" onclick="closeExercisePhaseSheet()"></div>
   <div id="exercise-phase-sheet" class="phase-sheet" role="dialog" aria-label="Nouvel exercice">
