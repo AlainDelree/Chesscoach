@@ -1,0 +1,35 @@
+PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags
+TEST0001mate1,r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 3 3,g8f6 h5f7,1150,55,92,15000,opening mate mateIn1 kingsideAttack,https://lichess.org/training/TEST0001mate1,Scholar's mate
+TEST0002mate2,r1bqk2r/pppp1ppp/2n5/8/1bBPn3/2N2N2/PP3PPP/R1BQK2R w KQkq - 0 8,c1d2 e4d2 d1d2,1650,70,88,6000,opening middlegame mate mateIn2 fork,https://lichess.org/training/TEST0002mate2,Italian Game
+TEST0003pin,r1bqkbnr/ppp2ppp/2np4/1B2p3/3PP3/5N2/PPP2PPP/RNBQK2R b KQkq - 0 4,c8d7 b5c6,1300,60,90,8000,opening pin,https://lichess.org/training/TEST0003pin,Ruy Lopez
+TEST0004disc,rnbq1rk1/ppp1bpp1/4pn1p/3p2B1/2PP4/2N1PN2/PP3PPP/R2QKB1R w KQ - 0 7,g5h4 f6e4,1750,65,85,4000,middlegame discoveredAttack,https://lichess.org/training/TEST0004disc,Queen's Gambit Declined
+TEST0005def,rnbqkb1r/1p2pppp/p2p1n2/8/3NP3/2N5/PPP2PPP/R1BQKB1R w KQkq - 0 6,c1g5 e7e6,1400,50,95,9000,opening defensiveMove,https://lichess.org/training/TEST0005def,Sicilian Najdorf
+TEST0006quiet,rnbq1rk1/ppp1ppbp/3p1np1/8/2PPP3/2N2N2/PP3PPP/R1BQKB1R w KQ - 2 6,f1e2 e7e5,1550,58,83,3500,opening quietMove,https://lichess.org/training/TEST0006quiet,King's Indian Defense
+TEST0007zug,8/8/8/3k4/8/3K4/3P4/8 b - - 0 1,d5c5 d3e4,1500,45,80,2000,endgame zugzwang pawnEndgame,https://lichess.org/training/TEST0007zug,
+TEST0008rook,8/8/8/4k3/8/8/4K3/R7 b - - 0 1,e5d5 a1a5,1480,48,82,2500,endgame rookEndgame,https://lichess.org/training/TEST0008rook,
+TEST0009end,8/8/3k4/8/3N4/3K4/8/8 b - - 0 1,d6d5 d4e6,1510,52,84,2700,endgame,https://lichess.org/training/TEST0009end,
+TEST0010pawn,8/8/8/2k5/2P5/2K5/8/8 b - - 0 1,c5b6 c3b4,1490,47,81,2600,endgame pawnEndgame,https://lichess.org/training/TEST0010pawn,
+TEST0011king,r1bqkb1r/ppp2ppp/2n5/3np1N1/2B5/8/PPPP1PPP/RNBQK2R w KQkq - 0 6,g5f7 e8f7,980,90,85,900,opening exposedKing,https://lichess.org/training/TEST0011king,Fried Liver Attack
+TEST0012attr,r1bqkb1r/1p3ppp/p1np1n2/1N2p1B1/4P3/2N5/PPP2PPP/R2QKB1R w KQkq - 0 8,b5a3 b7b5,1050,85,86,1000,middlegame attraction,https://lichess.org/training/TEST0012attr,Sicilian Sveshnikov
+TEST0013kside,rnbqk2r/pppnbppp/4p3/3pP1B1/3P3P/2N5/PPP2PP1/R2QKBNR b KQkq - 0 6,e8g8 g5e7,1100,80,75,1100,middlegame kingsideAttack,https://lichess.org/training/TEST0013kside,French Defense
+TEST0014adv,8/3P4/8/3k4/8/3K4/8/8 b - - 0 1,d5c6 d7d8q,1160,75,78,1200,endgame advancedPawn,https://lichess.org/training/TEST0014adv,
+TEST0015sac,r1bqk1nr/pppp1ppp/2n5/2b1p3/1PB1P3/5N2/P1PP1PPP/RNBQK2R b KQkq - 0 4,c5b4 c2c3,1320,68,86,3000,opening sacrifice,https://lichess.org/training/TEST0015sac,Evans Gambit
+TEST0016fork,rn1qkbnr/ppp2ppp/8/4p3/4P3/5Q2/PPP2PPP/RNB1KB1R w KQkq - 0 6,f1c4 g8f6,1370,62,87,3200,opening fork,https://lichess.org/training/TEST0016fork,Philidor Defense
+TEST0017mid,r1bqkb1r/pp1n1ppp/2p1pn2/8/2pP4/2NBPN2/PP3PPP/R1BQK2R w KQkq - 0 7,d3c4 b7b5,1430,55,84,4100,middlegame,https://lichess.org/training/TEST0017mid,Slav Defense
+TEST0018mate1b,6k1/5ppp/8/8/8/8/5PPP/R5K1 b - - 0 1,g8h8 a1a8,2050,40,97,20000,endgame mate mateIn1,https://lichess.org/training/TEST0018mate1b,
+TEST0019pinhi,r1bqk2r/2p1bppp/p1np1n2/1p2p3/4P3/1B3N2/PPPP1PPP/RNBQR1K1 w kq - 0 8,c2c3 e8g8,1950,42,93,5000,opening pin,https://lichess.org/training/TEST0019pinhi,Ruy Lopez Closed
+TEST0020forkhi,r1bq1rk1/pp3ppp/2n1pn2/2pp4/1bPP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - 2 8,a2a3 b4c3,1880,44,91,4700,middlegame fork,https://lichess.org/training/TEST0020forkhi,Nimzo-Indian Defense
+TEST0021zughi,8/8/8/2k5/2P5/2K5/8/8 w - - 0 1,c3b3 c5d6,1850,38,90,5200,endgame zugzwang pawnEndgame,https://lichess.org/training/TEST0021zughi,
+TEST0022defend,8/8/8/4k3/4r3/8/4K3/4R3 w - - 0 1,e2d2 e4e3,1600,59,79,1800,endgame rookEndgame defensiveMove,https://lichess.org/training/TEST0022defend,
+TEST0023quietend,8/8/8/3k4/8/3K1P2/8/8 b - - 0 1,d5e5 f3f4,1620,53,77,1300,endgame pawnEndgame quietMove,https://lichess.org/training/TEST0023quietend,
+TEST0024lowplay,8/8/8/3k4/8/3K4/3P4/8 b - - 0 1,d5c5 d3e4,1500,45,80,100,endgame pawnEndgame,https://lichess.org/training/TEST0024lowplay,
+TEST0025highdev,8/8/8/3k4/8/3K4/3P4/8 b - - 0 1,d5c5 d3e4,1500,150,80,2000,endgame pawnEndgame,https://lichess.org/training/TEST0025highdev,
+TEST0026lowpop,8/8/8/3k4/8/3K4/3P4/8 b - - 0 1,d5c5 d3e4,1500,45,50,2000,endgame pawnEndgame,https://lichess.org/training/TEST0026lowpop,
+TEST0027outofrange,8/8/8/3k4/8/3K4/3P4/8 b - - 0 1,d5c5 d3e4,2400,45,90,2000,endgame pawnEndgame,https://lichess.org/training/TEST0027outofrange,
+TEST0028toolow,8/8/8/3k4/8/3K4/3P4/8 b - - 0 1,d5c5 d3e4,500,45,90,2000,endgame pawnEndgame,https://lichess.org/training/TEST0028toolow,
+TEST0029nocat,r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3,f8c5 d2d3,1400,60,85,3000,opening advantage,https://lichess.org/training/TEST0029nocat,
+TEST0030advhi,8/2P5/8/3k4/8/3K4/8/8 b - - 0 1,d5c6 c7c8q,1900,41,92,4300,endgame advancedPawn,https://lichess.org/training/TEST0030advhi,
+TEST0031sacend,8/8/8/3k4/3r4/2K5/8/4R3 w - - 0 1,e1e4 d4e4,1700,57,89,2900,endgame rookEndgame sacrifice,https://lichess.org/training/TEST0031sacend,
+TEST0032ksidehi,r2q1rk1/1p1nbppp/p2pbn2/4p3/4P3/1NN1BP2/PPPQB1PP/R4RK1 b - - 2 11,a8c8 g2g4,1780,49,88,3600,middlegame kingsideAttack,https://lichess.org/training/TEST0032ksidehi,Sicilian Najdorf English Attack
+TEST0033attrend,8/8/8/8/3k4/3r4/3K4/4R3 b - - 0 1,d3d2 e1d1,1150,73,87,950,endgame rookEndgame attraction,https://lichess.org/training/TEST0033attrend,
+TEST0034kinghi,r1bqkb1r/p4ppp/2p2n2/nB2p1N1/8/8/PPPP1PPP/RNBQK2R w KQkq - 0 8,b5e2 h7h6,1200,71,88,1050,opening exposedKing,https://lichess.org/training/TEST0034kinghi,Two Knights Defense

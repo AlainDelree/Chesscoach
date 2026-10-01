@@ -1686,15 +1686,38 @@
               <option value="milieu_de_partie">Milieu de partie</option>
               <option value="finale">Finale</option>
             </select>
+            <!-- Sélecteur de source (issue #78) : "Mes erreurs" (pool
+                 historique, comportement inchangé) ou "Problèmes Lichess"
+                 (base ouverte préparée par preparer_puzzles_lichess.py) —
+                 désactivé si data/puzzles_lichess.json est absent
+                 (lichess_puzzles_disponible, rendu côté serveur, app.py
+                 index()), avec la phrase d'explication ci-dessous. -->
+            <select id="exercise-source-select" style="flex:1; min-width:140px;">
+              <option value="mes_erreurs">Mes erreurs</option>
+              <option value="lichess" {{ "" if lichess_puzzles_disponible else "disabled" }}>Problèmes Lichess</option>
+            </select>
           </div>
+          {% if not lichess_puzzles_disponible %}
+          <div class="exercise-desktop-controls" id="exercise-source-indisponible" style="font-size:0.78rem; color:var(--cc-text-muted); margin-top:4px;">
+            Source « Problèmes Lichess » indisponible : lancez
+            <code>preparer_puzzles_lichess.py</code> pour l'activer.
+          </div>
+          {% endif %}
           <div class="exercise-desktop-controls" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button onclick="startExercise()">Nouvel exercice</button>
-            <!-- "Exercice suivant" (issue #76) : relance la même catégorie
-                 (phase) que l'exercice en cours, sans repasser par le
-                 sélecteur ci-dessus — cf. startNextExercise(), exercise.js. -->
+            <!-- "Exercice suivant" (issue #76, source conservée depuis
+                 l'issue #78) : relance la même catégorie (phase) ET la même
+                 source que l'exercice en cours, sans repasser par les
+                 sélecteurs ci-dessus — cf. startNextExercise(), exercise.js. -->
             <button onclick="startNextExercise()">Exercice suivant</button>
           </div>
           <div id="exercise-status" style="font-size:0.82rem; color:var(--cc-text-muted); margin-top:4px;"></div>
+          <!-- Ligne d'état dédiée à la source "Problèmes Lichess" (issue
+               #78) : "Problème <note> · ton niveau en <catégorie> <niveau>" —
+               masquée pour la source "mes erreurs" (aucun changement visuel
+               pour elle). Élément séparé de #exercise-status pour la même
+               raison que #exercise-deja-fait ci-dessous. -->
+          <div id="exercise-lichess-info" style="display:none; font-size:0.78rem; color:var(--cc-text-muted); margin-top:2px;"></div>
           <!-- Indicateur "déjà fait" (issue #76) : mention discrète et non
                cliquable (--cc-text-muted, jamais --cc-accent/terracotta
                réservé au cliquable), dans la même ligne d'état que
@@ -1878,6 +1901,19 @@
       <button type="button" class="phase-pill" data-phase="milieu_de_partie" onclick="exercisePhaseSheetPick('milieu_de_partie')">Milieu de partie</button>
       <button type="button" class="phase-pill" data-phase="finale" onclick="exercisePhaseSheetPick('finale')">Finale</button>
     </div>
+    <!-- Sélecteur de source (issue #78, mobile) : pilote le même
+         <select id="exercise-source-select"> que le desktop — mêmes règles
+         de désactivation/conservation que la feuille de phase ci-dessus. -->
+    <div class="phase-sheet-label">Source des problèmes</div>
+    <div class="phase-sheet-options" id="exercise-source-options">
+      <button type="button" class="phase-pill" data-source="mes_erreurs" onclick="exerciseSourceSheetPick('mes_erreurs')">Mes erreurs</button>
+      <button type="button" class="phase-pill" data-source="lichess" onclick="exerciseSourceSheetPick('lichess')" {{ "" if lichess_puzzles_disponible else "disabled" }}>Problèmes Lichess</button>
+    </div>
+    {% if not lichess_puzzles_disponible %}
+    <div class="phase-sheet-label" style="color:var(--cc-text-muted); font-size:0.78rem; font-weight:normal;">
+      Problèmes Lichess indisponible : lancez <code>preparer_puzzles_lichess.py</code> pour l'activer.
+    </div>
+    {% endif %}
     <button type="button" class="phase-sheet-launch" onclick="launchExerciseFromSheet()">Lancer l'exercice</button>
   </div>
 

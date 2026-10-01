@@ -82,6 +82,17 @@ let exerciseJustReprised   = false;
 // Alain a changé le sélecteur entre-temps sans relancer de tirage.
 let exerciseCurrentPhase   = "toutes";
 
+// Source du dernier exercice tiré (issue #78 : "mes_erreurs" ou "lichess"),
+// même rôle qu'exerciseCurrentPhase ci-dessus — "Exercice suivant" relance
+// la même source que l'exercice en cours, pas forcément celle du sélecteur.
+let exerciseCurrentSource  = "mes_erreurs";
+// Détail du problème Lichess en cours (issue #78), affiché dans
+// #exercise-lichess-info — null pour la source "mes erreurs".
+let exerciseLichessCategorieLibelle = null;
+let exerciseLichessRating           = null;
+let exerciseLichessNiveau           = null;
+let exerciseLichessThemes           = null; // thèmes Lichess bruts, chaîne séparée par espaces
+
 // Position juste après le coup proposé par Alain pour la tentative en cours
 // (issue #58) — second candidat de départ possible pour une ligne citée par
 // le coach, essayé seulement si la position d'avant son coup (exerciseFenAvant)
@@ -108,6 +119,14 @@ function exercisePhaseFiltre() {
   return sel ? sel.value : "toutes";
 }
 
+// Source choisie (issue #78) : "mes_erreurs" (défaut) ou "lichess" — même
+// rôle que exercisePhaseFiltre() ci-dessus, lit le <select> partagé par le
+// desktop et la feuille mobile (source de vérité commune).
+function exerciseSourceFiltre() {
+  const sel = document.getElementById("exercise-source-select");
+  return sel ? sel.value : "mes_erreurs";
+}
+
 // ── Feuille "Nouvel exercice" (mobile, issue #63) ───────────────────────────
 // Pilote le <select id="exercise-phase-select"> existant (source de vérité,
 // lu par exercisePhaseFiltre() ci-dessus) au lieu de dupliquer le filtre de
@@ -124,9 +143,23 @@ function exercisePhaseSheetPick(phase) {
   });
 }
 
+// Pendant de exercisePhaseSheetPick ci-dessus pour la source (issue #78) —
+// pilote le même <select id="exercise-source-select"> que le desktop.
+function exerciseSourceSheetPick(source) {
+  const sel = document.getElementById("exercise-source-select");
+  if (sel && !(source === "lichess" && sel.querySelector('option[value="lichess"]').disabled)) {
+    sel.value = source;
+  }
+  document.querySelectorAll("#exercise-source-options .phase-pill").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.source === (sel ? sel.value : source));
+  });
+}
+
 function openExercisePhaseSheet() {
   const sel = document.getElementById("exercise-phase-select");
   exercisePhaseSheetPick(sel ? sel.value : "toutes");
+  const sourceSel = document.getElementById("exercise-source-select");
+  exerciseSourceSheetPick(sourceSel ? sourceSel.value : "mes_erreurs");
   const sheet = document.getElementById("exercise-phase-sheet");
   const backdrop = document.getElementById("exercise-phase-sheet-backdrop");
   if (sheet) sheet.classList.add("open");
@@ -209,11 +242,12 @@ function abandonExerciseGame() {
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
   _exerciseUpdateDejaFaitDisplay(null);
+  _exerciseUpdateLichessInfoDisplay();
   resetBoardToNeutral();
   setActiveMode(null);
 }
 
-function startExercise(phaseOverride) {
+function startExercise(phaseOverride, sourceOverride) {
   ensureModeSwitchClean("exercise");
   exerciseAnswered  = false;
   exerciseSelected  = null;
@@ -226,6 +260,7 @@ function startExercise(phaseOverride) {
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
   _exerciseUpdateDejaFaitDisplay(null);
+  _exerciseUpdateLichessInfoDisplay();
   // Nouvel exercice (issue #64) : l'historique envoyé à l'API repart de
   // zéro (celui de l'exercice précédent n'a plus rien à voir avec la
   // position/le coup en cours), mais reste visible à l'écran, seulement
@@ -237,22 +272,27 @@ function startExercise(phaseOverride) {
   if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
   const statusEl = document.getElementById("exercise-status");
   if (statusEl) statusEl.textContent = "Chargement d'une position...";
-  // phaseOverride (issue #76, startNextExercise ci-dessous) : phase de
-  // l'exercice en cours plutôt que celle du sélecteur, quand fournie.
-  socket.emit("exercise_new", { phase: phaseOverride || exercisePhaseFiltre() });
+  // phaseOverride/sourceOverride (issue #76/#78, startNextExercise
+  // ci-dessous) : phase et source de l'exercice en cours plutôt que celles
+  // des sélecteurs, quand fournies.
+  socket.emit("exercise_new", {
+    phase: phaseOverride || exercisePhaseFiltre(),
+    source: sourceOverride || exerciseSourceFiltre(),
+  });
 }
 
 function startNextExercise() {
-  // Bouton "Exercice suivant" (issue #76) : relance directement un exercice
-  // de la même catégorie (phase) que l'exercice en cours, abandonné ou tout
-  // juste terminé, sans ouvrir la feuille ni le sélecteur de phase — à la
-  // différence de "Nouvel exercice"/"Autre catégorie", qui repasse par le
-  // choix de phase. Disponible dans tous les états d'un exercice déjà
-  // chargé (réponse donnée, exploration libre après verdict, ou même avant
-  // toute réponse — cliquer dessus revient alors à abandonner l'exercice en
+  // Bouton "Exercice suivant" (issue #76, source conservée depuis l'issue
+  // #78) : relance directement un exercice de la même catégorie (phase) ET
+  // de la même source que l'exercice en cours, abandonné ou tout juste
+  // terminé, sans ouvrir la feuille ni les sélecteurs — à la différence de
+  // "Nouvel exercice"/"Autre catégorie", qui repassent par le choix de
+  // phase/source. Disponible dans tous les états d'un exercice déjà chargé
+  // (réponse donnée, exploration libre après verdict, ou même avant toute
+  // réponse — cliquer dessus revient alors à abandonner l'exercice en
   // cours) : comme exercise_new, ce tirage ne laisse aucun état serveur à
   // nettoyer entre deux exercices (cf. _current_exercise, app.py).
-  startExercise(exerciseCurrentPhase);
+  startExercise(exerciseCurrentPhase, exerciseCurrentSource);
 }
 
 function reprendreExerciceCoup() {
@@ -353,6 +393,12 @@ function _exerciseAddStockfishLine() {
   // toujours depuis exerciseFenAvant (cf. engine_stockfish._pv_to_san,
   // appelé depuis la position d'avant le coup proposé). Une seule fois par
   // exercice, même si plusieurs verdicts successifs se succèdent.
+  //
+  // Source "Problèmes Lichess" (issue #78) : exercisePvMeilleurCoup porte
+  // alors la solution DÉCLARÉE du problème (pas une ligne recalculée par
+  // Stockfish, cf. app.py _on_exercise_answer_lichess), affichée ici avec
+  // le libellé "Solution du problème" plutôt que "Ligne de Stockfish" —
+  // même mécanisme de Play réutilisé tel quel (issue #78, point 4).
   if (exerciseStockfishLineAdded) return;
   if (!exerciseFenAvant || !exercisePvMeilleurCoup) return;
   const moveTokens = exercisePvMeilleurCoup.split(/\s+/).filter(Boolean);
@@ -368,9 +414,10 @@ function _exerciseAddStockfishLine() {
     [{ fen: exerciseFenAvant, label: "depuis la position de départ" }],
     moveTokens
   );
+  const prefixe = exerciseCurrentSource === "lichess" ? "Solution du problème : " : "Ligne de Stockfish : ";
   exerciseCoachLines.unshift({
     key,
-    displayText: "Ligne de Stockfish : " + key,
+    displayText: prefixe + key,
     resolved,
     special: "stockfish",
   });
@@ -536,7 +583,30 @@ function exerciseChatContextExtra() {
     eval_alain_cp: exerciseEvalAlainCp,
     eval_alain_mat: exerciseEvalAlainMat,
     reprise_recente: exerciseJustReprised,
+    // Source "Problèmes Lichess" (issue #78) : absents (undefined, ignorés
+    // par llm_coach._build_context_text) pour la source "mes erreurs".
+    source_lichess: exerciseCurrentSource === "lichess",
+    themes_lichess: exerciseLichessThemes || "",
+    rating_probleme: exerciseLichessRating,
+    niveau_categorie: exerciseLichessNiveau,
+    categorie_libelle: exerciseLichessCategorieLibelle || "",
   };
+}
+
+function _exerciseUpdateLichessInfoDisplay() {
+  // Ligne d'état dédiée à la source "Problèmes Lichess" (issue #78) :
+  // "Problème <note> · ton niveau en <catégorie> <niveau>" — masquée pour la
+  // source "mes erreurs" ou tant qu'aucun problème Lichess n'est chargé.
+  const el = document.getElementById("exercise-lichess-info");
+  if (!el) return;
+  if (exerciseCurrentSource !== "lichess" || exerciseLichessRating === null) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  const libelle = exerciseLichessCategorieLibelle || "";
+  el.textContent = `Problème ${exerciseLichessRating} · ton niveau en ${libelle} ${exerciseLichessNiveau}`;
+  el.style.display = "block";
 }
 
 function _exerciseUpdateDejaFaitDisplay(data) {
@@ -668,9 +738,18 @@ if (typeof socket !== "undefined") {
     exerciseLastMove  = null;
     exerciseFenAvant  = data.fen;
     exerciseCampAlain = data.camp_alain;
-    exerciseCurrentPhase = data.phase || "toutes";
+    exerciseCurrentPhase  = data.phase || "toutes";
+    // Source de ce tirage (issue #78) — mémorisée pour "Exercice suivant"
+    // (exerciseCurrentSource) et pour l'affichage (libellé "Solution du
+    // problème", ligne d'état dédiée).
+    exerciseCurrentSource = data.source || "mes_erreurs";
+    exerciseLichessCategorieLibelle = data.categorie_libelle || null;
+    exerciseLichessRating           = (typeof data.rating === "number") ? data.rating : null;
+    exerciseLichessNiveau           = (typeof data.niveau === "number") ? data.niveau : null;
+    exerciseLichessThemes           = Array.isArray(data.themes) ? data.themes.join(" ") : null;
     _exerciseResetCoachLines();
     _exerciseUpdateDejaFaitDisplay(data);
+    _exerciseUpdateLichessInfoDisplay();
     setActiveMode("exercise");
 
     _boardFlipped = (data.camp_alain === "noirs");
@@ -717,7 +796,12 @@ if (typeof socket !== "undefined") {
     exerciseMeilleurCoupDescriptionMecanique = (data && data.meilleur_coup_description_mecanique) || null;
     exerciseEvalAlainCp  = (data && typeof data.eval_alain_cp === "number") ? data.eval_alain_cp : null;
     exerciseEvalAlainMat = (data && typeof data.eval_alain_mat === "number") ? data.eval_alain_mat : null;
+    // Niveau de la catégorie mis à jour après ce résultat (issue #78) — la
+    // ligne d'état "Problème <note> · ton niveau en <catégorie> <niveau>"
+    // reflète donc le niveau APRÈS ce résultat, pas celui du tirage.
+    if (data && typeof data.niveau === "number") exerciseLichessNiveau = data.niveau;
     _exerciseUpdateCoupReelDisplay();
+    _exerciseUpdateLichessInfoDisplay();
     // Ligne de Stockfish (bonus, issue #58) : déjà calculée et transmise
     // avec le verdict (pv_meilleur_coup), pas besoin de recalcul côté client.
     _exerciseAddStockfishLine();
@@ -742,7 +826,11 @@ if (typeof socket !== "undefined") {
       return;
     }
     const msg = (err === "aucune_erreur_disponible")
-      ? "Aucune position d'exercice disponible (lancer build_patterns_erreurs.py)."
+      ? (exerciseSourceFiltre() === "lichess"
+          ? "Aucun problème Lichess ne correspond à cette phase pour l'instant."
+          : "Aucune position d'exercice disponible (lancer build_patterns_erreurs.py).")
+      : (err === "lichess_indisponible")
+      ? "Source « Problèmes Lichess » indisponible (lancer preparer_puzzles_lichess.py)."
       : (err === "no_api_key")
       ? "Clé API Claude manquante — configurez-la dans les paramètres."
       : "Le coach n'a pas pu répondre, réessayez.";

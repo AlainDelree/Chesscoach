@@ -395,6 +395,24 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     + _ANTI_INVENTION_ADDENDUM
 )
 
+# Complément au-dessus, spécifique à la source « Problèmes Lichess » du mode
+# "exercice" (issue #78, en complément de _EXERCISE_SYSTEM_ADDENDUM, pas un
+# remplacement) : contrairement à la source "mes erreurs", il n'y a aucune
+# partie d'origine ni coup réellement joué à mentionner, et la réponse doit
+# rester courte — un problème Lichess n'appelle pas la même profondeur
+# d'explication qu'une erreur personnelle.
+_EXERCISE_LICHESS_ADDENDUM = (
+    "Cette tentative porte sur un problème tiré de la base ouverte de "
+    "problèmes Lichess (licence CC0), pas sur une erreur passée d'Alain : il "
+    "n'existe donc AUCUN \"coup réellement joué à l'époque\" ni partie "
+    "d'origine à mentionner ou à supposer. Réponds de façon COURTE (2 à 4 "
+    "phrases) : dis d'abord si le coup proposé est juste, puis explique "
+    "l'idée de la solution en t'appuyant uniquement sur la ligne de "
+    "solution et les descriptions mécaniques fournies dans le contexte — "
+    "n'invente aucun motif tactique, thème ou menace qui n'en ferait pas "
+    "partie."
+)
+
 # Complément de system prompt pour les modes de partie avec un historique réel
 # (libre, pédagogique, ouverture, finales) et la revue de bibliothèque (issue
 # #68) — chat coach en dehors du mode "exercice" (qui garde son propre
@@ -985,6 +1003,15 @@ def _build_context_text(context) -> str:
     mode_origine_ctx = (context.get("mode_origine") or "").strip()
     nb_coups = context.get("nb_coups")
     debut_partie = (context.get("debut_partie") or "").strip()
+    # Source « Problèmes Lichess » du mode exercice (issue #78) : thèmes
+    # Lichess du problème, sa note (difficulté Glicko-2) et le niveau
+    # courant d'Alain dans la catégorie ayant servi au tirage — en
+    # complément du contexte déjà commun avec la source "mes erreurs"
+    # (position, coups, verdict...) ci-dessus/ci-dessous.
+    themes_lichess = (context.get("themes_lichess") or "").strip()
+    rating_probleme = context.get("rating_probleme")
+    niveau_categorie = context.get("niveau_categorie")
+    categorie_libelle = (context.get("categorie_libelle") or "").strip()
     lines = []
     identification = []
     if mode_origine_ctx:
@@ -1082,6 +1109,15 @@ def _build_context_text(context) -> str:
             )
         if pv_meilleur_coup_detail:
             lines.append(pv_meilleur_coup_detail)
+    if rating_probleme is not None:
+        lines.append(
+            f"Ce problème est tiré de la base ouverte de problèmes Lichess "
+            f"(pas une erreur passée d'Alain) : thème principal \"{categorie_libelle}\""
+            f"{f', thèmes Lichess : {themes_lichess}' if themes_lichess else ''}, "
+            f"note de difficulté {rating_probleme} (plus c'est élevé, plus "
+            f"c'est difficile). Niveau actuel d'Alain dans cette catégorie "
+            f"(\"{categorie_libelle}\") : {niveau_categorie}."
+        )
     if verdict_qualite:
         # describe_perte_cp_clause (issue #75, point 1) : en mots dès que la
         # magnitude dépasse SEUIL_GRANDE_VALEUR_CP (ex. le delta sentinelle
@@ -1515,6 +1551,11 @@ def get_coach_response(messages, context, coach_memory, config):
     prompt_sys = _SYSTEM_PROMPT
     if (context or {}).get("mode_exercice"):
         prompt_sys = f"{prompt_sys}\n\n{_EXERCISE_SYSTEM_ADDENDUM}"
+        if (context or {}).get("source_lichess"):
+            # Source « Problèmes Lichess » (issue #78) : réponse courte, pas
+            # de "coup réel à l'époque" — complément du garde-fou générique
+            # de l'exercice ci-dessus, pas un remplacement.
+            prompt_sys = f"{prompt_sys}\n\n{_EXERCISE_LICHESS_ADDENDUM}"
     else:
         # Issue #68 : format de départ des lignes alternatives pour tous les
         # modes hors exercice (partie avec historique réel, ou revue) — pas
