@@ -67,6 +67,13 @@ let exerciseEvalAlainMat   = null;
 // chat libre concernent une tentative annulée, pas l'état réel actuel.
 let exerciseJustReprised   = false;
 
+// Phase (catégorie) du dernier exercice tiré, quel que soit le sélecteur de
+// phase courant (issue #76, "Exercice suivant") — distincte de
+// exercisePhaseFiltre() (lit le <select>/la feuille mobile) : "Exercice
+// suivant" doit relancer la MÊME catégorie que l'exercice en cours même si
+// Alain a changé le sélecteur entre-temps sans relancer de tirage.
+let exerciseCurrentPhase   = "toutes";
+
 // Position juste après le coup proposé par Alain pour la tentative en cours
 // (issue #58) — second candidat de départ possible pour une ligne citée par
 // le coach, essayé seulement si la position d'avant son coup (exerciseFenAvant)
@@ -191,11 +198,12 @@ function abandonExerciseGame() {
   _exerciseResetTentative();
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
+  _exerciseUpdateDejaFaitDisplay(null);
   resetBoardToNeutral();
   setActiveMode(null);
 }
 
-function startExercise() {
+function startExercise(phaseOverride) {
   ensureModeSwitchClean("exercise");
   exerciseAnswered  = false;
   exerciseSelected  = null;
@@ -207,6 +215,7 @@ function startExercise() {
   _exerciseResetTentative();
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
+  _exerciseUpdateDejaFaitDisplay(null);
   // Nouvel exercice (issue #64) : l'historique envoyé à l'API repart de
   // zéro (celui de l'exercice précédent n'a plus rien à voir avec la
   // position/le coup en cours), mais reste visible à l'écran, seulement
@@ -218,7 +227,22 @@ function startExercise() {
   if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
   const statusEl = document.getElementById("exercise-status");
   if (statusEl) statusEl.textContent = "Chargement d'une position...";
-  socket.emit("exercise_new", { phase: exercisePhaseFiltre() });
+  // phaseOverride (issue #76, startNextExercise ci-dessous) : phase de
+  // l'exercice en cours plutôt que celle du sélecteur, quand fournie.
+  socket.emit("exercise_new", { phase: phaseOverride || exercisePhaseFiltre() });
+}
+
+function startNextExercise() {
+  // Bouton "Exercice suivant" (issue #76) : relance directement un exercice
+  // de la même catégorie (phase) que l'exercice en cours, abandonné ou tout
+  // juste terminé, sans ouvrir la feuille ni le sélecteur de phase — à la
+  // différence de "Nouvel exercice"/"Autre catégorie", qui repasse par le
+  // choix de phase. Disponible dans tous les états d'un exercice déjà
+  // chargé (réponse donnée, exploration libre après verdict, ou même avant
+  // toute réponse — cliquer dessus revient alors à abandonner l'exercice en
+  // cours) : comme exercise_new, ce tirage ne laisse aucun état serveur à
+  // nettoyer entre deux exercices (cf. _current_exercise, app.py).
+  startExercise(exerciseCurrentPhase);
 }
 
 function reprendreExerciceCoup() {
@@ -494,6 +518,29 @@ function exerciseChatContextExtra() {
   };
 }
 
+function _exerciseUpdateDejaFaitDisplay(data) {
+  // Indicateur "déjà fait" (issue #76) : mention discrète et non cliquable
+  // (couleur --cc-text-muted, jamais --cc-accent/terracotta réservé au
+  // cliquable — cf. board.css), visible dès l'affichage de la position,
+  // absente pour une position jamais proposée (data.deja_fait=false) ou
+  // pendant le chargement (data=null). N'empêche jamais de rejouer
+  // l'exercice : purement informative, aucun handler de clic.
+  const el = document.getElementById("exercise-deja-fait");
+  if (!el) return;
+  if (!data || !data.deja_fait) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  const nbFois = data.nb_fois || 0;
+  const foisTexte = nbFois === 1 ? "1 fois" : `${nbFois} fois`;
+  const resultatTexte = data.dernier_resultat === "reussi" ? "réussi"
+    : data.dernier_resultat === "rate" ? "raté"
+    : "inconnu";
+  el.textContent = `Déjà fait · ${foisTexte} · dernier résultat : ${resultatTexte}`;
+  el.style.display = "block";
+}
+
 function renderExerciseBoard() {
   if (!exerciseGame) return;
   const fenBoard = exerciseGame.fen().split(" ")[0];
@@ -600,7 +647,9 @@ if (typeof socket !== "undefined") {
     exerciseLastMove  = null;
     exerciseFenAvant  = data.fen;
     exerciseCampAlain = data.camp_alain;
+    exerciseCurrentPhase = data.phase || "toutes";
     _exerciseResetCoachLines();
+    _exerciseUpdateDejaFaitDisplay(data);
     setActiveMode("exercise");
 
     _boardFlipped = (data.camp_alain === "noirs");

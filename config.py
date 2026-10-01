@@ -15,6 +15,14 @@ ENGINES_DIR = Path.home() / "ChessCoach" / "engines"
 COACH_MEMORY_PATH = DATA_DIR / "coach_memory.json"
 ERREURS_DETECTEES_PATH = DATA_DIR / "erreurs_detectees.json"
 
+# Historique local des exercices proposés (issue #76, mode "Exercice") :
+# position (FEN), nombre de fois proposé, date de la dernière proposition,
+# résultat de la dernière tentative — sert au tirage à privilégier la
+# variété (cf. exercise_history.py) et à l'indicateur "déjà fait" de
+# l'interface. Donnée personnelle, sous DATA_DIR donc gitignorée comme le
+# reste de data/.
+EXERCICE_HISTORIQUE_PATH = DATA_DIR / "exercice_historique.json"
+
 # Log de chaque appel au coach en mode "Exercice" (issue #18) : horodatage,
 # system prompt complet, contexte construit et messages envoyés, en JSON
 # Lines — pour diagnostiquer les erreurs factuelles du coach à partir de ce
