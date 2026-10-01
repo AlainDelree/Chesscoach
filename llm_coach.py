@@ -329,21 +329,43 @@ _ANALYSE_PARTIE_ADDENDUM = (
 _EXERCISE_SYSTEM_ADDENDUM = (
     "Mode \"exercice\" en cours : Alain s'entraîne sur une position tirée "
     "d'une de ses erreurs passées. Quand un verdict Stockfish est fourni "
-    "dans le contexte pour un coup qu'il a proposé, ce verdict est déjà "
-    "tranché — ton rôle est d'expliquer POURQUOI il est justifié (menaces, "
-    "pièces en jeu, plans), jamais de rejuger toi-même la qualité du coup à "
-    "partir du seul nom des coups, et jamais de le contredire dans un "
-    "message ultérieur de la même conversation. Ne cite jamais de chiffre "
-    "brut de centipawns ni d'étiquette technique (\"delta\", \"blunder\"...) "
-    "à Alain, sauf s'il le demande explicitement : reformule toujours ce "
-    "verdict en langage naturel, chaleureux et pédagogique. Si Alain pose "
-    "une question de suivi sur cet exercice dans le chat libre, réponds "
-    "directement à partir du contexte fourni (position, coup proposé, "
-    "verdict) sans lui redemander des informations déjà données. Quand tu "
-    "cites une ligne de coups (une suite d'au moins deux coups), écris-la "
-    "toujours en notation d'échecs standard, coups séparés par des espaces "
-    "(exemple : \"Kc3 Ke1 Kd3 Kd1 Ke3 Kc2\") — Alain peut alors la rejouer "
-    "automatiquement sur l'échiquier."
+    "dans le contexte pour un coup qu'il a proposé, ce verdict FAIT FOI et "
+    "est déjà tranché — ton rôle est d'expliquer POURQUOI il est justifié "
+    "(menaces, pièces en jeu, plans), jamais de rejuger toi-même la qualité "
+    "du coup à partir du seul nom des coups, et jamais de le contredire ou "
+    "de le relativiser (\"pas si mauvais\", \"solide quand même\"...) dans un "
+    "message ultérieur de la même conversation, même si Alain reste mieux "
+    "dans l'absolu après ce coup (issue #73 : un coup peut être une gaffe "
+    "qui laisse filer l'essentiel d'un avantage tout en restant, dans "
+    "l'absolu, encore légèrement favorable à Alain — dans ce cas dis-le "
+    "explicitement, par exemple \"tu restes mieux, mais tu laisses filer "
+    "l'essentiel de ton avantage\", sans jamais présenter le coup lui-même "
+    "comme bon ou solide). Commence ta réponse en énonçant clairement ce "
+    "verdict reformulé (par exemple \"c'est une gaffe\", \"c'est imprécis\"), "
+    "avant d'en expliquer les raisons. Ne cite jamais de chiffre brut de "
+    "centipawns ni d'étiquette technique (\"delta\", \"blunder\"...) à Alain, "
+    "sauf s'il le demande explicitement : reformule toujours ce verdict en "
+    "langage naturel, chaleureux et pédagogique. Si Alain pose une question "
+    "de suivi sur cet exercice dans le chat libre, réponds directement à "
+    "partir du contexte fourni (position de départ, position actuelle, coup "
+    "proposé, verdict) sans lui redemander des informations déjà données. "
+    "Quand tu cites une ligne de coups (une suite d'au moins deux coups), "
+    "écris-la toujours en notation d'échecs standard, coups séparés par des "
+    "espaces (exemple : \"Kc3 Ke1 Kd3 Kd1 Ke3 Kc2\") — Alain peut alors la "
+    "rejouer automatiquement sur l'échiquier."
+    "\n\n"
+    "Position de départ vs position actuelle (issue #73) : le contexte "
+    "distingue toujours la position de DÉPART de cet exercice (avant tout "
+    "coup) de la position ACTUELLEMENT affichée sur l'échiquier, qui peut "
+    "déjà refléter le coup proposé ou une exploration libre ultérieure — "
+    "ces deux FEN peuvent différer. Pour toute pièce ou case en lien avec un "
+    "coup cité (coup proposé, coup réellement joué à l'époque, meilleur "
+    "coup), ne reprends QUE ce que sa description mécanique fournie dans le "
+    "contexte dit explicitement, calculée sur la position de DÉPART. Ne "
+    "conclus JAMAIS qu'une pièce \"n'existe pas\", \"n'est pas là\" ou \"n'est "
+    "pas ce que tu crois\" en te basant sur la seule position ACTUELLE : "
+    "compare toujours à la position de départ avant d'affirmer qu'une pièce "
+    "est absente d'une case."
     "\n\n"
     + _ANTI_INVENTION_ADDENDUM
 )
@@ -803,22 +825,38 @@ def _build_context_text(context) -> str:
     # explicitement au coach plutôt que de le laisser deviner un camp d'après
     # le seul FEN (cause du bug source : coup adverse attribué à Alain).
     camp_alain_inconnu = bool(context.get("camp_alain_inconnu"))
+    # Position de DÉPART de l'exercice en cours (issue #73), distincte de
+    # `fen` ci-dessus qui reste la position ACTUELLEMENT affichée (déjà après
+    # le coup proposé, ou déplacée par une exploration libre) : sans ce champ
+    # séparé et explicitement étiqueté, une question de suivi transmettait
+    # SEULEMENT la position actuelle comme si elle était la position de
+    # départ, et le coach a déjà nié la présence d'une pièce (un fou) pourtant
+    # bien présente avant le coup, faute de pouvoir comparer les deux.
+    fen_depart_exercice = (context.get("fen_depart_exercice") or "").strip()
     # Mode "Exercice" (issue #7) : comparaison coup proposé / coup réellement
     # joué / meilleur coup Stockfish, plutôt qu'un chat libre sur une partie.
     coup_propose  = (context.get("coup_propose") or "").strip()
     coup_reel     = (context.get("coup_reel") or "").strip()
     meilleur_coup = (context.get("meilleur_coup") or "").strip()
-    # Pièce jouée / pièce capturée par chacun de ces trois coups (issue #18) :
-    # calculées côté app.py depuis la position réelle (python-chess), pas
-    # laissées à la charge du modèle qui a pu confondre le type de pièce
-    # capturée (ex. "tu prends le cavalier" pour la prise d'un pion) en ne
-    # se fiant qu'au nom SAN/UCI du coup, qui ne le précise pas lui-même.
-    coup_propose_piece    = (context.get("coup_propose_piece") or "").strip()
-    coup_propose_capture  = (context.get("coup_propose_capture") or "").strip()
-    coup_reel_piece       = (context.get("coup_reel_piece") or "").strip()
-    coup_reel_capture     = (context.get("coup_reel_capture") or "").strip()
-    meilleur_coup_piece   = (context.get("meilleur_coup_piece") or "").strip()
-    meilleur_coup_capture = (context.get("meilleur_coup_capture") or "").strip()
+    # Description mécanique de chacun de ces trois coups (issue #73, en
+    # remplacement des champs piece/capture de l'issue #18) : quelle pièce
+    # joue, sa case de départ, la pièce capturée (avec sa case, si elle était
+    # défendue et par quoi, et le solde net réel après reprise), l'échec/mat
+    # et les pièces désormais attaquées — calculée mécaniquement (game_facts.
+    # describe_move_mechanically côté app.py, DEPUIS la position de départ de
+    # l'exercice), comme pour le mode "analyse_partie" (issue #66). L'ancienne
+    # version (_move_details_fr côté app.py) ne donnait que le type de pièce
+    # jouée/capturée, sans défenseur ni solde net — insuffisant pour justifier
+    # qu'une capture jugée "blunder" perd réellement du matériel.
+    coup_propose_description_mecanique = (
+        context.get("coup_propose_description_mecanique") or ""
+    ).strip()
+    coup_reel_description_mecanique = (
+        context.get("coup_reel_description_mecanique") or ""
+    ).strip()
+    meilleur_coup_description_mecanique = (
+        context.get("meilleur_coup_description_mecanique") or ""
+    ).strip()
     # Verdict Stockfish chiffré du coup exact proposé (issue #17), calculé via
     # EngineManager.evaluate_move (mêmes seuils que classifier_coup) : donné
     # en contexte pour que le coach explique un jugement déjà tranché plutôt
@@ -835,17 +873,15 @@ def _build_context_text(context) -> str:
     # ("le roque était préférable"), jamais la vraie raison (8...Nxf4 capture
     # la dame) : le modèle devait la deviner au lieu de la recevoir.
     reponse_suivante = (context.get("reponse_suivante") or "").strip()
-    # Description mécanique du coup flagué expliqué et de son meilleur coup
-    # (issue #66) : quelle pièce joue, sa case de départ, la pièce capturée
+    # Description mécanique du coup flagué expliqué (mode "analyse_partie",
+    # issue #66) : quelle pièce joue, sa case de départ, la pièce capturée
     # éventuelle (défendue ou non, solde net après reprise) et ce qui est
     # désormais attaqué — calculé mécaniquement (game_facts.
     # describe_move_mechanically côté app.py), même risque et même correctif
     # que le bloc de faits du chat coach (voir _GAME_FACTS_ADDENDUM) pour un
-    # coup unique expliqué hors de ce bloc.
+    # coup unique expliqué hors de ce bloc. meilleur_coup_description_mecanique
+    # est déclaré plus haut, partagé avec le mode "exercice" (issue #73).
     coup_description_mecanique = (context.get("coup_description_mecanique") or "").strip()
-    meilleur_coup_description_mecanique = (
-        context.get("meilleur_coup_description_mecanique") or ""
-    ).strip()
     # Ligne (PV) réellement calculée par Stockfish pour le coup proposé et
     # pour le meilleur coup (issue #20), en SAN, depuis la même analyse à
     # depth=18 que verdict_qualite/meilleur_coup ci-dessus (cf. app.py,
@@ -863,10 +899,16 @@ def _build_context_text(context) -> str:
     reprise_recente = bool(context.get("reprise_recente"))
     # Évaluation Stockfish réelle de la position résultant du coup proposé
     # (issue #12 point 3), en complément de la seule comparaison à
-    # meilleur_coup : toujours du point de vue des Blancs, pour rester non
-    # ambigu quel que soit le camp d'Alain ou le mode d'entraînement.
-    eval_blancs_cp = context.get("eval_blancs_cp")
-    eval_mat       = context.get("eval_mat")
+    # meilleur_coup. Transmise du point de vue d'Alain (issue #73, positif =
+    # avantage pour Alain, négatif = avantage pour l'adversaire), déjà
+    # convertie côté app.py depuis le point de vue des Blancs en fonction de
+    # camp_alain : un signe "point de vue des Blancs" transmis tel quel s'est
+    # déjà révélé ambigu en usage réel (un -131 lu comme "en faveur des "
+    # "Blancs" alors que camp_alain="noirs" signifiait +131, donc un avantage
+    # pour Alain). Plus aucun nombre dont le signe dépend de la couleur n'est
+    # transmis ici.
+    eval_alain_cp  = context.get("eval_alain_cp")
+    eval_alain_mat = context.get("eval_alain_mat")
     # Mode "Travail d'ouverture" (issue #9) : statut par rapport au livre
     # Polyglot de référence (gm2001.bin), en complément de meilleur_coup.
     dans_le_livre          = context.get("dans_le_livre")
@@ -937,8 +979,24 @@ def _build_context_text(context) -> str:
             "à Alain ni à \"l'adversaire\" : décris chaque coup uniquement "
             "par son camp (Blancs/Noirs)."
         )
+    if fen_depart_exercice:
+        lines.append(
+            f"Position de DÉPART de cet exercice (FEN), avant tout coup : "
+            f"{fen_depart_exercice}"
+        )
     if fen:
-        lines.append(f"Position actuelle (FEN) : {fen}")
+        lines.append(f"Position ACTUELLEMENT affichée sur l'échiquier (FEN) : {fen}")
+    if fen_depart_exercice and fen and fen_depart_exercice != fen:
+        lines.append(
+            "La position de départ et la position actuelle ci-dessus sont "
+            "DIFFÉRENTES (le coup proposé a déjà été joué sur l'échiquier, ou "
+            "Alain explore librement la suite) : pour toute pièce ou case en "
+            "lien avec un coup cité ci-dessous, fie-toi uniquement à sa "
+            "description mécanique (calculée sur la position de départ), "
+            "jamais à ce que tu observes sur la position actuelle — ne "
+            "conclus jamais qu'une pièce \"n'existe pas\" ou \"n'est pas là\" "
+            "sans comparer explicitement les deux positions."
+        )
     if move:
         lines.append(f"Coup actuel : {move}")
     if coup_propose:
@@ -950,14 +1008,11 @@ def _build_context_text(context) -> str:
             "Coup que le joueur vient de proposer MAINTENANT, dans cette "
             f"tentative d'exercice : {coup_propose}"
         )
-        if coup_propose_piece:
-            detail = f"Pièce jouée par ce coup : {coup_propose_piece}."
-            if coup_propose_capture:
-                detail += (
-                    f" Pièce capturée sur la case d'arrivée : {coup_propose_capture} "
-                    "(c'est cette pièce, et aucune autre, qui se trouvait sur cette case)."
-                )
-            lines.append(detail)
+        if coup_propose_description_mecanique:
+            lines.append(
+                f"Description mécanique calculée de ce coup (depuis la "
+                f"position de départ) : {coup_propose_description_mecanique}"
+            )
         if pv_coup_propose:
             lines.append(
                 "Suite réellement calculée par Stockfish après ce coup proposé "
@@ -970,24 +1025,19 @@ def _build_context_text(context) -> str:
             "partie d'origine dont cet exercice est tiré — PAS le coup qu'il "
             f"vient de proposer ci-dessus : {coup_reel}"
         )
-        if coup_reel_piece:
-            detail = f"Pièce jouée par ce coup-là : {coup_reel_piece}."
-            if coup_reel_capture:
-                detail += (
-                    f" Pièce capturée sur la case d'arrivée : {coup_reel_capture} "
-                    "(c'est cette pièce, et aucune autre, qui se trouvait sur cette case)."
-                )
-            lines.append(detail)
+        if coup_reel_description_mecanique:
+            lines.append(
+                f"Description mécanique calculée de ce coup (depuis la "
+                f"position de départ) : {coup_reel_description_mecanique}"
+            )
     if meilleur_coup:
         detail = f"Meilleur coup selon Stockfish : {meilleur_coup}."
-        if meilleur_coup_piece:
-            detail += f" Pièce jouée par ce coup : {meilleur_coup_piece}."
-            if meilleur_coup_capture:
-                detail += (
-                    f" Pièce capturée sur la case d'arrivée : {meilleur_coup_capture} "
-                    "(c'est cette pièce, et aucune autre, qui se trouvait sur cette case)."
-                )
         lines.append(detail)
+        if meilleur_coup_description_mecanique:
+            lines.append(
+                f"Description mécanique calculée de ce coup (depuis la "
+                f"position de départ) : {meilleur_coup_description_mecanique}"
+            )
         if pv_meilleur_coup:
             lines.append(
                 "Suite réellement calculée par Stockfish pour ce meilleur coup "
@@ -1018,11 +1068,9 @@ def _build_context_text(context) -> str:
             f"source fiable pour la pièce qui joue, sa case de départ et ce "
             f"qu'elle capture ou attaque : {coup_description_mecanique}"
         )
-    if meilleur_coup_description_mecanique:
-        lines.append(
-            f"Description mécanique calculée du meilleur coup ci-dessus "
-            f"(issue #66) : {meilleur_coup_description_mecanique}"
-        )
+    # meilleur_coup_description_mecanique est déjà émis ci-dessus, dans le
+    # bloc "if meilleur_coup:" (partagé entre le mode "exercice" et le mode
+    # "analyse_partie", tous deux transmettent "meilleur_coup").
     if reprise_recente:
         lines.append(
             "Alain vient d'annuler sa dernière tentative sur cet exercice avec "
@@ -1031,16 +1079,17 @@ def _build_context_text(context) -> str:
             "inchangée. Le coup et le verdict éventuellement discutés plus tôt "
             "dans cette conversation ne s'appliquent plus à l'état actuel."
         )
-    if eval_mat is not None:
-        side = "Blancs" if eval_mat > 0 else "Noirs"
+    if eval_alain_mat is not None:
+        cible = "Alain" if eval_alain_mat > 0 else "l'adversaire"
         lines.append(
             f"Évaluation Stockfish réelle de la position résultant du coup proposé : "
-            f"mat forcé en {abs(eval_mat)} coup(s) en faveur des {side}."
+            f"mat forcé en {abs(eval_alain_mat)} coup(s) en faveur de {cible}."
         )
-    elif eval_blancs_cp is not None:
+    elif eval_alain_cp is not None:
         lines.append(
-            "Évaluation Stockfish réelle de la position résultant du coup proposé "
-            f"(point de vue des Blancs, positif = avantage Blancs) : {eval_blancs_cp:+d} centipawns."
+            "Évaluation Stockfish réelle de la position résultant du coup proposé, "
+            "du point de vue d'Alain (positif = avantage pour Alain, négatif = "
+            f"avantage pour l'adversaire) : {eval_alain_cp:+d} centipawns."
         )
     if dans_le_livre is not None:
         statut = "dans le livre d'ouvertures" if dans_le_livre else "hors du livre d'ouvertures"

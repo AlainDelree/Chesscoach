@@ -48,6 +48,20 @@ let exerciseCoupReel       = null;
 // ligne (pas seulement le verdict chiffré) dans une question de suivi.
 let exercisePvCoupPropose  = null;
 let exercisePvMeilleurCoup = null;
+// Description mécanique de chacun des trois coups comparés (pièce, case de
+// départ/arrivée, capture, défenseurs, solde net — issue #73), reçue du
+// serveur avec le verdict (game_facts.describe_move_mechanically, calculée
+// sur la position de DÉPART de l'exercice) : sans elles, une question de
+// suivi dans le chat libre perdait ce détail dès le tour suivant, et le
+// coach ne pouvait répondre qu'à partir du seul nom SAN du coup.
+let exerciseCoupProposeDescriptionMecanique    = null;
+let exerciseCoupReelDescriptionMecanique       = null;
+let exerciseMeilleurCoupDescriptionMecanique   = null;
+// Évaluation Stockfish de la position résultant du coup proposé, point de
+// vue d'Alain (issue #73 : positif = avantage pour Alain), reçue du serveur
+// avec le verdict — transmise au chat libre comme le reste de ce contexte.
+let exerciseEvalAlainCp    = null;
+let exerciseEvalAlainMat   = null;
 // Vrai juste après "Reprendre mon coup", tant qu'aucun nouveau coup n'a été
 // reproposé : signale au coach que le coup/verdict discutés plus tôt dans le
 // chat libre concernent une tentative annulée, pas l'état réel actuel.
@@ -128,6 +142,11 @@ function _exerciseResetTentative() {
   exerciseCoupReel       = null;
   exercisePvCoupPropose  = null;
   exercisePvMeilleurCoup = null;
+  exerciseCoupProposeDescriptionMecanique  = null;
+  exerciseCoupReelDescriptionMecanique     = null;
+  exerciseMeilleurCoupDescriptionMecanique = null;
+  exerciseEvalAlainCp    = null;
+  exerciseEvalAlainMat   = null;
 }
 
 function exerciseLineStopPlayback() {
@@ -443,16 +462,34 @@ function exerciseChatContextExtra() {
   // question de suivi ne connaît que la position/le camp, pas le coup
   // proposé ni le verdict Stockfish déjà rendu par le coach (cf.
   // llm_coach._build_context_text côté serveur).
+  //
+  // fen_depart_exercice (issue #73) : la position de DÉPART de l'exercice,
+  // distincte du FEN "actuel" déjà transmis par coachBuildContext() (board.js,
+  // state.fen = exerciseGame.fen() — déjà après le coup proposé, ou déplacé
+  // par une exploration libre). Sans ce champ séparé, une question de suivi
+  // ne transmettait QUE la position actuelle, lue à tort par le coach comme
+  // si elle était la position de départ (constat en usage réel : une pièce
+  // capturée par le coup proposé niée comme n'ayant jamais existé).
+  //
+  // Les descriptions mécaniques et l'évaluation point de vue d'Alain
+  // (issue #73) complètent ce contexte comme au moment du verdict, pour
+  // qu'une question de suivi dispose exactement des mêmes données.
   if (!exerciseActive) return {};
   return {
     mode_exercice: true,
+    fen_depart_exercice: exerciseFenAvant || "",
     coup_propose: exerciseCoupPropose || "",
+    coup_propose_description_mecanique: exerciseCoupProposeDescriptionMecanique || "",
     coup_reel: exerciseCoupReel || "",
+    coup_reel_description_mecanique: exerciseCoupReelDescriptionMecanique || "",
     meilleur_coup: exerciseMeilleurCoup || "",
+    meilleur_coup_description_mecanique: exerciseMeilleurCoupDescriptionMecanique || "",
     verdict_qualite: exerciseVerdictQualite || "",
     verdict_delta_cp: exerciseVerdictDeltaCp,
     pv_coup_propose: exercisePvCoupPropose || "",
     pv_meilleur_coup: exercisePvMeilleurCoup || "",
+    eval_alain_cp: exerciseEvalAlainCp,
+    eval_alain_mat: exerciseEvalAlainMat,
     reprise_recente: exerciseJustReprised,
   };
 }
@@ -600,6 +637,14 @@ if (typeof socket !== "undefined") {
     exerciseCoupReel       = (data && data.coup_reel) || null;
     exercisePvCoupPropose  = (data && data.pv_coup_propose) || null;
     exercisePvMeilleurCoup = (data && data.pv_meilleur_coup) || null;
+    // Descriptions mécaniques et évaluation point de vue d'Alain (issue #73),
+    // mémorisées pour être réinjectées dans une question de suivi du chat
+    // libre (exerciseChatContextExtra ci-dessous).
+    exerciseCoupProposeDescriptionMecanique  = (data && data.coup_propose_description_mecanique) || null;
+    exerciseCoupReelDescriptionMecanique     = (data && data.coup_reel_description_mecanique) || null;
+    exerciseMeilleurCoupDescriptionMecanique = (data && data.meilleur_coup_description_mecanique) || null;
+    exerciseEvalAlainCp  = (data && typeof data.eval_alain_cp === "number") ? data.eval_alain_cp : null;
+    exerciseEvalAlainMat = (data && typeof data.eval_alain_mat === "number") ? data.eval_alain_mat : null;
     _exerciseUpdateCoupReelDisplay();
     // Ligne de Stockfish (bonus, issue #58) : déjà calculée et transmise
     // avec le verdict (pv_meilleur_coup), pas besoin de recalcul côté client.

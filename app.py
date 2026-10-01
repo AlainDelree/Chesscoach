@@ -258,64 +258,6 @@ def _finale_restricted_king_squares(board: chess.Board, camp_perdant_color: bool
     return restricted
 
 
-# Noms FR bruts (sans article) des types de pièce python-chess, utilisés par
-# _move_details_fr (issue #18) — le mode Exercice les injecte explicitement
-# dans le contexte du coach plutôt que de le laisser déduire seul, à partir
-# du seul nom SAN/UCI d'un coup, quelle pièce se trouvait sur la case
-# capturée (ex. confusion constatée : "tu prends le cavalier" pour la prise
-# d'un pion).
-_PIECE_FR = {
-    chess.PAWN: "pion",
-    chess.KNIGHT: "cavalier",
-    chess.BISHOP: "fou",
-    chess.ROOK: "tour",
-    chess.QUEEN: "dame",
-    chess.KING: "roi",
-}
-
-
-def _parse_move_flexible(board: chess.Board, move_str: str) -> chess.Move | None:
-    """Interprète move_str en SAN ou, à défaut, en UCI (issue #18) : les
-    champs coup_joue_san/meilleur_coup_san d'erreurs_detectees.json peuvent
-    retomber sur leur équivalent _uci quand le SAN n'a pas été précalculé
-    (cf. on_exercise_answer). Retourne None si move_str n'est interprétable
-    dans aucun des deux formats, ou n'est pas légal sur `board`."""
-    try:
-        return board.parse_san(move_str)
-    except ValueError:
-        pass
-    try:
-        move = chess.Move.from_uci(move_str)
-        return move if move in board.legal_moves else None
-    except Exception:
-        return None
-
-
-def _move_details_fr(fen: str, move_str: str) -> tuple[str, str]:
-    """(pièce jouée, pièce capturée) en français pour move_str (SAN ou UCI),
-    joué depuis la position fen (issue #18) — best-effort : ("", "") si
-    move_str est vide ou non interprétable sur cette position. Les trois
-    coups comparés dans le mode Exercice (coup proposé, coup réel, meilleur
-    coup) partent tous de la même position fen_avant."""
-    if not move_str:
-        return "", ""
-    try:
-        board = chess.Board(fen)
-        move = _parse_move_flexible(board, move_str)
-        if move is None:
-            return "", ""
-        piece = board.piece_at(move.from_square)
-        piece_fr = _PIECE_FR.get(piece.piece_type, "") if piece else ""
-        if board.is_en_passant(move):
-            capture_fr = _PIECE_FR[chess.PAWN]
-        else:
-            captured = board.piece_at(move.to_square)
-            capture_fr = _PIECE_FR.get(captured.piece_type, "") if captured else ""
-        return piece_fr, capture_fr
-    except Exception:
-        return "", ""
-
-
 def _eval_blancs_apres(board: chess.Board, depth: int = 8) -> tuple[int | None, int | None]:
     """Évalue une position (déjà jouée, coup d'Alain compris) avec Stockfish et
     convertit le résultat vers le point de vue des Blancs (issue #12 point 3).
@@ -323,9 +265,9 @@ def _eval_blancs_apres(board: chess.Board, depth: int = 8) -> tuple[int | None, 
     EngineManager.evaluate() retourne cp/mate du point de vue du joueur au
     trait dans `board` (donc l'adversaire d'Alain juste après son coup) : on
     inverse le signe si ce joueur est Noir, pour obtenir une convention non
-    ambiguë quel que soit le camp d'Alain ou le mode d'entraînement — la même
-    que celle attendue par llm_coach._build_context_text (eval_blancs_cp /
-    eval_mat).
+    ambiguë quel que soit le camp d'Alain ou le mode d'entraînement — valeur
+    intermédiaire, encore à convertir vers le point de vue d'Alain (voir
+    _vers_point_de_vue_alain ci-dessous) avant transmission au coach.
 
     Retourne (eval_blancs_cp, eval_mat) — un seul des deux est non None
     (sauf position déjà terminée, où les deux sont None)."""
@@ -338,6 +280,28 @@ def _eval_blancs_apres(board: chess.Board, depth: int = 8) -> tuple[int | None, 
     if eval_info["cp"] is not None:
         return sign * eval_info["cp"], None
     return None, None
+
+
+def _vers_point_de_vue_alain(valeur: int | None, camp_alain: str) -> int | None:
+    """Convertit un centipawn/mat "point de vue des Blancs" (_eval_blancs_apres
+    ou équivalent) vers le point de vue d'Alain — positif = avantage pour
+    Alain, négatif = avantage pour l'adversaire (issue #73).
+
+    Un chiffre "point de vue des Blancs" transmis tel quel au contexte du
+    coach s'est déjà révélé ambigu en usage réel : un -131 a été lu comme
+    "légèrement en faveur des Blancs" alors que camp_alain="noirs" signifiait
+    en réalité +131, un avantage pour Alain. llm_coach._build_context_text
+    n'accepte plus que des évaluations déjà exprimées de ce point de vue
+    (eval_alain_cp / eval_alain_mat).
+
+    Repli sur le signe Blancs (valeur inchangée) si camp_alain n'est ni
+    "blancs" ni "noirs" — n'arrive pas en pratique dans les modes qui
+    appellent cette fonction, chacun suit déjà localement le camp d'Alain."""
+    if valeur is None:
+        return None
+    if camp_alain == "noirs":
+        return -valeur
+    return valeur
 
 
 def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
@@ -804,6 +768,11 @@ def on_coach_comment_on_demand(data):
     # client transmet donc le camp suivi côté JS pour le mode en cours
     # (pedagogicCampAlain / openingCampAlain / finaleCampAlain).
     camp_alain = ((data or {}).get("camp_alain") or "").strip()
+    # Conversion vers le point de vue d'Alain (issue #73) — cf.
+    # _vers_point_de_vue_alain, plus aucun chiffre "point de vue des Blancs"
+    # transmis au coach.
+    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, camp_alain)
+    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, camp_alain)
     theme_finale = ((data or {}).get("theme_finale") or "").strip()
     # Mode d'origine transmis par le client (issue #26, cf. static/board.js
     # askCoachOnDemand) — pour le logging uniquement (part. 3), ce handler
@@ -822,8 +791,8 @@ def on_coach_comment_on_demand(data):
         "fen": fen,
         "camp_alain": camp_alain,
         "meilleur_coup": meilleur_coup_san,
-        "eval_blancs_cp": eval_blancs_cp,
-        "eval_mat": eval_mat,
+        "eval_alain_cp": eval_alain_cp,
+        "eval_alain_mat": eval_alain_mat,
         "theme_finale": theme_finale,
         "mode_origine": mode_origine,
     }
@@ -1214,7 +1183,9 @@ def on_exercise_answer(data):
 
     uci = (data or {}).get("uci", "")
     fen_avant = _current_exercise["fen_avant"]
+    camp_alain = _current_exercise.get("camp_alain", "")
     coup_propose_san = uci
+    fen_apres = fen_avant
     eval_blancs_cp = None
     eval_mat = None
     verdict_qualite = None
@@ -1242,9 +1213,17 @@ def on_exercise_answer(data):
             pv_meilleur_coup = eval_result["pv_meilleur_coup"]
             meilleur_coup_recalcule_san = eval_result["meilleur_coup"]
             board.push(move)
+            fen_apres = board.fen()
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
     except Exception:
         pass
+
+    # Conversion vers le point de vue d'Alain (issue #73) — cf.
+    # _vers_point_de_vue_alain, plus aucun chiffre "point de vue des Blancs"
+    # transmis au coach (un -131 a déjà été lu comme "en faveur des Blancs"
+    # alors que camp_alain="noirs" signifiait +131, un avantage pour Alain).
+    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, camp_alain)
+    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, camp_alain)
 
     coup_reel = _current_exercise.get("coup_joue_san") or _current_exercise.get("coup_joue_uci", "")
     # Meilleur coup recalculé ci-dessus à la même profondeur que le verdict
@@ -1256,11 +1235,21 @@ def on_exercise_answer(data):
         _current_exercise.get("meilleur_coup_san") or _current_exercise.get("meilleur_coup_uci", "")
     )
 
-    # Pièce jouée/capturée par chacun des trois coups comparés, tous les
-    # trois depuis fen_avant (issue #18) — cf. _move_details_fr.
-    coup_propose_piece, coup_propose_capture = _move_details_fr(fen_avant, coup_propose_san)
-    coup_reel_piece, coup_reel_capture = _move_details_fr(fen_avant, coup_reel)
-    meilleur_coup_piece, meilleur_coup_capture = _move_details_fr(fen_avant, meilleur_coup)
+    # Description mécanique de chacun des trois coups comparés, tous les
+    # trois calculés depuis fen_avant (issue #73, en remplacement de l'ancien
+    # _move_details_fr qui ne donnait que le type de pièce jouée/capturée,
+    # sans défenseur ni solde net après reprise) — mêmes fonctions
+    # game_facts.describe_move_mechanically déjà utilisées par le mode
+    # "analyse_partie" (issue #66, cf. on_analyse_expliquer_coup).
+    coup_propose_description_mecanique = game_facts.describe_move_mechanically(
+        fen_avant, coup_propose_san, camp_alain
+    )
+    coup_reel_description_mecanique = game_facts.describe_move_mechanically(
+        fen_avant, coup_reel, camp_alain
+    )
+    meilleur_coup_description_mecanique = game_facts.describe_move_mechanically(
+        fen_avant, meilleur_coup, camp_alain
+    )
 
     messages = [{
         "role": "user",
@@ -1273,17 +1262,23 @@ def on_exercise_answer(data):
         ),
     }]
     context = {
-        "fen": fen_avant,
-        "camp_alain": _current_exercise.get("camp_alain", ""),
+        # Position de DÉPART de l'exercice et position ACTUELLE (issue #73) :
+        # distinguées et explicitement étiquetées (cf.
+        # llm_coach._build_context_text) — ici, juste après le coup proposé,
+        # elles diffèrent déjà. Sans fen_depart_exercice transmis séparément,
+        # une question de suivi ultérieure (coach_ask) n'avait accès qu'à la
+        # position actuelle, lue à tort par le coach comme si elle était la
+        # position de départ (constat en usage réel : une pièce capturée
+        # niée comme n'ayant jamais existé).
+        "fen_depart_exercice": fen_avant,
+        "fen": fen_apres,
+        "camp_alain": camp_alain,
         "coup_propose": coup_propose_san,
-        "coup_propose_piece": coup_propose_piece,
-        "coup_propose_capture": coup_propose_capture,
+        "coup_propose_description_mecanique": coup_propose_description_mecanique,
         "coup_reel": coup_reel,
-        "coup_reel_piece": coup_reel_piece,
-        "coup_reel_capture": coup_reel_capture,
+        "coup_reel_description_mecanique": coup_reel_description_mecanique,
         "meilleur_coup": meilleur_coup,
-        "meilleur_coup_piece": meilleur_coup_piece,
-        "meilleur_coup_capture": meilleur_coup_capture,
+        "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
         # Ligne (PV) réellement calculée par Stockfish (issue #20), en SAN,
         # pour le coup proposé et pour le meilleur coup — cf.
         # llm_coach._build_context_text : sert au coach à justifier une
@@ -1291,8 +1286,8 @@ def on_exercise_answer(data):
         # explication tactique générique à partir du seul verdict chiffré.
         "pv_coup_propose": pv_coup_propose,
         "pv_meilleur_coup": pv_meilleur_coup,
-        "eval_blancs_cp": eval_blancs_cp,
-        "eval_mat": eval_mat,
+        "eval_alain_cp": eval_alain_cp,
+        "eval_alain_mat": eval_alain_mat,
         "verdict_qualite": verdict_qualite,
         "verdict_delta_cp": verdict_delta_cp,
         # Profondeur commune du recalcul à la volée (issue #19) du verdict et
@@ -1333,6 +1328,18 @@ def on_exercise_answer(data):
             # la ligne réellement calculée dès le tour suivant.
             "pv_coup_propose": pv_coup_propose,
             "pv_meilleur_coup": pv_meilleur_coup,
+            # Position de départ, descriptions mécaniques des trois coups et
+            # évaluation point de vue d'Alain (issue #73) : transmis au
+            # client pour qu'une question de suivi posée dans le chat libre
+            # (exerciseChatContextExtra, exercise.js) dispose du même
+            # contexte complet que ce premier verdict, sans jamais confondre
+            # la position de départ avec la position actuellement affichée.
+            "fen_depart_exercice": fen_avant,
+            "coup_propose_description_mecanique": coup_propose_description_mecanique,
+            "coup_reel_description_mecanique": coup_reel_description_mecanique,
+            "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
+            "eval_alain_cp": eval_alain_cp,
+            "eval_alain_mat": eval_alain_mat,
         })
 
 
@@ -1424,8 +1431,11 @@ def on_pedagogic_move(data):
     board.push(move)
 
     # Évaluation Stockfish réelle de la position résultant du coup d'Alain
-    # (issue #12 point 3), avant que l'adversaire ne rejoue.
+    # (issue #12 point 3), avant que l'adversaire ne rejoue. Convertie vers
+    # le point de vue d'Alain (issue #73) — cf. _vers_point_de_vue_alain.
     eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
+    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, _pedagogic_camp_alain or "")
+    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, _pedagogic_camp_alain or "")
 
     # Réponse automatique de Stockfish (force réduite) si la partie continue.
     game_over_info = _game_over_info(board)
@@ -1461,8 +1471,8 @@ def on_pedagogic_move(data):
         "camp_alain": _pedagogic_camp_alain or "",
         "coup_propose": coup_alain_san,
         "meilleur_coup": meilleur_coup_san,
-        "eval_blancs_cp": eval_blancs_cp,
-        "eval_mat": eval_mat,
+        "eval_alain_cp": eval_alain_cp,
+        "eval_alain_mat": eval_alain_mat,
         "verdict_qualite": eval_result["verdict_qualite"],
         "verdict_delta_cp": eval_result["verdict_delta_cp"],
         "pv_coup_propose": eval_result["pv_coup_propose"],
@@ -1683,8 +1693,11 @@ def on_opening_move(data):
     board.push(move)
 
     # Évaluation Stockfish réelle de la position résultant du coup d'Alain
-    # (issue #12 point 3), avant que l'adversaire ne rejoue.
+    # (issue #12 point 3), avant que l'adversaire ne rejoue. Convertie vers
+    # le point de vue d'Alain (issue #73) — cf. _vers_point_de_vue_alain.
     eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
+    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, _opening_camp_alain or "")
+    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, _opening_camp_alain or "")
 
     # Réponse automatique de l'adversaire : livre tant que la partie y reste,
     # sinon Stockfish affaibli (mode pédagogique).
@@ -1747,8 +1760,8 @@ def on_opening_move(data):
         "camp_alain": _opening_camp_alain or "",
         "coup_propose": coup_alain_san,
         "meilleur_coup": meilleur_coup_san,
-        "eval_blancs_cp": eval_blancs_cp,
-        "eval_mat": eval_mat,
+        "eval_alain_cp": eval_alain_cp,
+        "eval_alain_mat": eval_alain_mat,
         "dans_le_livre": dans_le_livre,
         "popularite_pct": popularite_pct,
         "coup_livre_recommande": coup_livre_top_san or "",
@@ -2185,8 +2198,11 @@ def on_finale_move(data):
     board.push(move)
 
     # Évaluation Stockfish réelle de la position résultant du coup d'Alain
-    # (issue #12 point 3), avant que l'adversaire ne rejoue.
+    # (issue #12 point 3), avant que l'adversaire ne rejoue. Convertie vers
+    # le point de vue d'Alain (issue #73) — cf. _vers_point_de_vue_alain.
     eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
+    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, _finale_camp_alain or "")
+    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, _finale_camp_alain or "")
 
     # Réponse automatique de l'adversaire à pleine force, sans plafond Elo
     # (issue #32 — instance dédiée get_move_finales, séparée du moteur
@@ -2227,8 +2243,8 @@ def on_finale_move(data):
         "camp_alain": _finale_camp_alain or "",
         "coup_propose": coup_alain_san,
         "meilleur_coup": meilleur_coup_san,
-        "eval_blancs_cp": eval_blancs_cp,
-        "eval_mat": eval_mat,
+        "eval_alain_cp": eval_alain_cp,
+        "eval_alain_mat": eval_alain_mat,
         "theme_finale": _finale_description or "",
         "verdict_qualite": eval_result["verdict_qualite"],
         "verdict_delta_cp": eval_result["verdict_delta_cp"],
