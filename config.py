@@ -23,6 +23,18 @@ ERREURS_DETECTEES_PATH = DATA_DIR / "erreurs_detectees.json"
 # reste de data/.
 EXERCICE_HISTORIQUE_PATH = DATA_DIR / "exercice_historique.json"
 
+# Source d'exercices « Problèmes Lichess » (issue #78) : pool de problèmes
+# préparé hors-ligne par preparer_puzzles_lichess.py à partir du CSV de la
+# base ouverte de problèmes Lichess (licence CC0, téléchargé manuellement
+# par Alain — jamais par CCL) et niveau Elo-like courant par catégorie de
+# thème (lichess_puzzles.py), mis à jour après chaque résultat. Données
+# personnelles, sous DATA_DIR donc gitignorées comme le reste de data/.
+# L'historique « déjà fait » de cette source réutilise EXERCICE_HISTORIQUE_PATH
+# ci-dessus (clé "lichess:<PuzzleId>", jamais en collision avec les FEN
+# utilisées comme clé par la source « Mes erreurs »).
+LICHESS_PUZZLES_PATH = DATA_DIR / "puzzles_lichess.json"
+LICHESS_NIVEAUX_PATH = DATA_DIR / "niveau_exercices_lichess.json"
+
 # Log de chaque appel au coach en mode "Exercice" (issue #18) : horodatage,
 # system prompt complet, contexte construit et messages envoyés, en JSON
 # Lines — pour diagnostiquer les erreurs factuelles du coach à partir de ce

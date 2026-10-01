@@ -22,12 +22,15 @@ import config
 import exercise_history
 import finales
 import game_facts
+import lichess_puzzles
 import llm_coach
 import opening_book
 from engine_stockfish import (
     DEPTH_ANALYSE_PARTIE,
     DEPTH_EXERCICE_TEMPS_REEL,
     EngineManager,
+    SEUIL_IMPRECISION,
+    SEUIL_PUZZLE_EQUIVALENT_CP,
     classifier_coup,
     find_stockfish,
 )
@@ -105,6 +108,24 @@ def _load_erreurs_detectees(path) -> list:
 
 
 erreurs_detectees = _load_erreurs_detectees(config.ERREURS_DETECTEES_PATH)
+
+# Source d'exercices « Problèmes Lichess » (issue #78) : pool préparé
+# hors-ligne par preparer_puzzles_lichess.py — [] si le fichier est absent
+# (script pas encore lancé par Alain), auquel cas la source se désactive
+# proprement côté client (cf. index(), on_exercise_new ci-dessous). Niveau
+# courant par catégorie chargé une fois au démarrage puis tenu à jour en
+# mémoire et sur disque par lichess_puzzles.mettre_a_jour_niveau (mono-
+# utilisateur, comme _current_exercise, pas de verrou nécessaire).
+lichess_puzzles_pool = lichess_puzzles.charger_puzzles(config.LICHESS_PUZZLES_PATH)
+_lichess_niveaux = lichess_puzzles.charger_niveaux(config.LICHESS_NIVEAUX_PATH)
+
+# Thème de phase Lichess correspondant à chaque valeur du sélecteur de phase
+# existant (issue #78) — "toutes" n'a pas d'entrée (aucun filtre de phase).
+_PHASE_VERS_THEME_LICHESS = {
+    "ouverture": "opening",
+    "milieu_de_partie": "middlegame",
+    "finale": "endgame",
+}
 
 # État de l'exercice en cours — application locale mono-utilisateur (cf.
 # CONTEXTE.md), un seul exercice actif à la fois suffit.
@@ -218,6 +239,12 @@ def index():
         # comme le compteur de tokens ci-dessus.
         llm_model_actif=config.LLM_MODEL,
         llm_model_choices=config.LLM_MODEL_CHOICES,
+        # Source d'exercices « Problèmes Lichess » (issue #78) : rendu initial
+        # du sélecteur de source fait côté serveur à partir de la présence du
+        # pool préparé (lichess_puzzles_pool), comme les autres indicateurs
+        # de disponibilité ci-dessus — évite un sélecteur activé puis
+        # désactivé après coup au premier exercice tenté.
+        lichess_puzzles_disponible=bool(lichess_puzzles_pool),
     )
 
 
@@ -1249,10 +1276,21 @@ def on_exercise_new(data=None):
     "milieu_de_partie" / "finale" ; absent ou "toutes" = pas de filtre), pour
     cibler spécifiquement un axe faible identifié par le coach plutôt que de
     tirer uniformément sur toutes les phases confondues — conservé tel quel,
-    seul le choix À L'INTÉRIEUR du pool filtré change."""
+    seul le choix À L'INTÉRIEUR du pool filtré change.
+
+    Issue #78 : data.source ("mes_erreurs", défaut, ou "lichess") choisit la
+    source du pool — cf. _on_exercise_new_lichess ci-dessous pour la branche
+    "Problèmes Lichess" (catégorie/niveau adaptatif, pool et historique
+    différents), qui retourne avant d'atteindre quoi que ce soit ci-dessous."""
     global _current_exercise, _dernier_sous_type_tire
 
     phase = ((data or {}).get("phase") or "toutes").strip()
+    source = ((data or {}).get("source") or "mes_erreurs").strip()
+
+    if source == "lichess":
+        _on_exercise_new_lichess(phase)
+        return
+
     pool = erreurs_detectees
     if phase and phase != "toutes":
         pool = [e for e in erreurs_detectees if e.get("phase") == phase]
@@ -1265,6 +1303,7 @@ def on_exercise_new(data=None):
     _current_exercise = exercise_history.choisir_exercice(
         pool, historique, dernier_sous_type=_dernier_sous_type_tire
     )
+    _current_exercise["source"] = "mes_erreurs"
     fen = _current_exercise["fen_avant"]
     info_avant = historique.get(fen)
     _dernier_sous_type_tire = _current_exercise.get("sous_type")
@@ -1280,6 +1319,69 @@ def on_exercise_new(data=None):
         "deja_fait": info_avant is not None,
         "nb_fois": (info_avant or {}).get("nb_fois", 0),
         "dernier_resultat": (info_avant or {}).get("dernier_resultat"),
+        "source": "mes_erreurs",
+    })
+
+
+def _on_exercise_new_lichess(phase: str) -> None:
+    """Tirage d'un problème dans la source « Problèmes Lichess » (issue #78)
+    — cf. lichess_puzzles.tirer_probleme pour le détail (catégorie pondérée
+    par niveau, fenêtre de note, variété réutilisée depuis
+    exercise_history.choisir_exercice avec la clé "lichess:<PuzzleId>" en
+    guise de "FEN" d'historique). Séparée d'on_exercise_new ci-dessus
+    uniquement pour la lisibilité : même contrat (émet exercise_position ou
+    exercise_error), appelée depuis on_exercise_new quand data.source ==
+    "lichess"."""
+    global _current_exercise, _dernier_sous_type_tire
+
+    if not lichess_puzzles_pool:
+        emit("exercise_error", {"error": "lichess_indisponible"})
+        return
+
+    phase_theme = _PHASE_VERS_THEME_LICHESS.get(phase)
+    historique = exercise_history.charger_historique(config.EXERCICE_HISTORIQUE_PATH)
+    entree, categorie = lichess_puzzles.tirer_probleme(
+        lichess_puzzles_pool, phase_theme, _lichess_niveaux, historique
+    )
+    if entree is None:
+        emit("exercise_error", {"error": "aucune_erreur_disponible"})
+        return
+
+    cle_historique = entree["fen_avant"]  # "lichess:<PuzzleId>", PAS une FEN
+    info_avant = historique.get(cle_historique)
+    niveau = lichess_puzzles.niveau_categorie(_lichess_niveaux, categorie)
+
+    _current_exercise = {
+        "source": "lichess",
+        "fen_avant": entree["fen_position"],
+        "cle_historique": cle_historique,
+        "camp_alain": entree["camp_alain"],
+        "phase": phase or "toutes",
+        "sous_type": None,
+        "puzzle_id": entree["puzzle_id"],
+        "rating": entree["rating"],
+        "themes": entree["themes"],
+        "categorie_tirage": categorie,
+        "niveau_tirage": round(niveau),
+        "solution": entree["solution"],
+    }
+    _dernier_sous_type_tire = None
+    exercise_history.enregistrer_proposition(config.EXERCICE_HISTORIQUE_PATH, cle_historique)
+
+    emit("exercise_position", {
+        "fen": entree["fen_position"],
+        "camp_alain": entree["camp_alain"],
+        "phase": phase or "toutes",
+        "sous_type": None,
+        "deja_fait": info_avant is not None,
+        "nb_fois": (info_avant or {}).get("nb_fois", 0),
+        "dernier_resultat": (info_avant or {}).get("dernier_resultat"),
+        "source": "lichess",
+        "categorie": categorie,
+        "categorie_libelle": lichess_puzzles.CATEGORIES.get(categorie, categorie),
+        "rating": entree["rating"],
+        "niveau": round(niveau),
+        "themes": entree["themes"],
     })
 
 
@@ -1291,6 +1393,14 @@ def on_exercise_answer(data):
     comparaison plutôt qu'un chat libre — cf. llm_coach._build_context_text)."""
     if not _current_exercise:
         emit("exercise_error", {"error": "aucun_exercice_en_cours"})
+        return
+
+    if _current_exercise.get("source") == "lichess":
+        # Issue #78 : jugement et contexte coach différents (coup unique de
+        # la solution/mat/équivalent Stockfish, pas de coup réellement joué
+        # à l'époque, mise à jour du niveau Elo-like de la catégorie) — cf.
+        # _on_exercise_answer_lichess.
+        _on_exercise_answer_lichess((data or {}).get("uci", ""))
         return
 
     uci = (data or {}).get("uci", "")
@@ -1490,6 +1600,198 @@ def on_exercise_answer(data):
             "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
             "eval_alain_cp": eval_alain_cp,
             "eval_alain_mat": eval_alain_mat,
+        })
+
+
+def _on_exercise_answer_lichess(uci: str) -> None:
+    """Jugement du premier coup d'un problème « Problèmes Lichess » (issue
+    #78), distinct du jugement "mes erreurs" ci-dessus : réussi si et
+    seulement si le coup proposé est le premier coup de la solution (coup
+    "unique" de la base Lichess), s'il donne mat, ou s'il est équivalent
+    d'après Stockfish — perte < SEUIL_PUZZLE_EQUIVALENT_CP (30cp, plus
+    strict que le seuil "bon" de 50cp utilisé par la source "mes erreurs",
+    une solution Lichess étant par construction unique), ou garde-fou
+    "position déjà décidée" déclenché (reconnu à qualite == "imprecision"
+    avec un delta_cp >= SEUIL_IMPRECISION, cf. engine_stockfish.py). Met à
+    jour le niveau Elo-like de la seule catégorie ayant servi au tirage
+    (lichess_puzzles.mettre_a_jour_niveau), même si le problème porte
+    plusieurs thèmes de catégorie. Pas de "coup réellement joué à l'époque"
+    pour cette source (aucune partie d'origine, cf. absence de coup_reel
+    ci-dessous)."""
+    fen_avant = _current_exercise["fen_avant"]
+    camp_alain = _current_exercise.get("camp_alain", "")
+    solution = _current_exercise.get("solution") or []
+    premier_coup_solution_uci = solution[0] if solution else None
+
+    coup_propose_san = uci
+    fen_apres = fen_avant
+    eval_blancs_cp = None
+    eval_mat = None
+    verdict_qualite_moteur = None
+    verdict_delta_cp = None
+    pv_coup_propose = ""
+    coup_legal = False
+    coup_reussi = False
+    try:
+        board = chess.Board(fen_avant)
+        move = chess.Move.from_uci(uci)
+        if move in board.legal_moves:
+            coup_legal = True
+            coup_propose_san = board.san(move)
+            eval_result = _evaluate_move_for_coach(fen_avant, move)
+            verdict_qualite_moteur = eval_result["verdict_qualite"]
+            verdict_delta_cp = eval_result["verdict_delta_cp"]
+            pv_coup_propose = eval_result["pv_coup_propose"]
+            board.push(move)
+            fen_apres = board.fen()
+            eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
+
+            coup_est_mat = board.is_checkmate()
+            coup_equivalent = verdict_delta_cp is not None and (
+                verdict_delta_cp < SEUIL_PUZZLE_EQUIVALENT_CP
+                or (verdict_qualite_moteur == "imprecision" and verdict_delta_cp >= SEUIL_IMPRECISION)
+            )
+            coup_reussi = (uci == premier_coup_solution_uci) or coup_est_mat or coup_equivalent
+    except Exception:
+        pass
+
+    categorie = _current_exercise.get("categorie_tirage")
+    cle_historique = _current_exercise.get("cle_historique")
+    niveau_affiche = _current_exercise.get("niveau_tirage")
+    if coup_legal and categorie and cle_historique:
+        exercise_history.enregistrer_resultat(config.EXERCICE_HISTORIQUE_PATH, cle_historique, coup_reussi)
+        niveau_affiche = round(lichess_puzzles.mettre_a_jour_niveau(
+            _lichess_niveaux, config.LICHESS_NIVEAUX_PATH, categorie,
+            _current_exercise.get("rating"), coup_reussi,
+        ))
+
+    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, camp_alain)
+    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, camp_alain)
+
+    # "Meilleur coup" affiché = premier coup de la SOLUTION du problème
+    # (donnée Lichess, "coup unique" par construction), jamais le meilleur
+    # coup recalculé indépendamment par Stockfish : la solution fait foi.
+    # pv_meilleur_coup = la solution ENTIÈRE (pas seulement ce que Stockfish
+    # calcule à la profondeur de l'exercice) — issue #78, point 4 : "afficher
+    # la solution comme une ligne jouable" dans le tableau "Lignes du coach".
+    meilleur_coup = ""
+    pv_meilleur_coup = ""
+    if premier_coup_solution_uci:
+        try:
+            board_sol = chess.Board(fen_avant)
+            sans_solution = []
+            for u in solution:
+                coup_sol = chess.Move.from_uci(u)
+                sans_solution.append(board_sol.san(coup_sol))
+                board_sol.push(coup_sol)
+            meilleur_coup = sans_solution[0]
+            pv_meilleur_coup = " ".join(sans_solution)
+        except Exception:
+            pass
+
+    coup_propose_description_mecanique = game_facts.describe_move_mechanically(
+        fen_avant, coup_propose_san, camp_alain
+    )
+    meilleur_coup_description_mecanique = game_facts.describe_move_mechanically(
+        fen_avant, meilleur_coup, camp_alain
+    )
+
+    pv_coup_propose_detail = game_facts.format_pv_with_balance(
+        "Détail coup par coup de la suite réellement calculée après le coup proposé",
+        game_facts.describe_pv_with_balance(fen_avant, pv_coup_propose, camp_alain, max_plies=4),
+    )
+    pv_meilleur_coup_detail = game_facts.format_pv_with_balance(
+        "Détail coup par coup de la solution du problème",
+        game_facts.describe_pv_with_balance(fen_avant, pv_meilleur_coup, camp_alain, max_plies=8),
+    )
+
+    themes = _current_exercise.get("themes") or []
+    rating = _current_exercise.get("rating")
+    categorie_libelle = lichess_puzzles.CATEGORIES.get(categorie, categorie or "")
+
+    messages = [{
+        "role": "user",
+        "content": (
+            "Je m'entraîne sur un problème tiré de la base ouverte de "
+            "problèmes Lichess (pas une de mes erreurs passées). Dis-moi "
+            "si le coup que je propose pour cette position est juste, puis "
+            "explique brièvement l'idée de la solution. Sois concis."
+        ),
+    }]
+    context = {
+        "fen_depart_exercice": fen_avant,
+        "fen": fen_apres,
+        "camp_alain": camp_alain,
+        "coup_propose": coup_propose_san,
+        "coup_propose_description_mecanique": coup_propose_description_mecanique,
+        "meilleur_coup": meilleur_coup,
+        "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
+        "pv_coup_propose": pv_coup_propose,
+        "pv_meilleur_coup": pv_meilleur_coup,
+        "pv_coup_propose_detail": pv_coup_propose_detail,
+        "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
+        "eval_alain_cp": eval_alain_cp,
+        "eval_alain_mat": eval_alain_mat,
+        # Verdict reformulé en "bon"/"erreur" simple (issue #78) plutôt que la
+        # classification brute du moteur (verdict_qualite_moteur) : le seuil
+        # d'équivalence d'un problème Lichess (30cp) diffère de celui utilisé
+        # pour juger un coup "bon" en général (50cp, cf. SEUIL_BON) — un coup
+        # entre les deux serait classé "bon" par le moteur mais "raté" ici,
+        # et le coach ne doit voir qu'un seul verdict, décisif et cohérent
+        # avec coup_reussi (cf. _EXERCISE_SYSTEM_ADDENDUM : "ce verdict fait
+        # foi").
+        "verdict_qualite": "bon" if coup_reussi else "erreur",
+        "verdict_delta_cp": verdict_delta_cp,
+        "mode_exercice": True,
+        "mode_origine": "exercice_lichess",
+        # Déclenche l'addendum système dédié (réponse courte, pas de "coup
+        # réel à l'époque") et le bloc thèmes/note/niveau de
+        # _build_context_text (issue #78).
+        "source_lichess": True,
+        "themes_lichess": ", ".join(themes),
+        "rating_probleme": rating,
+        "niveau_categorie": niveau_affiche,
+        "categorie_libelle": categorie_libelle,
+    }
+    llm_config = {
+        "llm_api_key": config.LLM_API_KEY,
+        "llm_model": config.LLM_MODEL,
+        "coach_log_path": config.COACH_CALLS_LOG_PATH,
+        "usage_path": config.USAGE_TOKENS_PATH,
+    }
+
+    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    _emit_usage_update()
+    if error:
+        _handle_llm_model_indisponible_si_besoin(error)
+        emit("exercise_error", {"error": error})
+    else:
+        emit("exercise_comment", {
+            "text": response,
+            "coup_propose": coup_propose_san,
+            "coup_reel": "",
+            "meilleur_coup": meilleur_coup,
+            "verdict_qualite": "bon" if coup_reussi else "erreur",
+            "verdict_delta_cp": verdict_delta_cp,
+            "pv_coup_propose": pv_coup_propose,
+            "pv_meilleur_coup": pv_meilleur_coup,
+            "pv_coup_propose_detail": pv_coup_propose_detail,
+            "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
+            "fen_depart_exercice": fen_avant,
+            "coup_propose_description_mecanique": coup_propose_description_mecanique,
+            "coup_reel_description_mecanique": "",
+            "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
+            "eval_alain_cp": eval_alain_cp,
+            "eval_alain_mat": eval_alain_mat,
+            # Pour la ligne d'état et le libellé "Solution du problème" dans
+            # le tableau "Lignes du coach" côté client (issue #78,
+            # exercise.js) — categorie_libelle/rating déjà connus du client
+            # depuis exercise_position, retransmis ici pour rester cohérent
+            # si le niveau a changé suite à ce résultat.
+            "source": "lichess",
+            "categorie_libelle": categorie_libelle,
+            "rating": rating,
+            "niveau": niveau_affiche,
         })
 
 

@@ -103,6 +103,18 @@ DELTA_CP_PLAFOND = 1000
 # recevait le verdict "bon").
 DELTA_CP_MAT_CONTRE = 9999
 
+# Seuil d'équivalence pour le jugement du premier coup d'un problème « Lichess »
+# (issue #78) : plus strict que SEUIL_BON (50cp) ci-dessus, car un problème
+# Lichess a par construction un unique coup correct (coups "uniques" de la
+# base) — un coup différent du premier coup de la solution n'est accepté
+# comme "réussi" que s'il en est très proche (< 30cp) ou si le garde-fou
+# "position déjà décidée" (SEUIL_DECIDE, cf. evaluate_move) s'est déclenché,
+# ce qui se reconnaît côté appelant à qualite == "imprecision" avec un
+# delta_cp >= SEUIL_IMPRECISION (une imprécision "normale", non dégradée par
+# ce garde-fou, reste toujours < SEUIL_IMPRECISION par construction de
+# classifier_coup).
+SEUIL_PUZZLE_EQUIVALENT_CP = 30
+
 
 def classifier_coup(delta_cp: int) -> str:
     """Classe un coup selon la perte en centipawns."""
