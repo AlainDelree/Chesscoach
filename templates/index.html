@@ -340,6 +340,23 @@
     }
     .coach-drawer { display: flex; }
 
+    /* #mobile-mode-bar-slot (pastille de modèle + menu "...", dont le
+       réglage "Taille du plateau" de l'issue #74) : display:none par défaut
+       ICI, AVANT la media query ci-dessous (son display:flex, posé plus
+       loin dans ce fichier mais à l'intérieur de la media query, l'emporte
+       comme déclaration la PLUS BASSE dès que la condition <900px est vraie
+       — même mécanisme de cascade que documenté dans le rapport de clôture
+       de l'issue #71 ; replacer cette règle APRÈS la media query
+       recréerait le même bug, cette fois à l'envers : le slot resterait cette
+       fois masqué même en <900px). Nécessaire car un <div> est display:block
+       par défaut (feuille de style du navigateur) : sans cette règle, son
+       contenu (y compris #game-menu-dropdown, dont le display:none n'est lui
+       posé que dans la media query) restait visible en haut de la
+       disposition grand écran — constaté en testant l'issue #74, bug
+       préexistant (issue #63/#70/#71) que l'ajout de nouveaux boutons dans
+       ce même menu aurait sinon rendu plus visible encore. */
+    #mobile-mode-bar-slot { display: none; }
+
     /* ── Mise en page écran étroit (issue #50, <900px) ────────────────────
        Colonne unique : plateau en haut (pleine largeur), chat du coach
        juste en dessous, puis barre de contrôle du mode actif et contenu des
@@ -763,13 +780,7 @@
 
     /* Composants mobiles (issue #63) : sans effet au-dessus de 900px — les
        règles ci-dessus (dans la media query) sont les seules à leur donner
-       display:flex/block. #mobile-mode-bar-slot n'a plus besoin d'un
-       "display:block" par défaut ici (issue #71 : entrait en conflit avec le
-       "display:flex" posé par la règle sticky dans la media query, plus haut
-       dans la cascade mais de même spécificité — la déclaration la PLUS
-       BASSE dans le fichier l'emportait quel que soit son media query, cf.
-       rapport de clôture) : un <div> est display:block par défaut (feuille
-       de style du navigateur), inutile de le répéter ici. */
+       display:flex/block. */
     .mobile-exercise-bar { display: none; }
     .phase-sheet-backdrop, .phase-sheet { display: none; }
     /* display:contents (issue #65 point 6) : ni boîte propre ni effet sur la
@@ -886,32 +897,71 @@
       #game-menu-usage { font-size: 0.78rem; color: var(--cc-text-muted); padding: 6px; }
       #game-menu-mode-extra:empty { display: none; }
 
-      /* Plateau plus grand (issue #71 point 3) : SEULE variable à ajuster
-         pour changer la taille du plateau des modes de partie — jusqu'à 44%
-         de la hauteur dynamique de l'écran (dvh, tient compte de la barre
-         d'adresse mobile), jamais plus large que l'écran moins ~24px de
-         marges. Le 4e terme (--bd-size-game-max, mobile_game.js) garantit
-         les ~180px de contenu visible sous les onglets demandés : le reste
-         de la rangée d'en-tête collée + matériel capturé + ligne d'état +
-         #review-controls + #shared-mode-controls (dont les 3 boutons
-         peuvent passer sur 2 lignes selon la largeur d'écran) + les onglets
-         Coach/Lignes/Analyse/Coups varie trop selon l'état (boutons de
-         démarrage, bannière de fin de partie, repli des boutons partagés)
-         pour être couvert par un simple calc() statique — mesuré en continu
-         sur le DOM réel (ResizeObserver sur #board-sticky-wrap, même
-         principe que --mobile-header-h/scroll-padding-top, controls.js) et
-         republié dans cette variable, presque toujours plus petite que
-         44dvh sur les téléphones courants (~640-800px de haut) : la
-         fourchette "44-46%" reste donc un PLAFOND, atteint seulement sur
-         les plus grands téléphones, plutôt qu'une valeur garantie partout —
-         compromis assumé, cf. rapport de clôture pour les tailles
-         réellement obtenues. #coord-rank/#coord-file et la barre d'éval
-         sont masqués ici (coordonnées repliées dans les cases, cf.
-         .square[data-*-label] plus bas) : sans eux, ces ~24px ne couvrent
-         plus que les marges de page/la bordure du plateau, contre 76px
-         avant l'issue #69 (colonne de rangs + barre d'éval + marges). */
+      /* Réglage "Taille du plateau" (issue #74) : 3 boutons pleine largeur
+         côte à côte (plutôt qu'un <select>, moins sûr au toucher) — hauteur
+         ≥36px (cible tactile), pas de débordement (flex:1 1 0 partage la
+         largeur du menu, déjà borné par max-width sur #game-menu-dropdown).
+         L'état actif reprend le même vert clair/texte foncé que les autres
+         "item de menu actif" de l'appli (--cc-accent-2-200/800, cf.
+         .board-lines-command-bar plus haut) pour rester cohérent visuellement
+         sans ajouter de nouvelle paire de couleurs. */
+      .game-board-size-choice {
+        display: flex;
+        gap: 6px;
+        padding: 2px 6px 8px;
+        box-sizing: border-box;
+      }
+      .game-board-size-btn {
+        flex: 1 1 0;
+        min-width: 0;
+        min-height: 36px;
+        padding: 6px 2px;
+        font-size: 0.76rem;
+        font-weight: 600;
+        text-align: center;
+        color: var(--cc-accent-strong);
+        background: transparent;
+        border: 1px solid var(--cc-divider);
+        border-radius: var(--cc-radius-sm);
+        box-sizing: border-box;
+      }
+      .game-board-size-btn.active {
+        background: var(--cc-accent-2-200);
+        color: var(--cc-accent-2-800);
+        border-color: var(--cc-accent-2-200);
+      }
+
+      /* Plateau plus grand (issue #71 point 3), taille réglable par
+         l'utilisateur (issue #74, menu "...", mobile_game.js) : SEULE
+         variable à ajuster pour changer la taille du plateau des modes de
+         partie — jamais plus large que l'écran moins ~24px de marges. Le
+         1er terme (--bd-size-game-pct, posé par _applyGameBoardSizeChoice,
+         mobile_game.js — "44dvh" par défaut si jamais non posé, ex. avant le
+         premier DOMContentLoaded) dépend du réglage Compact/Normal/Grand
+         choisi par l'utilisateur ; GAME_BOARD_SIZE_PRESETS (mobile_game.js)
+         est l'UNIQUE endroit où sont définis les 3 pourcentages visés et
+         leurs garanties de contenu visible associées. Le 4e terme
+         (--bd-size-game-max, mobile_game.js) garantit cette dernière : le
+         reste de la rangée d'en-tête collée + matériel capturé + ligne
+         d'état + #review-controls + #shared-mode-controls (dont les 3
+         boutons peuvent passer sur 2 lignes selon la largeur d'écran) + les
+         onglets Coach/Lignes/Analyse/Coups varie trop selon l'état (boutons
+         de démarrage, bannière de fin de partie, repli des boutons
+         partagés) pour être couvert par un simple calc() statique — mesuré
+         en continu sur le DOM réel (ResizeObserver sur #board-sticky-wrap,
+         même principe que --mobile-header-h/scroll-padding-top,
+         controls.js) et republié dans cette variable, presque toujours plus
+         petite que le pourcentage visé sur les téléphones courants
+         (~640-800px de haut) : ce pourcentage reste donc un PLAFOND, atteint
+         seulement sur les plus grands téléphones, plutôt qu'une valeur
+         garantie partout — compromis assumé, cf. rapport de clôture pour
+         les tailles réellement obtenues. #coord-rank/#coord-file et la
+         barre d'éval sont masqués ici (coordonnées repliées dans les cases,
+         cf. .square[data-*-label] plus bas) : sans eux, ces ~24px ne
+         couvrent plus que les marges de page/la bordure du plateau, contre
+         76px avant l'issue #69 (colonne de rangs + barre d'éval + marges). */
       body.mobile-game-active {
-        --bd-size: min(44dvh, 480px, calc(100vw - 24px), var(--bd-size-game-max, 480px));
+        --bd-size: min(var(--bd-size-game-pct, 44dvh), 480px, calc(100vw - 24px), var(--bd-size-game-max, 480px));
       }
       body.mobile-game-active #coord-rank,
       body.mobile-game-active #coord-file,
@@ -1218,6 +1268,12 @@
       <label class="game-menu-item" style="cursor:pointer;">Importer un PGN
         <input type="file" accept=".pgn,.txt" style="display:block; margin-top:4px; font-size:0.78rem;" onchange="loadPgnFile(event); gameMenuClose();">
       </label>
+      <div class="game-menu-section-title">Taille du plateau</div>
+      <div class="game-board-size-choice" role="group" aria-label="Taille du plateau">
+        <button type="button" class="game-board-size-btn" data-board-size-choice="compact" onclick="gameBoardSizeSet('compact')">Compact</button>
+        <button type="button" class="game-board-size-btn" data-board-size-choice="normal" onclick="gameBoardSizeSet('normal')">Normal</button>
+        <button type="button" class="game-board-size-btn" data-board-size-choice="grand" onclick="gameBoardSizeSet('grand')">Grand</button>
+      </div>
       <div id="game-menu-mode-extra"></div>
       <div id="game-menu-usage"></div>
       <a class="game-menu-item" id="game-menu-cost-link" href="https://platform.claude.com/cost" target="_blank" rel="noopener noreferrer">Coût API</a>

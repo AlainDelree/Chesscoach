@@ -173,15 +173,93 @@ document.addEventListener("click", (e) => {
 // est indépendant de la taille du plateau (aucun des éléments alentour ne
 // redimensionne avec --bd-size) : pas de boucle de rétroaction instable
 // malgré le ResizeObserver qui s'observe lui-même indirectement.
-const GAME_BOARD_MIN_VISIBLE_BELOW_TABS = 180;
 // 170 (borne haute du plateau réduit, point 4) plutôt qu'une valeur plus
 // petite encore : sur les plus petits téléphones en pleine partie (boutons
 // "Reprendre/Abandonner/Demander l'avis" sur 2 lignes, cf. rapport de
-// clôture), satisfaire les deux cibles à la fois (plateau complet ET 180px
-// visibles sous les onglets) n'est pas possible — mieux vaut y perdre un peu
-// des 180px que de descendre sous la taille du plateau RÉDUIT, qui perdrait
-// alors tout son sens.
+// clôture), satisfaire les deux cibles à la fois (plateau complet ET la
+// garantie de contenu visible ci-dessous) n'est pas possible — mieux vaut y
+// perdre un peu de cette garantie que de descendre sous la taille du
+// plateau RÉDUIT, qui perdrait alors tout son sens (issue #74 point 1 :
+// cette garde reste valable quel que soit le réglage Compact/Normal/Grand).
 const GAME_BOARD_MIN_SIZE = 170;
+
+// ── Réglage utilisateur "Taille du plateau" (issue #74) ─────────────────────
+// Menu "..." des modes de partie mobile — 3 choix simples, Normal reprenant
+// le comportement de l'issue #71 (44% de la hauteur d'écran visée, ~180px de
+// contenu visible garantis sous les onglets). SEUL endroit où ces 3
+// pourcentages et leurs garanties associées sont définis (point 3) : ni
+// board.css ni index.html ne redéfinissent ces nombres, --bd-size-game-pct
+// (posée par _applyGameBoardSizeChoice ci-dessous) et minVisibleBelowTabs
+// (consommée par _updateGameBoardMaxSize) sont l'unique chemin par lequel
+// ils atteignent le CSS/le calcul de --bd-size-game-max. Grand abaisse la
+// garantie de contenu visible (120px) plutôt que de la conserver à 180px :
+// le choix explicite d'Alain prime sur cette garantie, qui n'est là que pour
+// éviter qu'un plateau trop grand n'avale tout l'écran à son insu.
+const GAME_BOARD_SIZE_PRESETS = {
+  compact: { pct: 38, minVisibleBelowTabs: 180 },
+  normal:  { pct: 44, minVisibleBelowTabs: 180 },
+  grand:   { pct: 52, minVisibleBelowTabs: 120 },
+};
+const GAME_BOARD_SIZE_DEFAULT = "normal";
+// Propre à l'appareil (localStorage, pas de synchronisation compte/serveur) :
+// un GSM et un PC n'ont pas le même compromis taille du plateau / place pour
+// le chat et les lignes, cf. issue #74 point 2.
+const GAME_BOARD_SIZE_STORAGE_KEY = "chesscoach-mobile-board-size";
+
+function _gameBoardSizeLoad() {
+  try {
+    const stored = window.localStorage.getItem(GAME_BOARD_SIZE_STORAGE_KEY);
+    if (stored && GAME_BOARD_SIZE_PRESETS[stored]) return stored;
+  } catch (e) {
+    // Stockage indisponible (navigation privée stricte, quota, etc.) : le
+    // réglage par défaut s'applique, le choix reste actif pour la session en
+    // cours (gameBoardSizeSet n'échoue pas pour autant, cf. _gameBoardSizeSave).
+  }
+  return GAME_BOARD_SIZE_DEFAULT;
+}
+
+function _gameBoardSizeSave(key) {
+  try {
+    window.localStorage.setItem(GAME_BOARD_SIZE_STORAGE_KEY, key);
+  } catch (e) {
+    // Stockage indisponible : pas de persistance, mais le choix reste
+    // appliqué pour la session en cours (_applyGameBoardSizeChoice déjà
+    // appelé par gameBoardSizeSet indépendamment de cette sauvegarde).
+  }
+}
+
+let _gameBoardSizeChoice = _gameBoardSizeLoad();
+
+function _currentGameBoardSizePreset() {
+  return GAME_BOARD_SIZE_PRESETS[_gameBoardSizeChoice] || GAME_BOARD_SIZE_PRESETS[GAME_BOARD_SIZE_DEFAULT];
+}
+
+function _applyGameBoardSizeChoice() {
+  document.documentElement.style.setProperty("--bd-size-game-pct", `${_currentGameBoardSizePreset().pct}dvh`);
+}
+
+function _refreshGameBoardSizeMenuUI() {
+  Object.keys(GAME_BOARD_SIZE_PRESETS).forEach((key) => {
+    const btn = document.querySelector(`.game-board-size-btn[data-board-size-choice="${key}"]`);
+    if (btn) btn.classList.toggle("active", key === _gameBoardSizeChoice);
+  });
+}
+
+// onclick des 3 boutons "Compact/Normal/Grand" (#game-menu-dropdown,
+// index.html) : application immédiate, sans recharger la page (point 2) —
+// _updateGameBoardMaxSize doit être rappelée ici même, le ResizeObserver sur
+// #board-sticky-wrap (DOMContentLoaded plus bas) ne se redéclenche QUE si la
+// taille réelle du plateau change, pas au moment où --bd-size-game-pct est
+// posée (c'est justement ce qui va faire varier --bd-size, donc la taille du
+// plateau, mais pas avant le prochain reflow).
+function gameBoardSizeSet(key) {
+  if (!GAME_BOARD_SIZE_PRESETS[key] || key === _gameBoardSizeChoice) return;
+  _gameBoardSizeChoice = key;
+  _gameBoardSizeSave(key);
+  _applyGameBoardSizeChoice();
+  _refreshGameBoardSizeMenuUI();
+  _updateGameBoardMaxSize();
+}
 
 function _updateGameBoardMaxSize() {
   if (!isGameUiActive()) {
@@ -213,7 +291,7 @@ function _updateGameBoardMaxSize() {
   const boardRect = board.getBoundingClientRect();
   const chromeAbove = boardRect.top;
   const chromeBelow = tabsColumn.getBoundingClientRect().top - boardRect.bottom;
-  const max = window.innerHeight - chromeAbove - chromeBelow - GAME_BOARD_MIN_VISIBLE_BELOW_TABS;
+  const max = window.innerHeight - chromeAbove - chromeBelow - _currentGameBoardSizePreset().minVisibleBelowTabs;
   document.documentElement.style.setProperty("--bd-size-game-max", `${Math.max(GAME_BOARD_MIN_SIZE, Math.floor(max))}px`);
 }
 
@@ -402,6 +480,13 @@ function onGameUiRefresh() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  // Issue #74 : posée avant onGameUiRefresh() pour que la toute première
+  // mesure de _updateGameBoardMaxSize (appelée par onGameUiRefresh) tienne
+  // déjà compte du réglage persisté (sinon un choix Compact/Grand enregistré
+  // lors d'une session précédente ne s'appliquerait qu'après un second
+  // rafraîchissement).
+  _applyGameBoardSizeChoice();
+  _refreshGameBoardSizeMenuUI();
   onGameUiRefresh();
 
   const wrap = document.getElementById("board-sticky-wrap");
