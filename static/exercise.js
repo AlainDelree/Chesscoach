@@ -48,6 +48,14 @@ let exerciseCoupReel       = null;
 // ligne (pas seulement le verdict chiffré) dans une question de suivi.
 let exercisePvCoupPropose  = null;
 let exercisePvMeilleurCoup = null;
+// Détail coup par coup de ces deux lignes (description mécanique + solde
+// matériel cumulé pour Alain après chaque demi-coup, issue #75 point 3),
+// reçu du serveur avec le verdict (game_facts.describe_pv_with_balance/
+// format_pv_with_balance) — sans ce détail, une question de suivi dans le
+// chat libre perdait l'ancrage sur le bilan matériel réel de la ligne dès le
+// tour suivant.
+let exercisePvCoupProposeDetail  = null;
+let exercisePvMeilleurCoupDetail = null;
 // Description mécanique de chacun des trois coups comparés (pièce, case de
 // départ/arrivée, capture, défenseurs, solde net — issue #73), reçue du
 // serveur avec le verdict (game_facts.describe_move_mechanically, calculée
@@ -142,6 +150,8 @@ function _exerciseResetTentative() {
   exerciseCoupReel       = null;
   exercisePvCoupPropose  = null;
   exercisePvMeilleurCoup = null;
+  exercisePvCoupProposeDetail  = null;
+  exercisePvMeilleurCoupDetail = null;
   exerciseCoupProposeDescriptionMecanique  = null;
   exerciseCoupReelDescriptionMecanique     = null;
   exerciseMeilleurCoupDescriptionMecanique = null;
@@ -452,8 +462,17 @@ function askExerciseCoach() {
   // à tout moment pendant l'exercice — y compris pendant l'exploration libre
   // après verdict (issue #21) — pour un commentaire ponctuel sur la position
   // affichée, sans passer par le circuit exercise_answer/exercise_comment.
+  //
+  // Issue #75, point 5 : ce bouton ne transmettait jusqu'ici que la position
+  // actuelle et le camp d'Alain (comme les autres modes), sans la position
+  // de DÉPART de l'exercice ni les descriptions mécaniques des coups déjà
+  // discutés — contrairement à une question posée dans le chat libre
+  // pendant le même exercice, qui fusionne déjà exerciseChatContextExtra().
+  // On transmet donc ce même contexte enrichi en 4e argument, fusionné
+  // côté serveur (app.py on_coach_comment_on_demand) dans le contexte
+  // envoyé au coach.
   if (!exerciseGame) return;
-  askCoachOnDemand(exerciseGame.fen(), null, exerciseCampAlain);
+  askCoachOnDemand(exerciseGame.fen(), null, exerciseCampAlain, exerciseChatContextExtra());
 }
 
 function exerciseChatContextExtra() {
@@ -488,6 +507,8 @@ function exerciseChatContextExtra() {
     verdict_delta_cp: exerciseVerdictDeltaCp,
     pv_coup_propose: exercisePvCoupPropose || "",
     pv_meilleur_coup: exercisePvMeilleurCoup || "",
+    pv_coup_propose_detail: exercisePvCoupProposeDetail || "",
+    pv_meilleur_coup_detail: exercisePvMeilleurCoupDetail || "",
     eval_alain_cp: exerciseEvalAlainCp,
     eval_alain_mat: exerciseEvalAlainMat,
     reprise_recente: exerciseJustReprised,
@@ -637,6 +658,8 @@ if (typeof socket !== "undefined") {
     exerciseCoupReel       = (data && data.coup_reel) || null;
     exercisePvCoupPropose  = (data && data.pv_coup_propose) || null;
     exercisePvMeilleurCoup = (data && data.pv_meilleur_coup) || null;
+    exercisePvCoupProposeDetail  = (data && data.pv_coup_propose_detail) || null;
+    exercisePvMeilleurCoupDetail = (data && data.pv_meilleur_coup_detail) || null;
     // Descriptions mécaniques et évaluation point de vue d'Alain (issue #73),
     // mémorisées pour être réinjectées dans une question de suivi du chat
     // libre (exerciseChatContextExtra ci-dessous).

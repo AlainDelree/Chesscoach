@@ -1116,13 +1116,19 @@ if (typeof socket !== "undefined") {
 // aller-retour SocketIO mode-agnostique (coach_comment_on_demand côté
 // serveur), réutilisé par les trois modes plutôt que dupliqué.
 
-function askCoachOnDemand(fen, themeFinale, campAlain) {
+function askCoachOnDemand(fen, themeFinale, campAlain, extraContext) {
+  // extraContext (issue #75, point 5) : complément de contexte propre à un
+  // mode (ex. exerciseChatContextExtra() pendant un exercice — position de
+  // départ, descriptions mécaniques des coups, verdict déjà rendu), fusionné
+  // tel quel dans le payload envoyé au serveur en plus des champs communs
+  // ci-dessous. Absent pour les autres modes (pédagogique/ouverture/
+  // finales), qui gardent leur comportement inchangé.
   if (!fen) return;
   setCoachOnDemandButtonsDisabled(true);
   const modeOrigine = (typeof activeMode !== "undefined" && _MODE_ORIGINE_LABELS[activeMode]) || "chat_libre";
-  socket.emit("coach_comment_on_demand", {
+  socket.emit("coach_comment_on_demand", Object.assign({
     fen, theme_finale: themeFinale || "", camp_alain: campAlain || "", mode_origine: modeOrigine,
-  });
+  }, extraContext || {}));
 }
 
 function setCoachOnDemandButtonsDisabled(disabled) {

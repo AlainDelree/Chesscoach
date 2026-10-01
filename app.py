@@ -796,6 +796,32 @@ def on_coach_comment_on_demand(data):
         "theme_finale": theme_finale,
         "mode_origine": mode_origine,
     }
+    # Contexte enrichi transmis par le client pendant un exercice (issue #75,
+    # point 5 — static/exercise.js exerciseChatContextExtra(), fusionné dans
+    # le payload par askCoachOnDemand()) : jusqu'ici, ce bouton ne recevait
+    # ni la position de DÉPART de l'exercice ni les descriptions mécaniques
+    # des coups déjà discutés, contrairement à une question posée dans le
+    # chat libre pendant le même exercice (coach_ask, qui fusionne déjà ce
+    # contexte côté client). meilleur_coup/eval_alain_cp/eval_alain_mat
+    # calculés ci-dessus (profondeur 8, générique à tous les modes) sont
+    # remplacés par la valeur de l'exercice quand elle est disponible — issue
+    # du dernier verdict rendu, à DEPTH_EXERCICE_TEMPS_REEL, donc plus fiable.
+    for champ in (
+        "mode_exercice", "fen_depart_exercice", "coup_propose",
+        "coup_propose_description_mecanique", "coup_reel",
+        "coup_reel_description_mecanique", "meilleur_coup",
+        "meilleur_coup_description_mecanique", "verdict_qualite",
+        "pv_coup_propose", "pv_meilleur_coup",
+        "pv_coup_propose_detail", "pv_meilleur_coup_detail",
+        "reprise_recente",
+    ):
+        valeur = (data or {}).get(champ)
+        if valeur:
+            context[champ] = valeur
+    for champ in ("verdict_delta_cp", "eval_alain_cp", "eval_alain_mat"):
+        valeur = (data or {}).get(champ)
+        if isinstance(valeur, (int, float)):
+            context[champ] = valeur
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,
@@ -1251,6 +1277,22 @@ def on_exercise_answer(data):
         fen_avant, meilleur_coup, camp_alain
     )
 
+    # Détail mécanique coup par coup des deux lignes principales (coup
+    # proposé / meilleur coup), avec le solde matériel CUMULÉ pour Alain
+    # après chaque demi-coup (issue #75, point 3) — au moins les 4 premiers
+    # demi-coups. Sans ce détail, le coach racontait le bilan matériel d'une
+    # ligne de mémoire et s'est déjà trompé sur un simple échange (ex. "tu as
+    # gagné la dame contre rien" sur Qh8+ Ke7 Qxd8+ Kxd8, qui échange les
+    # deux dames, solde net 0).
+    pv_coup_propose_detail = game_facts.format_pv_with_balance(
+        "Détail coup par coup de la suite réellement calculée après le coup proposé",
+        game_facts.describe_pv_with_balance(fen_avant, pv_coup_propose, camp_alain, max_plies=4),
+    )
+    pv_meilleur_coup_detail = game_facts.format_pv_with_balance(
+        "Détail coup par coup de la suite réellement calculée pour le meilleur coup",
+        game_facts.describe_pv_with_balance(fen_avant, pv_meilleur_coup, camp_alain, max_plies=4),
+    )
+
     messages = [{
         "role": "user",
         "content": (
@@ -1286,6 +1328,8 @@ def on_exercise_answer(data):
         # explication tactique générique à partir du seul verdict chiffré.
         "pv_coup_propose": pv_coup_propose,
         "pv_meilleur_coup": pv_meilleur_coup,
+        "pv_coup_propose_detail": pv_coup_propose_detail,
+        "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
         "eval_alain_cp": eval_alain_cp,
         "eval_alain_mat": eval_alain_mat,
         "verdict_qualite": verdict_qualite,
@@ -1328,6 +1372,13 @@ def on_exercise_answer(data):
             # la ligne réellement calculée dès le tour suivant.
             "pv_coup_propose": pv_coup_propose,
             "pv_meilleur_coup": pv_meilleur_coup,
+            # Détail coup par coup (description mécanique + solde matériel
+            # cumulé pour Alain, issue #75 point 3) des deux lignes
+            # ci-dessus — même raison que pv_coup_propose/pv_meilleur_coup
+            # ci-dessus : sans ça, une question de suivi perdrait l'ancrage
+            # sur le bilan matériel réel de la ligne.
+            "pv_coup_propose_detail": pv_coup_propose_detail,
+            "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
             # Position de départ, descriptions mécaniques des trois coups et
             # évaluation point de vue d'Alain (issue #73) : transmis au
             # client pour qu'une question de suivi posée dans le chat libre

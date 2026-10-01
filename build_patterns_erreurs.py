@@ -51,7 +51,7 @@ import chess.pgn
 
 import library_manager
 from config import COACH_MEMORY_PATH, ERREURS_DETECTEES_PATH
-from engine_stockfish import classifier_coup, find_stockfish
+from engine_stockfish import DEPTH_ANALYSE_PARTIE, SEUIL_DECIDE, classifier_coup, find_stockfish
 from llm_coach import load_coach_memory, save_coach_memory
 
 ALAIN_PSEUDO = "athanatos123"
@@ -203,6 +203,85 @@ def _analyse_game(engine: chess.engine.SimpleEngine, game: chess.pgn.Game,
     return nb_coups_alain
 
 
+def _revalider_erreur(engine: chess.engine.SimpleEngine, erreur: dict) -> dict | None:
+    """Revalide un candidat "erreur"/"blunder" détecté par _analyse_game (à
+    PROFONDEUR, un choix de vitesse pour traiter NB_PARTIES parties d'un
+    coup) à une profondeur supérieure (DEPTH_ANALYSE_PARTIE — celle déjà
+    utilisée par le bouton "Analyser cette partie", issue #75 point 4a) avant
+    de le retenir pour erreurs_detectees.json.
+
+    Constat réel (audit de 18 appels du mode "Exercice", 15 exercices) :
+    environ un tiers des exercices proposés n'étaient pas de vraies erreurs
+    (le coup réel valait le meilleur coup) — ex. Qh4 classé "erreur" à
+    profondeur 10 (écart de 148 centipawns) mais seulement 18-40 centipawns à
+    profondeur 16 ou plus. Deux critères d'écart, réévalués ici avec le même
+    barème mat/cp que _analyse_game (mate_score=100000, valeurs du point de
+    vue des Blancs converties vers le joueur qui a joué le coup) :
+      - le coup réel perd moins d'environ 100 centipawns par rapport au
+        meilleur coup à cette profondeur supérieure (qualite retombe à "bon"
+        ou "imprecision" — SEUIL_IMPRECISION/SEUIL_ERREUR dans
+        engine_stockfish.py, pas de second seuil redondant ici) ;
+      - la position reste décidée dans le MÊME sens avant et après le coup,
+        au-delà de SEUIL_DECIDE (qu'Alain y soit gagnant ou perdant) : le
+        résultat ne dépendait alors pas de ce choix précis, aucune valeur
+        pédagogique comme "erreur à corriger" (même principe que le
+        garde-fou "position déjà décidée" de EngineManager.evaluate_move,
+        mais appliqué ici symétriquement aux deux sens, pas seulement à
+        l'avantage d'Alain : une position déjà perdue par force des deux
+        côtés n'offre pas davantage d'alternative réaliste).
+
+    Retourne l'erreur mise à jour (delta_cp/qualite/meilleur_coup_uci/
+    meilleur_coup_san recalculés à DEPTH_ANALYSE_PARTIE) si elle reste une
+    "erreur"/"blunder" réelle, sinon None (candidat écarté). Best-effort :
+    écarte aussi la position si la réévaluation échoue (FEN/coup illisible,
+    erreur moteur), plutôt que de la laisser passer invérifiée."""
+    try:
+        board = chess.Board(erreur["fen_avant"])
+        move = chess.Move.from_uci(erreur["coup_joue_uci"])
+        if move not in board.legal_moves:
+            return None
+        mover_blanc = board.turn == chess.WHITE
+
+        info_avant = engine.analyse(board, chess.engine.Limit(depth=DEPTH_ANALYSE_PARTIE))
+        cp_avant_blanc = info_avant["score"].white().score(mate_score=100000)
+        pv_avant = info_avant.get("pv") or []
+        meilleur_coup_uci = pv_avant[0].uci() if pv_avant else None
+
+        board.push(move)
+        info_apres = engine.analyse(board, chess.engine.Limit(depth=DEPTH_ANALYSE_PARTIE))
+        cp_apres_blanc = info_apres["score"].white().score(mate_score=100000)
+
+        avant_mover = cp_avant_blanc if mover_blanc else -cp_avant_blanc
+        apres_mover = cp_apres_blanc if mover_blanc else -cp_apres_blanc
+
+        deja_decide_meme_sens = (
+            abs(avant_mover) >= SEUIL_DECIDE and abs(apres_mover) >= SEUIL_DECIDE
+            and (avant_mover > 0) == (apres_mover > 0)
+        )
+        if deja_decide_meme_sens:
+            return None
+
+        delta_brut = max(0, avant_mover - apres_mover)
+        delta = min(delta_brut, DELTA_CP_PLAFOND)
+        qualite = classifier_coup(delta)
+        if qualite not in ("erreur", "blunder"):
+            return None
+
+        erreur = dict(erreur)
+        erreur["qualite"] = qualite
+        erreur["delta_cp"] = delta
+        if meilleur_coup_uci:
+            erreur["meilleur_coup_uci"] = meilleur_coup_uci
+            try:
+                erreur["meilleur_coup_san"] = board_avant_move_san(erreur["fen_avant"], meilleur_coup_uci)
+            except Exception:
+                erreur["meilleur_coup_san"] = None
+        return erreur
+    except Exception as e:
+        print(f"Revalidation écartée (erreur sur {erreur.get('fen_avant')}) : {e}")
+        return None
+
+
 def _build_patterns(erreurs: list) -> dict:
     par_phase = defaultdict(list)
     for e in erreurs:
@@ -295,6 +374,14 @@ def main():
             except Exception as e:
                 print(f"Partie {game_entry['index']} ignorée (erreur d'analyse) : {e}")
                 parties_ignorees += 1
+
+        # Revalidation à profondeur supérieure (issue #75, point 4a) — avant
+        # de fermer le moteur, voir _revalider_erreur pour le détail des deux
+        # critères d'écart.
+        nb_candidats = len(erreurs)
+        print(f"Revalidation de {nb_candidats} candidat(s) à la profondeur {DEPTH_ANALYSE_PARTIE}...")
+        erreurs = [e for e in (_revalider_erreur(engine, e) for e in erreurs) if e is not None]
+        print(f"Revalidation terminée : {len(erreurs)} conservée(s), {nb_candidats - len(erreurs)} écartée(s)")
     finally:
         engine.quit()
 

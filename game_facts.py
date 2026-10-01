@@ -161,6 +161,19 @@ _MAX_PIONS_PERDUS_SANS_REPRISE = 3
 # couleur ("blanc"/"blanche") dans les descriptions mécaniques de coups.
 _FEMININ = {chess.QUEEN, chess.ROOK}
 
+# Seuil de magnitude (centipawns) au-delà duquel une évaluation ou une perte
+# Stockfish n'est plus un nombre de pions interprétable (issue #75, point 1)
+# — même valeur que SEUIL_DEJA_DECISIF dans build_patterns_erreurs.py et
+# SEUIL_DECIDE dans engine_stockfish.py. Constat réel (audit de 18 appels du
+# mode exercice) : des valeurs de gain forcé (19974, 3456 centipawns, soit
+# "+199,74"/"+34,56" pions) citées telles quelles par le coach, alors que
+# Stockfish peut reporter plusieurs milliers de centipawns dans une position
+# de gain forcé pas encore détectée comme un mat (score NNUE non borné, à la
+# différence d'un nombre de pions réel). describe_eval_alain_cp_clause /
+# describe_perte_cp_clause reformulent systématiquement ces valeurs en mots
+# au-delà de ce seuil, jamais en nombre.
+SEUIL_GRANDE_VALEUR_CP = 1000
+
 
 def _couleur_accordee(piece_type: int, est_blanc: bool) -> str:
     if est_blanc:
@@ -335,6 +348,118 @@ def describe_pv_mechanically(fen_avant: str, pv_text: str, camp_alain: str = "",
     except Exception as e:
         logger.warning(f"[GAME_FACTS] describe_pv_mechanically a échoué : {e}")
         return []
+
+
+def _materiel_alain(board: "chess.Board", camp_alain: str) -> int | None:
+    """Solde matériel (points classiques, pion=1...dame=9) du point de vue
+    d'Alain — positif = avantage pour Alain, négatif = avantage pour
+    l'adversaire. None si camp_alain n'est ni "blancs" ni "noirs" (solde
+    Blancs-Noirs non convertible sans ambiguïté, même garde-fou que
+    app._vers_point_de_vue_alain pour une évaluation Stockfish, issue #73)."""
+    if camp_alain not in ("blancs", "noirs"):
+        return None
+    blancs, noirs = _materiel(board)
+    solde_blancs = blancs - noirs
+    return solde_blancs if camp_alain == "blancs" else -solde_blancs
+
+
+def describe_pv_with_balance(fen_avant: str, pv_text: str, camp_alain: str = "",
+                              max_plies: int = 4) -> list[dict]:
+    """API publique (issue #75, point 3) : comme describe_pv_mechanically,
+    mais ajoute à chaque demi-coup décrit le solde matériel CUMULÉ après ce
+    coup, du point de vue d'Alain (_materiel_alain) — sans ce solde, le coach
+    devait reconstituer de tête le bilan d'une ligne principale et s'est déjà
+    trompé sur un simple échange (ex. "tu as gagné la dame contre rien" sur
+    Qh8+ Ke7 Qxd8+ Kxd8, qui échange les deux dames, solde net 0 ; "tu
+    échanges ta tour contre le fou" sur Rxd5, qui gagne simplement le fou
+    sans rien céder en retour).
+
+    Retourne une liste de dicts {"san": str, "description": str,
+    "solde_alain": int | None} (un par demi-coup décrit, dans l'ordre de la
+    ligne) — liste tronquée au premier coup illégal rencontré, vide si
+    fen_avant/pv_text sont vides ou illisibles, comme describe_pv_mechanically."""
+    fen_avant = (fen_avant or "").strip()
+    pv_text = (pv_text or "").strip()
+    if not fen_avant or not pv_text:
+        return []
+    try:
+        board = chess.Board(fen_avant)
+        resultat = []
+        for san in pv_text.split()[:max_plies]:
+            move = _parse_coup(board, san)
+            if move is None:
+                break
+            description = _decrit_coup_mecanique(board, move, camp_alain)
+            board.push(move)
+            resultat.append({
+                "san": san,
+                "description": description,
+                "solde_alain": _materiel_alain(board, camp_alain),
+            })
+        return resultat
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] describe_pv_with_balance a échoué : {e}")
+        return []
+
+
+def format_pv_with_balance(label: str, pv_descriptions: list[dict]) -> str:
+    """Formate le résultat de describe_pv_with_balance en texte prêt à
+    injecter dans le contexte du coach (issue #75, point 3) : une ligne par
+    demi-coup, avec sa description mécanique et le solde matériel cumulé
+    pour Alain après ce coup précis — jamais après la ligne entière
+    seulement, pour que le coach puisse situer exactement À QUEL COUP un
+    échange se solde. Chaîne vide si pv_descriptions est vide."""
+    if not pv_descriptions:
+        return ""
+    lignes = [f"{label} :"]
+    for d in pv_descriptions:
+        solde = d.get("solde_alain")
+        solde_txt = (
+            f"solde matériel cumulé pour Alain après ce coup : {solde:+d}"
+            if solde is not None
+            else "solde matériel cumulé pour Alain après ce coup : indéterminé (camp d'Alain inconnu)"
+        )
+        lignes.append(f"  {d['san']} : {d['description']} ({solde_txt})")
+    return "\n".join(lignes)
+
+
+def describe_eval_alain_cp_clause(eval_alain_cp) -> str:
+    """Phrase complète décrivant l'évaluation Stockfish réelle d'une position,
+    du point de vue d'Alain (issue #75, point 1) — en mots dès que la
+    magnitude dépasse SEUIL_GRANDE_VALEUR_CP, jamais le chiffre brut dans ce
+    cas (voir le commentaire de SEUIL_GRANDE_VALEUR_CP ci-dessus). Chaîne
+    vide si eval_alain_cp n'est pas un nombre."""
+    if not isinstance(eval_alain_cp, (int, float)):
+        return ""
+    if abs(eval_alain_cp) > SEUIL_GRANDE_VALEUR_CP:
+        gagnant = "Alain" if eval_alain_cp > 0 else "l'adversaire"
+        return (
+            "Évaluation Stockfish réelle de la position résultant du coup "
+            f"proposé : position gagnée de façon forcée pour {gagnant} (valeur "
+            "extrême, à ne JAMAIS exprimer en centipawns ni en nombre de pions)."
+        )
+    return (
+        "Évaluation Stockfish réelle de la position résultant du coup proposé, "
+        "du point de vue d'Alain (positif = avantage pour Alain, négatif = "
+        f"avantage pour l'adversaire) : {eval_alain_cp:+d} centipawns."
+    )
+
+
+def describe_perte_cp_clause(delta_cp) -> str:
+    """Clause ', perte ... par rapport au meilleur coup' prête à l'emploi
+    dans le texte de contexte transmis au coach (issue #75, point 1) — en
+    mots dès que la magnitude dépasse SEUIL_GRANDE_VALEUR_CP, jamais le
+    chiffre brut dans ce cas. Chaîne vide si delta_cp n'est pas un nombre."""
+    if not isinstance(delta_cp, (int, float)):
+        return ""
+    if abs(delta_cp) > SEUIL_GRANDE_VALEUR_CP:
+        return (
+            ", perte d'une ampleur extrême par rapport au meilleur coup "
+            "(bien au-delà d'une perte de matériel ordinaire — ne JAMAIS "
+            "exprimer cette perte en centipawns ni en nombre de pions)"
+        )
+    return f", perte de {delta_cp:g} centipawns par rapport au meilleur coup"
+
 
 # Pseudo Lichess/Chess.com d'Alain (issue #56) — même constante que
 # build_patterns_erreurs.py/build_repertoire_ouvertures.py (scripts autonomes
@@ -944,7 +1069,15 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
 
             perte_cp = c.get("perte_cp")
             if isinstance(perte_cp, (int, float)):
-                lignes_cible.append(f"  Perte estimée {perte_cp} centipawns")
+                if abs(perte_cp) > SEUIL_GRANDE_VALEUR_CP:
+                    lignes_cible.append(
+                        "  Perte estimée : ampleur extrême, bien au-delà "
+                        "d'une perte de matériel ordinaire (issue #75 — ne "
+                        "JAMAIS exprimer cette perte en centipawns ni en "
+                        "nombre de pions)"
+                    )
+                else:
+                    lignes_cible.append(f"  Perte estimée {perte_cp:g} centipawns")
 
             ligne_principale = (c.get("ligne_principale") or "").strip()
             if ligne_principale:
