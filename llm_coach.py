@@ -367,6 +367,31 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     "compare toujours à la position de départ avant d'affirmer qu'une pièce "
     "est absente d'une case."
     "\n\n"
+    "Grandes valeurs (issue #75, point 1) : certaines évaluations ou pertes "
+    "du contexte (verdict Stockfish, évaluation de la position résultant du "
+    "coup proposé) sont volontairement formulées en mots (\"position gagnée "
+    "de façon forcée\", \"perte d'une ampleur extrême\"...) plutôt qu'en "
+    "centipawns, car leur magnitude dépasse ce qu'un nombre de pions peut "
+    "représenter. Quand c'est le cas, n'invente JAMAIS toi-même un chiffre "
+    "de centipawns ou un nombre de pions pour la remplacer (pas de \"+199\", "
+    "pas d'\"environ 30 pions\"...) : reprends uniquement la formulation en "
+    "mots fournie, même si Alain demande explicitement un chiffre précis — "
+    "dis-lui alors que l'avantage est trop massif pour être compté en pions, "
+    "pas une valeur approximative."
+    "\n\n"
+    "Bilan matériel d'une ligne principale (issue #75, point 3) : quand le "
+    "contexte fournit le détail coup par coup d'une ligne (\"Suite "
+    "réellement calculée par Stockfish...\" suivie d'un bloc détaillé avec "
+    "un \"solde matériel cumulé pour Alain\" après chaque demi-coup), ce "
+    "solde EST le résultat réel de la ligne à ce stade précis — n'annonce "
+    "JAMAIS toi-même qu'un camp \"gagne\" ou \"perd\" une pièce sur cette "
+    "ligne si le solde cumulé fourni après ce coup ne le confirme pas (par "
+    "exemple ne dis jamais \"tu gagnes la dame\" sur un coup suivi d'une "
+    "reprise immédiate qui ramène le solde cumulé à 0 : c'est un échange, "
+    "pas un gain). Si ce détail coup par coup est absent pour une ligne "
+    "citée, décris-la uniquement en notation SAN, sans aucune affirmation "
+    "sur le matériel gagné ou perdu."
+    "\n\n"
     + _ANTI_INVENTION_ADDENDUM
 )
 
@@ -892,6 +917,15 @@ def _build_context_text(context) -> str:
     # de ce qu'elle montre explicitement.
     pv_coup_propose  = (context.get("pv_coup_propose") or "").strip()
     pv_meilleur_coup = (context.get("pv_meilleur_coup") or "").strip()
+    # Détail mécanique coup par coup de ces deux lignes, avec le solde
+    # matériel CUMULÉ pour Alain après chaque demi-coup (issue #75, point 3,
+    # cf. app.py/game_facts.describe_pv_with_balance+format_pv_with_balance)
+    # — déjà formaté en texte prêt à l'emploi. Sans ce détail, le coach
+    # racontait le bilan matériel d'une ligne de mémoire et s'est déjà trompé
+    # sur un simple échange (ex. "tu as gagné la dame contre rien" sur
+    # Qh8+ Ke7 Qxd8+ Kxd8, qui échange les deux dames, solde net 0).
+    pv_coup_propose_detail  = (context.get("pv_coup_propose_detail") or "").strip()
+    pv_meilleur_coup_detail = (context.get("pv_meilleur_coup_detail") or "").strip()
     # Vrai juste après un "Reprendre mon coup" tant qu'Alain n'a pas encore
     # reproposé de coup (issue #17) : évite qu'un verdict/coup discuté plus
     # tôt dans la même conversation du chat libre soit pris pour l'état réel
@@ -1019,6 +1053,8 @@ def _build_context_text(context) -> str:
                 f"(à utiliser comme seule base pour expliquer les menaces ou la "
                 f"suite tactique, pas une généralité inventée) : {pv_coup_propose}"
             )
+        if pv_coup_propose_detail:
+            lines.append(pv_coup_propose_detail)
     if coup_reel:
         lines.append(
             "Coup que le joueur avait réellement joué À L'ÉPOQUE, dans la "
@@ -1044,11 +1080,14 @@ def _build_context_text(context) -> str:
                 f"(à utiliser comme seule base pour expliquer les menaces ou le "
                 f"plan qu'il prépare, pas une généralité inventée) : {pv_meilleur_coup}"
             )
+        if pv_meilleur_coup_detail:
+            lines.append(pv_meilleur_coup_detail)
     if verdict_qualite:
-        detail_cp = (
-            f", perte de {verdict_delta_cp} centipawns par rapport au meilleur coup"
-            if isinstance(verdict_delta_cp, (int, float)) else ""
-        )
+        # describe_perte_cp_clause (issue #75, point 1) : en mots dès que la
+        # magnitude dépasse SEUIL_GRANDE_VALEUR_CP (ex. le delta sentinelle
+        # DELTA_CP_MAT_CONTRE d'un coup qui permet un mat forcé contre
+        # Alain, engine_stockfish.py) — jamais le chiffre brut dans ce cas.
+        detail_cp = game_facts.describe_perte_cp_clause(verdict_delta_cp)
         lines.append(
             "Verdict Stockfish déjà calculé pour ce coup exact (INTERNE — ne "
             f"jamais citer ce chiffre ni cette étiquette brute à Alain) : classé "
@@ -1086,11 +1125,12 @@ def _build_context_text(context) -> str:
             f"mat forcé en {abs(eval_alain_mat)} coup(s) en faveur de {cible}."
         )
     elif eval_alain_cp is not None:
-        lines.append(
-            "Évaluation Stockfish réelle de la position résultant du coup proposé, "
-            "du point de vue d'Alain (positif = avantage pour Alain, négatif = "
-            f"avantage pour l'adversaire) : {eval_alain_cp:+d} centipawns."
-        )
+        # describe_eval_alain_cp_clause (issue #75, point 1) : en mots dès
+        # que la magnitude dépasse SEUIL_GRANDE_VALEUR_CP — jamais le chiffre
+        # brut dans ce cas (constat réel : "+199,74"/"+34,56" pions cités
+        # tels quels à Alain, pour des évaluations de 19974/3456 centipawns
+        # dans des positions de gain forcé).
+        lines.append(game_facts.describe_eval_alain_cp_clause(eval_alain_cp))
     if dans_le_livre is not None:
         statut = "dans le livre d'ouvertures" if dans_le_livre else "hors du livre d'ouvertures"
         lines.append(f"Statut par rapport au livre de référence : {statut}")

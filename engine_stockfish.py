@@ -71,6 +71,38 @@ DEPTH_EXERCICE_TEMPS_REEL = 18
 # seule partie à la demande). 16 = milieu de la fourchette 14-18 demandée.
 DEPTH_ANALYSE_PARTIE = 16
 
+# Seuil de centipawns au-delà duquel une position donnée au joueur évalué
+# (EngineManager.evaluate_move) est considérée comme déjà décidée (issue #75,
+# point 2b) : un coup qui conserve un avantage supérieur à ce seuil, avant ET
+# après le coup, n'est jamais qualifié d'"erreur" ou de "blunder" (ramené à
+# "imprecision" au plus) — même valeur que SEUIL_DEJA_DECISIF dans
+# build_patterns_erreurs.py, pour rester cohérent avec le même principe déjà
+# appliqué côté amorçage des erreurs détectées.
+SEUIL_DECIDE = 600
+
+# Plafond générique du delta_cp reporté par evaluate_move (issue #75,
+# reprise de la même convention que build_patterns_erreurs.py/
+# _analyse_full_game dans app.py) : au-delà, la magnitude exacte perd son
+# sens (position très lopsided, pas forcément un mat) — la classification
+# qualite (déjà "blunder" à ce niveau) suffit, la valeur numérique précise
+# n'apporte plus d'info utile et risquerait d'être citée telle quelle comme
+# un nombre de pions par le coach (voir llm_coach._build_context_text /
+# game_facts.describe_perte_cp_clause, qui reformulent en mots au-delà de ce
+# plafond).
+DELTA_CP_PLAFOND = 1000
+
+# Sentinelle dédiée (issue #75, point 2a) pour le cas précis où le coup
+# évalué permet un mat forcé contre le joueur qui vient de jouer : volontai-
+# rement hors de l'échelle de DELTA_CP_PLAFOND, pour que la couche de
+# présentation (game_facts.describe_perte_cp_clause) la détecte sans
+# ambiguïté comme une "grande valeur" à décrire en mots — jamais comme un
+# delta de centipawns ordinaire. Avant ce correctif, EngineManager.
+# evaluate_move renvoyait "bon", 0 dès qu'un score de mat apparaissait après
+# le coup, sans vérifier s'il s'agissait d'un mat EN FAVEUR du joueur ou
+# CONTRE lui (constat réel : Ra8, qui autorise Rb1+ Kh2 Rh1# contre Alain,
+# recevait le verdict "bon").
+DELTA_CP_MAT_CONTRE = 9999
+
 
 def classifier_coup(delta_cp: int) -> str:
     """Classe un coup selon la perte en centipawns."""
@@ -82,6 +114,30 @@ def classifier_coup(delta_cp: int) -> str:
         return "erreur"
     else:
         return "blunder"
+
+
+# Barème unique mat/cp (issue #75) : convertit un score de mat vers la même
+# échelle que les centipawns, avec la même formule que build_patterns_
+# erreurs.py/_analyse_full_game (app.py) — permet de calculer un delta
+# correct même quand le coup évalué transforme une position NON mat en
+# position de mat, ou inversement, ce que l'ancienne version de
+# EngineManager.evaluate_move traitait à tort comme toujours "bon" (elle
+# s'arrêtait dès que l'évaluation après coup était un mat, sans regarder de
+# quel côté).
+MATE_SCORE_SENTINEL = 100000
+
+
+def _score_valeur_joueur(eval_info: dict) -> int | None:
+    """Valeur unique (mat ou cp) du point de vue du joueur au trait dans la
+    position évaluée par EngineManager.evaluate — None si ni l'un ni l'autre
+    n'est disponible (position terminale sans score, cas limite)."""
+    mate = eval_info.get("mate")
+    if mate is not None:
+        return MATE_SCORE_SENTINEL - mate if mate > 0 else -MATE_SCORE_SENTINEL - mate
+    cp = eval_info.get("cp")
+    if cp is not None:
+        return cp
+    return None
 
 
 def score_to_cp(score: chess.engine.Score, joueur: chess.Color) -> int | None:
@@ -464,10 +520,31 @@ class EngineManager:
         {"pv_coup_propose": str, "pv_meilleur_coup": str} (SAN, "" si
         indisponible) :
           - qualite    : "bon" / "imprecision" / "erreur" / "blunder"
-          - delta_cp   : perte en centipawns (0 = parfait)
+          - delta_cp   : perte en centipawns (0 = parfait), plafonnée à
+            DELTA_CP_PLAFOND — ou DELTA_CP_MAT_CONTRE (sentinelle dédiée,
+            hors échelle) quand ce coup permet un mat forcé contre le joueur
+            (issue #75, point 2a)
           - best_move  : par défaut, meilleur coup UCI si différent du coup
             joué, sinon None ; toujours le meilleur coup si
             always_return_best=True (cf. ci-dessus)
+
+        Issue #75 : la qualité et le delta sont désormais calculés sur un
+        barème unique mat/cp (_score_valeur_joueur, même formule que
+        build_patterns_erreurs.py/_analyse_full_game), plutôt que de
+        toujours renvoyer "bon"/0 dès que l'évaluation après coup est un
+        score de mat — l'ancien code ne distinguait pas un mat EN FAVEUR du
+        joueur d'un mat CONTRE lui (constat réel : Ra8, qui autorise
+        Rb1+ Kh2 Rh1# contre Alain, recevait le verdict "bon"). Deux
+        garde-fous s'ajoutent à ce calcul uniforme :
+          - position déjà décidée (point 2b) : un coup qui conserve un
+            avantage supérieur à SEUIL_DECIDE, avant ET après le coup, est
+            ramené à "imprecision" au plus, même si le delta technique est
+            important (ex. Rf6+ dans une finale déjà gagnée) ;
+          - mat forcé contre le joueur après ce coup (point 2a) : toujours
+            "blunder", y compris quand le garde-fou "position déjà décidée"
+            s'appliquerait sinon (un coup qui transforme un mat forcé EN
+            FAVEUR du joueur en mat forcé CONTRE lui reste une gaffe,
+            jamais relativisée).
         """
         if not self._analyse_active:
             if return_pv:
@@ -475,65 +552,57 @@ class EngineManager:
             return "bon", 0, None
 
         try:
-            joueur = board.turn
-
             # Évaluation AVANT le coup
             eval_avant = self.evaluate(board, depth=depth, time_limit=time_limit)
-            cp_avant   = eval_avant["cp"]
             best_move  = eval_avant["best_move"]
             pv_avant   = eval_avant.get("pv") or []
-            position_deja_matee = cp_avant is None
+            val_avant  = _score_valeur_joueur(eval_avant)
 
-            # Évaluation APRÈS le coup — sautée quand la position était déjà
-            # "mat forcé" ET qu'aucune PV n'est demandée (comportement
-            # historique, un appel moteur économisé). Mais dès que
-            # return_pv=True, on l'exécute quand même même dans ce cas
-            # (issue #20) : sans elle, pv_coup_propose resterait vide dès que
-            # le coup proposé n'est pas EXACTEMENT le premier coup de
-            # pv_avant, alors que c'est justement le cas central de l'issue
-            # (le meilleur coup proposé par Alain force lui-même ce mat).
-            eval_apres = None
-            cp_apres   = None
-            pv_apres   = []
-            if return_pv or not position_deja_matee:
-                board_apres = board.copy()
-                board_apres.push(move)
-                eval_apres = self.evaluate(board_apres, depth=depth, time_limit=time_limit)
-                cp_apres   = eval_apres["cp"]
-                pv_apres   = eval_apres.get("pv") or []
+            # Évaluation APRÈS le coup — toujours calculée (issue #75) :
+            # l'ancien raccourci qui la sautait quand la position était déjà
+            # "mat forcé" avant le coup (et que return_pv=False) empêchait de
+            # détecter qu'un coup, depuis une position déjà gagnante par
+            # mat, pouvait transformer ce mat EN FAVEUR du joueur en mat
+            # CONTRE lui.
+            board_apres = board.copy()
+            board_apres.push(move)
+            eval_apres = self.evaluate(board_apres, depth=depth, time_limit=time_limit)
+            pv_apres   = eval_apres.get("pv") or []
+            val_apres_adversaire = _score_valeur_joueur(eval_apres)
+            val_apres_joueur = -val_apres_adversaire if val_apres_adversaire is not None else None
 
-            if position_deja_matee:
-                # Position de mat forcé (avant le coup) → bon coup par défaut,
-                # avec la vraie suite du coup proposé si elle a été calculée
-                # ci-dessus (return_pv=True).
-                best = best_move if always_return_best else None
+            def _finish(qualite_f, delta_f, best_f):
                 if return_pv:
                     pv_meilleur = self._pv_to_san(board, pv_avant[:pv_max_plies])
                     pv_propose  = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
-                    return "bon", 0, best, {"pv_coup_propose": pv_propose, "pv_meilleur_coup": pv_meilleur}
-                return "bon", 0, best
+                    return qualite_f, delta_f, best_f, {"pv_coup_propose": pv_propose, "pv_meilleur_coup": pv_meilleur}
+                return qualite_f, delta_f, best_f
 
-            if cp_apres is None:
-                # Mat après le coup (immédiat, ou mat forcé détecté par le
-                # moteur dans les coups suivants — c'est justement le
-                # scénario "meilleur coup qui prépare un mat forcé au coup
-                # suivant" de l'issue #20) → excellent, et pv_apres contient
-                # la suite forcée réellement calculée, pas seulement le coup
-                # joué seul.
-                best = best_move if always_return_best else None
-                if return_pv:
-                    pv_meilleur = self._pv_to_san(board, pv_avant[:pv_max_plies])
-                    pv_propose  = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
-                    return "bon", 0, best, {"pv_coup_propose": pv_propose, "pv_meilleur_coup": pv_meilleur}
-                return "bon", 0, best
+            if val_avant is None or val_apres_joueur is None:
+                # Position terminale ou évaluation indisponible (cas limite,
+                # ne devrait pas arriver en pratique sur un coup légal) :
+                # repli neutre.
+                return _finish("bon", 0, best_move if always_return_best else None)
 
-            # La perte est vue du point de vue du joueur AVANT son coup
-            # cp_avant = score pour joueur avant coup
-            # cp_apres = score pour l'adversaire après coup → on l'inverse
-            delta = max(0, cp_avant - (-cp_apres))
-
+            delta_brut = max(0, val_avant - val_apres_joueur)
+            delta   = min(delta_brut, DELTA_CP_PLAFOND)
             qualite = classifier_coup(delta)
-            best    = best_move if best_move and best_move != move.uci() else None
+
+            # Position déjà décidée en faveur du joueur, avant ET après le
+            # coup (issue #75, point 2b).
+            if qualite in ("erreur", "blunder") and val_avant >= SEUIL_DECIDE and val_apres_joueur >= SEUIL_DECIDE:
+                qualite = "imprecision"
+
+            # Mat forcé contre le joueur après ce coup (issue #75, point 2a)
+            # : toujours une gaffe, jamais adoucie par le garde-fou
+            # ci-dessus — vérifié directement sur le signe du score de mat
+            # après coup (plus fiable que la seule magnitude du delta).
+            mate_apres_adversaire = eval_apres.get("mate")
+            if mate_apres_adversaire is not None and mate_apres_adversaire > 0:
+                qualite = "blunder"
+                delta   = DELTA_CP_MAT_CONTRE
+
+            best = best_move if best_move and best_move != move.uci() else None
 
             # Si coup mauvais mais pas de meilleur coup alternatif trouvé,
             # relancer en MultiPV=2 pour obtenir le vrai meilleur coup
@@ -555,12 +624,7 @@ class EngineManager:
                     logger.warning(f"MultiPV fallback échoué : {e}")
 
             best_final = (best if best is not None else best_move) if always_return_best else best
-
-            if return_pv:
-                pv_meilleur = self._pv_to_san(board, pv_avant[:pv_max_plies])
-                pv_propose  = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
-                return qualite, delta, best_final, {"pv_coup_propose": pv_propose, "pv_meilleur_coup": pv_meilleur}
-            return qualite, delta, best_final
+            return _finish(qualite, delta, best_final)
 
         except Exception as e:
             logger.error(f"Erreur evaluate_move : {e}")
