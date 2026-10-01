@@ -354,7 +354,23 @@ def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
     return result
 
 
-def _analyse_full_game(moves_uci: list) -> list:
+def _log_analyse_erreur(mode: str, message: str) -> None:
+    """Trace un échec du bouton "Analyser cette partie" (issue #77 point 1)
+    dans ANALYSE_ERREURS_LOG_PATH : heure, mode d'origine, message — pour
+    diagnostiquer un futur échec ponctuel sans avoir à le reproduire en
+    direct. Best-effort : une erreur d'écriture du journal ne doit jamais
+    faire échouer la réponse déjà envoyée au client."""
+    try:
+        path = config.ANALYSE_ERREURS_LOG_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        horodatage = time.strftime("%Y-%m-%d %H:%M:%S")
+        with path.open("a", encoding="utf-8") as f:
+            f.write(f"{horodatage}\tmode={mode}\t{message}\n")
+    except OSError:
+        logger.error("Impossible d'écrire dans ANALYSE_ERREURS_LOG_PATH", exc_info=True)
+
+
+def _analyse_full_game(moves_uci: list, start_fen: str | None = None) -> list:
     """Analyse chaque demi-coup d'une partie une seule fois avec Stockfish, à
     DEPTH_ANALYSE_PARTIE (issue #41, bouton "Analyser cette partie" du mode
     Bibliothèque/Revue PGN, et point d'entrée depuis la fin d'une partie
@@ -365,6 +381,16 @@ def _analyse_full_game(moves_uci: list) -> list:
     réévaluerait deux fois chaque position), pour rester synchrone sur une
     partie complète malgré une profondeur plus élevée que celle du lot
     d'amorçage (profondeur 10, choix de vitesse pour 280 parties).
+
+    start_fen (issue #77) : position de départ réelle de la partie, si elle
+    diffère de la position standard (ex. mode pédagogique avec Alain aux
+    Noirs — Stockfish a déjà joué un coup avant que data.fen ne soit transmis
+    au client — ou travail de finales, toujours une position personnalisée).
+    None retombe sur chess.Board() (comportement inchangé). Sans ce paramètre,
+    rejouer moves_uci depuis la position standard alors que la partie ne
+    commence pas de là levait toujours ValueError dès le premier demi-coup
+    (son trait ne correspond pas à celui de la position standard) : échec
+    systématique de l'analyse pour ces parties, reproduit et corrigé ici.
 
     Purement mécanique — aucun appel au coach ici (issue #41 point 2) :
     l'objectif du programme d'entraînement est qu'Alain réfléchisse d'abord,
@@ -383,8 +409,9 @@ def _analyse_full_game(moves_uci: list) -> list:
     position AVANT le coup, comme dans build_patterns_erreurs.py. N'affecte
     pas le calcul de delta_cp/qualite (issue #41, inchangé).
 
-    Lève ValueError si un coup de moves_uci n'est pas légal sur la partie
-    reconstruite depuis la position de départ standard."""
+    Lève ValueError si start_fen n'est pas un FEN valide, ou si un coup de
+    moves_uci n'est pas légal sur la partie reconstruite depuis la position
+    de départ (start_fen, ou standard à défaut)."""
 
     def score_val(eval_info: dict) -> int:
         """Valeur unique (mat ou cp) du point de vue du joueur au trait,
@@ -396,7 +423,7 @@ def _analyse_full_game(moves_uci: list) -> list:
             return eval_info["cp"]
         return 0
 
-    board = chess.Board()
+    board = chess.Board(start_fen) if start_fen else chess.Board()
 
     eval_courante = engine_manager.evaluate(board, depth=DEPTH_ANALYSE_PARTIE)
     val_avant = score_val(eval_courante)
@@ -463,8 +490,16 @@ def on_analyser_pgn(data):
     board.js lancerAnalyse) — une seule partie à la fois, à la demande, pas
     un traitement par lot (voir build_patterns_erreurs.py pour l'amorçage de
     l'historique complet). Le client envoie la liste des coups UCI de la
-    partie en revue ; voir _analyse_full_game pour le détail de l'analyse."""
+    partie en revue ; voir _analyse_full_game pour le détail de l'analyse.
+
+    start_fen/mode (issue #77 point 1) : position de départ réelle de la
+    partie (None pour la position standard) et nom du mode d'origine, utilisé
+    uniquement pour la journalisation d'un échec (_log_analyse_erreur) —
+    aucun des deux n'influence le calcul en cas de succès."""
+    mode = (data or {}).get("mode") or "revue"
+
     if not engine_manager:
+        _log_analyse_erreur(mode, "stockfish_indisponible (moteur non démarré)")
         emit("analyser_pgn_error", {"error": "stockfish_indisponible"})
         return
 
@@ -473,10 +508,29 @@ def on_analyser_pgn(data):
         emit("analyser_pgn_error", {"error": "partie_vide"})
         return
 
+    start_fen = (data or {}).get("start_fen") or None
+
     try:
-        resultats = _analyse_full_game(moves_uci)
-    except ValueError:
+        resultats = _analyse_full_game(moves_uci, start_fen)
+    except ValueError as e:
+        # fen_invalide (start_fen lui-même malformé) distingué de
+        # partie_invalide (coup illégal rejoué sur une position par ailleurs
+        # valide) — deux causes bien distinctes pour le diagnostic (issue #77
+        # point 1), auparavant confondues sous le même message générique.
+        if start_fen:
+            try:
+                chess.Board(start_fen)
+            except ValueError:
+                _log_analyse_erreur(mode, f"fen_invalide : start_fen={start_fen!r} ({e})")
+                emit("analyser_pgn_error", {"error": "fen_invalide"})
+                return
+        _log_analyse_erreur(mode, f"partie_invalide : {e}")
         emit("analyser_pgn_error", {"error": "partie_invalide"})
+        return
+    except Exception as e:
+        logger.error("Erreur inattendue dans l'analyse de partie", exc_info=True)
+        _log_analyse_erreur(mode, f"erreur_interne : {e}")
+        emit("analyser_pgn_error", {"error": "erreur_interne"})
         return
 
     emit("analyser_pgn_response", {"moves": resultats})

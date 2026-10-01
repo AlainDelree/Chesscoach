@@ -49,6 +49,44 @@ function finaleCommenterChaqueCoup() {
   return !!(cb && cb.checked);
 }
 
+// ── Sélecteur de finale déplacé avant le plateau sur mobile (issue #77
+// point 6, généralise placeOpeningStartButtonsForViewport d'opening.js) ────
+// Contrairement au reste de #finale-extra-controls (recommencer/démo, qui
+// n'ont de sens qu'une fois une finale déjà chargée), #finale-picker-row
+// (sélecteur de position-type + "Camps inversés") est le seul moyen de
+// démarrer ce mode — choisir une finale déclenche directement la partie
+// (onFinaleSelectChange). Le laisser enfermé dans le menu "..." (fermé par
+// défaut sur mobile, cf. GAME_MODE_EXTRA, mobile_game.js) rendait ce mode
+// silencieusement inactif tant qu'on n'avait pas pensé à l'ouvrir (rapport de
+// clôture : "l'écran ne réagit à quasi rien").
+let _finaleStartHomeParent      = null;
+let _finaleStartHomeNextSibling = null;
+const _finaleMobileQuery = window.matchMedia("(max-width: 900px)");
+
+function placeFinaleStartButtonsForViewport() {
+  const row  = document.getElementById("finale-picker-row");
+  const slot = document.getElementById("mobile-finale-start-slot");
+  if (!row || !slot || !_finaleStartHomeParent) return;
+  const gameEnCours = finaleActive && !finaleGameOver;
+  const onFinaleTab = typeof currentModeTab === "undefined" || currentModeTab === "finale";
+  const showInSlot = _finaleMobileQuery.matches && onFinaleTab && !gameEnCours;
+  if (showInSlot) {
+    if (row.parentElement !== slot) slot.appendChild(row);
+  } else if (row.parentElement !== _finaleStartHomeParent) {
+    _finaleStartHomeParent.insertBefore(row, _finaleStartHomeNextSibling);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const row = document.getElementById("finale-picker-row");
+  if (row) {
+    _finaleStartHomeParent      = row.parentElement;
+    _finaleStartHomeNextSibling = row.nextSibling;
+    placeFinaleStartButtonsForViewport();
+  }
+  _finaleMobileQuery.addEventListener("change", () => placeFinaleStartButtonsForViewport());
+});
+
 // PGN de la partie de finale en cours, avec en-têtes (issue #52, "Analyser
 // cette partie" après abandon — mêmes principes que
 // _pedagogicGamePgnForAnalysis dans pedagogic.js).
@@ -89,6 +127,7 @@ function abandonFinaleGame() {
   // Issue #65 point 5 : grise "Demander l'avis du coach" (askCoachAvailable,
   // controls.js) dès l'abandon.
   if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+  if (typeof placeFinaleStartButtonsForViewport === "function") placeFinaleStartButtonsForViewport();
 }
 
 function updateFinaleDemoNextButton() {

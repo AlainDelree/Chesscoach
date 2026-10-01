@@ -61,6 +61,17 @@
  */
 
 let _gameAnalysisBusy = false;
+// Relance automatique unique en cas d'absence de réponse du serveur (issue
+// #77 point 1 — "moteur occupé" ou délai dépassé, pistes avancées pour
+// l'échec ponctuel signalé par Alain) : _gameAnalysisTimeoutId arme un délai
+// à chaque émission de "analyser_pgn", annulé dès qu'une réponse ("analyser_
+// pgn_response" ou "analyser_pgn_error") arrive. S'il expire une première
+// fois, la même demande est réémise automatiquement (_gameAnalysisRetried
+// passe à true) ; s'il expire une seconde fois, on abandonne avec un message
+// explicite plutôt que de relancer indéfiniment.
+let _gameAnalysisTimeoutId = null;
+let _gameAnalysisRetried = false;
+const GAME_ANALYSIS_TIMEOUT_MS = 75000;
 // Rapport mécanique complet (san/uci/color/coup_plein/delta_cp/qualite/
 // best_move/fen_avant/phase), indexé comme reviewMoves — conservé à part de
 // reviewMoves pour ne pas alourdir les autres consommateurs de reviewMoves
@@ -194,7 +205,54 @@ function analyserPartieCourante() {
 
   if (enPlace) _appliquerEntetesPgn(_gameAnalysisPgnForActiveMode());
 
-  lancerAnalyse(moves.map(m => m.uci));
+  // startFen (issue #77) : position de départ réelle de la partie si elle
+  // n'est pas standard (ex. mode pédagogique avec Alain aux Noirs, où
+  // Stockfish a déjà joué un coup, ou travail de finales) — sans elle, le
+  // serveur rejouait toujours les coups depuis la position standard et
+  // l'analyse échouait systématiquement ("Coup illégal") dès le premier demi-
+  // coup. modeLabel : journalisation diagnostique uniquement côté serveur.
+  const startFen  = enPlace
+    ? (typeof getActiveModeStartFen === "function" ? getActiveModeStartFen() : null)
+    : reviewStartFen;
+  const modeLabel = enPlace ? (typeof activeMode !== "undefined" ? activeMode : "partie") : "revue";
+
+  _gameAnalysisRetried = false;
+  _lancerAnalyseAvecRelance(moves.map(m => m.uci), startFen, modeLabel);
+}
+
+function _annulerDelaiAnalyse() {
+  if (_gameAnalysisTimeoutId !== null) {
+    clearTimeout(_gameAnalysisTimeoutId);
+    _gameAnalysisTimeoutId = null;
+  }
+}
+
+// Émet "analyser_pgn" et arme le délai de relance (issue #77 point 1) —
+// movesUci/startFen/modeLabel mémorisés en paramètres de la fonction plutôt
+// que dans une variable globale, pour que la relance rejoue exactement la
+// même demande même si une autre analyse a entre-temps changé l'état courant.
+function _lancerAnalyseAvecRelance(movesUci, startFen, modeLabel) {
+  _annulerDelaiAnalyse();
+  lancerAnalyse(movesUci, undefined, startFen, modeLabel);
+  _gameAnalysisTimeoutId = setTimeout(() => {
+    _gameAnalysisTimeoutId = null;
+    if (!_gameAnalysisRetried) {
+      _gameAnalysisRetried = true;
+      const status = document.getElementById("game-analysis-status");
+      if (status) status.textContent = "Pas de réponse du moteur — nouvel essai...";
+      _lancerAnalyseAvecRelance(movesUci, startFen, modeLabel);
+      return;
+    }
+    // Deuxième délai dépassé : abandonne plutôt que de relancer indéfiniment.
+    _gameAnalysisBusy = false;
+    const btn = document.getElementById("game-analysis-btn");
+    if (btn) btn.disabled = false;
+    const progress = document.getElementById("game-analysis-progress");
+    if (progress) progress.classList.remove("show");
+    const status = document.getElementById("game-analysis-status");
+    if (status) status.textContent = "L'analyse a échoué : le moteur n'a pas répondu (délai dépassé).";
+    if (_gameAnalysisScrollApresResultat) { _gameAnalysisScrollApresResultat = false; _scrollVersPanneauAnalyse(); }
+  }, GAME_ANALYSIS_TIMEOUT_MS);
 }
 
 function _gameAnalysisQualiteLabel(qualite) {
@@ -490,6 +548,7 @@ function _lancerAnalyseEnPlaceDepuisBanniere() {
 
 if (typeof socket !== "undefined") {
   socket.on("analyser_pgn_response", (data) => {
+    _annulerDelaiAnalyse();
     _gameAnalysisBusy = false;
     const btn = document.getElementById("game-analysis-btn");
     if (btn) btn.disabled = false;
@@ -497,7 +556,7 @@ if (typeof socket !== "undefined") {
     if (progress) progress.classList.remove("show");
     const status = document.getElementById("game-analysis-status");
     if (!data || !data.moves) {
-      if (status) status.textContent = "L'analyse a échoué.";
+      if (status) status.textContent = "L'analyse a échoué : réponse du serveur incomplète.";
       if (_gameAnalysisScrollApresResultat) { _gameAnalysisScrollApresResultat = false; _scrollVersPanneauAnalyse(); }
       return;
     }
@@ -536,7 +595,21 @@ if (typeof socket !== "undefined") {
     if (_gameAnalysisScrollApresResultat) { _gameAnalysisScrollApresResultat = false; _scrollVersPanneauAnalyse(); }
   });
 
+  // Messages distincts par cause (issue #77 point 1) — auparavant un seul
+  // "L'analyse a échoué." générique quelle que soit la cause réelle (déjà
+  // journalisée côté serveur dans data/logs/analyse_erreurs.log, cf.
+  // app.py/_log_analyse_erreur), ce qui rendait un futur échec impossible à
+  // diagnostiquer depuis l'écran seul.
+  const GAME_ANALYSIS_ERROR_MESSAGES = {
+    stockfish_indisponible: "Stockfish indisponible sur ce système.",
+    partie_vide:            "Aucun coup à analyser (partie vide).",
+    partie_invalide:        "L'analyse a échoué : un coup de la partie n'a pas pu être rejoué (position de départ ou coups incohérents).",
+    fen_invalide:           "L'analyse a échoué : position de départ de la partie invalide.",
+    erreur_interne:         "L'analyse a échoué : erreur interne du serveur.",
+  };
+
   socket.on("analyser_pgn_error", (data) => {
+    _annulerDelaiAnalyse();
     _gameAnalysisBusy = false;
     const btn = document.getElementById("game-analysis-btn");
     if (btn) btn.disabled = false;
@@ -544,9 +617,7 @@ if (typeof socket !== "undefined") {
     if (progress) progress.classList.remove("show");
     const status = document.getElementById("game-analysis-status");
     const err = data && data.error;
-    const msg = (err === "stockfish_indisponible")
-      ? "Stockfish indisponible sur ce système."
-      : "L'analyse a échoué.";
+    const msg = GAME_ANALYSIS_ERROR_MESSAGES[err] || "L'analyse a échoué (cause inconnue — voir la console).";
     if (status) status.textContent = msg;
     console.warn("[analyse de partie]", msg, data);
     if (_gameAnalysisScrollApresResultat) { _gameAnalysisScrollApresResultat = false; _scrollVersPanneauAnalyse(); }

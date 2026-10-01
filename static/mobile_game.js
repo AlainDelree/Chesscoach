@@ -53,7 +53,9 @@ const GAME_ALWAYS_RELOCATE = [
   ["shared-mode-controls",         "board-sticky-wrap"],
   ["mobile-pedagogic-start-slot",  "board-sticky-wrap"],
   ["mobile-opening-start-slot",    "board-sticky-wrap"],
+  ["mobile-finale-start-slot",     "board-sticky-wrap"],
   ["mobile-game-idle-msg",         "board-sticky-wrap"],
+  ["mobile-game-over-bar",         "board-sticky-wrap"],
   ["game-tab-bar",                 "board-sticky-wrap"],
 ];
 
@@ -278,6 +280,19 @@ function _updateGameBoardMaxSize() {
   // de lui-même dès le retour au plateau complet (la hauteur de
   // #board-sticky-wrap change), pas besoin de rattraper la valeur ici.
   if (wrap.classList.contains("board-compact")) return;
+  // Issue #77 : pas de remesure non plus pendant l'affichage du bandeau de
+  // fin de partie (#mobile-game-over-bar, désormais dans le "chrome below"
+  // mesuré ci-dessous, là où cette zone était vide avant l'issue #77) — sinon
+  // sa hauteur réelle (texte + 2 boutons, variable selon la longueur du
+  // résultat) fait varier --bd-size-game-max au moment même de l'abandon/du
+  // mat, donnant l'impression d'un passage en plateau réduit alors que
+  // ".board-compact"/_gameBoardSizeChoice ne changent jamais (cause
+  // identifiée lors des tests GSM, cf. rapport de clôture — le réglage de
+  // taille lui-même n'est jamais modifié, seul le rendu réel du plateau
+  // varie). Garde la dernière valeur mesurée PENDANT la partie jusqu'au
+  // retour à une nouvelle partie (hideGameOverBanner, qui retire cette classe
+  // et redéclenche par ricochet onGameUiRefresh()/cette fonction).
+  if (document.body.classList.contains("game-over-active")) return;
   // Tout ce qui n'est PAS le plateau lui-même : au-dessus (rangée d'en-tête
   // collée + matériel capturé du dessus) via board.top, et en dessous
   // (matériel du dessous, ligne d'état, #review-controls,
@@ -377,19 +392,65 @@ function _updateActionBarState() {
   if (!shared || !idle) return;
   const tab = typeof currentModeTab !== "undefined" ? currentModeTab : null;
   const running = _isCurrentGameRunning();
-  const hasColorChoice = tab === "pedagogic" || tab === "opening";
+  // finale (issue #77 point 6) : rejoint pedagogic/opening — son propre
+  // sélecteur de position-type (#finale-picker-row) remplace désormais aussi
+  // #mobile-game-idle-msg, qui ne reste la seule invite que pour partie libre
+  // (écart documenté, inchangé).
+  const hasOwnStartSlot = tab === "pedagogic" || tab === "opening" || tab === "finale";
   if (running) {
     shared.style.display = "";
     idle.classList.remove("show");
-  } else if (hasColorChoice) {
-    // Boutons déjà positionnés par pedagogic.js/opening.js dans
-    // #mobile-pedagogic-start-slot/#mobile-opening-start-slot.
+  } else if (hasOwnStartSlot) {
+    // Boutons déjà positionnés par pedagogic.js/opening.js/finales.js dans
+    // #mobile-pedagogic-start-slot/#mobile-opening-start-slot/
+    // #mobile-finale-start-slot.
     shared.style.display = "none";
     idle.classList.remove("show");
   } else {
     shared.style.display = "none";
     idle.classList.add("show");
   }
+}
+
+// ── "Nouvelle partie" du bandeau de fin de partie (issue #77 point 4) ──────
+// Ramène l'écran à l'état "avant la partie" du mode actif (boutons "Jouer les
+// Blancs/Noirs" ou message d'invite à utiliser le menu "...", point 4), sans
+// recharger la page. Jusqu'ici aucun moyen n'existait sur mobile une fois une
+// partie terminée : la classe "game-over-active" masque #shared-mode-controls/
+// .mode-start-slot/#mobile-game-idle-msg (règle <style> ci-dessus) tant
+// qu'elle n'est pas retirée, et rien ne l'enlevait avant le démarrage effectif
+// d'une nouvelle partie — verrou bloquant repéré lors des tests GSM (rapport
+// de clôture). resetBoardToNeutral() (board.js, jusqu'ici réservé à l'éditeur
+// de position/l'exercice, cf. editor.js/exercise.js) remet un plateau vierge
+// ET appelle hideGameOverBanner(), ce qui lève ce verrou — chaque mode garde
+// par ailleurs son propre drapeau "xxxGameOver" à true (aucun besoin d'y
+// toucher : _isCurrentGameRunning() ci-dessus le traite déjà comme "aucune
+// partie en cours", c'est justement ce qui faisait apparaître ce bandeau).
+// Démarrer effectivement une nouvelle partie (clic sur "Jouer les Blancs/
+// Noirs" ou équivalent) redéclenche normalement coachNewSegment("Nouvelle
+// partie")/la remise à zéro de l'historique du coach, comme pour toute
+// nouvelle partie (inchangé, chaque startXxxGame() le fait déjà).
+function mobileNewGameFromBanner() {
+  // Efface l'instance de partie terminée du mode actif — sinon
+  // updateGameStatusLine() (board.js, appelée par renderHistory() plus bas)
+  // continue de lire activeModeGameState() dessus et affiche encore "Coup
+  // N · <dernier coup>" de la partie qui vient de se terminer sous le
+  // plateau pourtant redevenu vierge.
+  const mode = typeof activeMode !== "undefined" ? activeMode : null;
+  if (mode === "free")      freeGame      = null;
+  if (mode === "pedagogic") pedagogicGame = null;
+  if (mode === "opening")   openingGame   = null;
+  if (mode === "finale")    finaleGame    = null;
+  if (typeof resetBoardToNeutral === "function") resetBoardToNeutral();
+  if (typeof renderHistory === "function") renderHistory();
+  // Issue #77 point 3 : le rapport d'analyse de la partie qui vient de se
+  // terminer n'a plus de sens une fois revenu à l'état avant-partie.
+  if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
+  if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+  if (typeof placePedagogicStartButtonsForViewport === "function") placePedagogicStartButtonsForViewport();
+  if (typeof placeOpeningStartButtonsForViewport === "function") placeOpeningStartButtonsForViewport();
+  if (typeof placeFinaleStartButtonsForViewport === "function") placeFinaleStartButtonsForViewport();
+  onGameUiRefresh();
 }
 
 // ── Contrôles de partie hors contexte (issue #71 point 6) ──────────────────
@@ -434,6 +495,7 @@ function onGameUiRefresh() {
   // onglet.
   if (typeof placePedagogicStartButtonsForViewport === "function") placePedagogicStartButtonsForViewport();
   if (typeof placeOpeningStartButtonsForViewport === "function") placeOpeningStartButtonsForViewport();
+  if (typeof placeFinaleStartButtonsForViewport === "function") placeFinaleStartButtonsForViewport();
 
   const active = isGameUiActive();
   document.body.classList.toggle("mobile-game-active", active);
