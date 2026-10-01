@@ -21,6 +21,7 @@ import chess
 import chess.engine
 import threading
 import logging
+import json
 import re
 import subprocess
 import time
@@ -32,7 +33,7 @@ from pathlib import Path
 # Remplacer cet import par le point d'entrée de config du nouveau projet.
 # Valeur attendue : un pathlib.Path pointant vers le dossier contenant les
 # exécutables moteurs (ex. Path.home() / "ChessCoach" / "engines").
-from config import ENGINES_DIR, SYZYGY_PATH, MOTEUR_ERREURS_LOG_PATH
+from config import ENGINES_DIR, SYZYGY_PATH, MOTEUR_ERREURS_LOG_PATH, EVAL_BREAKDOWN_STATE_PATH
 
 logger = logging.getLogger("EngineManager")
 
@@ -117,6 +118,30 @@ class _CaptureStderrMoteur(logging.Handler):
 
 
 logging.getLogger("chess.engine").addHandler(_CaptureStderrMoteur())
+
+
+def _lire_etat_eval_breakdown() -> dict | None:
+    """État de la décomposition d'évaluation mémorisé au démarrage précédent
+    (issue #82, EVAL_BREAKDOWN_STATE_PATH) — None si absent ou illisible
+    (premier lancement, ou fichier corrompu)."""
+    try:
+        return json.loads(EVAL_BREAKDOWN_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _ecrire_etat_eval_breakdown(disponible: bool, version: str) -> None:
+    """Persiste l'état courant (issue #82) pour pouvoir le comparer au
+    prochain démarrage — best-effort, une erreur d'écriture ne doit jamais
+    faire échouer la détection elle-même."""
+    try:
+        EVAL_BREAKDOWN_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        EVAL_BREAKDOWN_STATE_PATH.write_text(
+            json.dumps({"disponible": disponible, "version": version}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        logger.warning("Impossible d'écrire EVAL_BREAKDOWN_STATE_PATH", exc_info=True)
 
 
 def _code_sortie_moteur(engine: chess.engine.SimpleEngine) -> int | None:
@@ -357,6 +382,11 @@ class EngineManager:
         self._supports_threads = False
         self._engine_name      = "Moteur UCI"
 
+        # État de la décomposition classique de l'évaluation (issue #82) —
+        # détecté une seule fois par _detecter_eval_breakdown, cf. plus bas.
+        self._eval_breakdown_disponible: bool | None = None
+        self._eval_breakdown_version: str = ""
+
         # Limiteur de relances automatiques (issue #79) partagé entre les 4
         # instances — cf. _LimiteurRelances ci-dessus.
         self._limiteur_relances = _LimiteurRelances()
@@ -459,6 +489,8 @@ class EngineManager:
             logger.info(f"Moteur : {self._engine_name}")
             logger.info(f"Elo limité : {self._supports_elo_limit} | WDL : {self._supports_wdl} | Syzygy : {self._supports_syzygy}")
 
+            self._detecter_eval_breakdown()
+
         except Exception as e:
             logger.error(f"Impossible de lancer le moteur : {e}")
             raise
@@ -503,7 +535,9 @@ class EngineManager:
 
         `obtenir`/`assigner` lisent/écrivent l'attribut _engine_* concerné
         (ex. self._set_engine_eval) ; `creer` reconstruit une instance
-        fraîchement configurée (ex. self._creer_moteur_eval)."""
+        fraîchement configurée (ex. self._creer_moteur_eval). Si cette
+        relance réussit sur le moteur d'évaluation, redéclenche aussi
+        _detecter_eval_breakdown (issue #82, cf. plus bas)."""
         with lock:
             engine = obtenir()
             if engine is None:
@@ -536,13 +570,21 @@ class EngineManager:
                     return repli
                 assigner(nouveau)
                 try:
-                    return _appeler_avec_delai(action, nouveau)
+                    resultat = _appeler_avec_delai(action, nouveau)
                 except Exception as deuxieme_exc:
                     self._log_erreur_moteur(
                         nom_operation, f"échec après relance : {deuxieme_exc}",
                         _code_sortie_moteur(nouveau), rang,
                     )
                     return repli
+                # Issue #82 : le moteur d'évaluation vient d'être relancé avec
+                # succès — c'est le scénario visé par la détection de la
+                # décomposition d'évaluation (cf. _detecter_eval_breakdown),
+                # jamais déclenchée pour les relances des autres instances
+                # (play/pédagogique/finales), sans rapport avec get_eval_breakdown.
+                if creer == self._creer_moteur_eval:
+                    self._detecter_eval_breakdown()
+                return resultat
 
     def _apply_elo(self, engine: chess.engine.SimpleEngine) -> None:
         """Applique la limitation de force Elo sur une instance du moteur."""
@@ -910,6 +952,56 @@ class EngineManager:
             resultat[terme] = {"mg": float(nombres[0]), "eg": float(nombres[1])}
 
         return resultat or None
+
+    # Position de test pour _detecter_eval_breakdown ci-dessous : la position
+    # de départ suffit, seule la présence de la table nous intéresse, jamais
+    # son contenu numérique.
+    _FEN_TEST_EVAL_BREAKDOWN = chess.STARTING_FEN
+
+    def _detecter_eval_breakdown(self) -> None:
+        """Détecte si la décomposition classique de l'évaluation (get_eval_breakdown
+        ci-dessus) est disponible sur le binaire Stockfish actuel, sur une
+        position de test simple (issue #82, point 1) — mémorisé dans
+        self._eval_breakdown_disponible/_version plutôt que retesté à chaque
+        exercice. Appelée une seule fois à l'initialisation (_init_engines) et
+        de nouveau chaque fois que le moteur d'évaluation est relancé par la
+        reprise automatique (_appel_protege, issue #79) : c'est exactement le
+        scénario visé par cette issue — un Stockfish mis à jour en arrière-plan
+        (ex. mise à jour système) qui aurait perdu la commande "eval" (retirée
+        en 16.1) sans que rien d'autre dans l'appli ne s'en aperçoive.
+
+        Écrit une ligne reconnaissable dans le journal applicatif à chaque
+        appel (démarrage ou relance), et une ligne d'avertissement
+        supplémentaire si l'état (disponibilité ou version) a changé depuis
+        le dernier démarrage (comparé à EVAL_BREAKDOWN_STATE_PATH, persisté
+        ici)."""
+        disponible = self.get_eval_breakdown(self._FEN_TEST_EVAL_BREAKDOWN) is not None
+        version = self._engine_name
+
+        ancien_etat = _lire_etat_eval_breakdown()
+        if ancien_etat is not None and (
+            ancien_etat.get("disponible") != disponible or ancien_etat.get("version") != version
+        ):
+            logger.warning(
+                "[EVAL_BREAKDOWN] changement détecté depuis le dernier démarrage : "
+                f"disponible {ancien_etat.get('disponible')} -> {disponible}, "
+                f"version {ancien_etat.get('version')!r} -> {version!r}"
+            )
+        logger.info(f"[EVAL_BREAKDOWN] disponible={disponible} version={version!r}")
+
+        self._eval_breakdown_disponible = disponible
+        self._eval_breakdown_version = version
+        _ecrire_etat_eval_breakdown(disponible, version)
+
+    @property
+    def eval_breakdown_disponible(self) -> bool | None:
+        """None avant la première détection (ne devrait pas arriver en
+        pratique : _init_engines l'appelle avant tout retour de __init__)."""
+        return self._eval_breakdown_disponible
+
+    @property
+    def eval_breakdown_version(self) -> str:
+        return self._eval_breakdown_version
 
     def _pv_to_san(self, board: chess.Board, moves: list[chess.Move]) -> str:
         """Convertit une suite de coups (objets chess.Move, calculés par le

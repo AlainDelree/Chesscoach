@@ -62,6 +62,17 @@ ANALYSE_ERREURS_LOG_PATH = DATA_DIR / "logs" / "analyse_erreurs.log"
 # logs ci-dessus).
 MOTEUR_ERREURS_LOG_PATH = DATA_DIR / "logs" / "moteur_erreurs.log"
 
+# État mémorisé de la décomposition classique de l'évaluation Stockfish
+# ("eval", commande retirée à partir de Stockfish 16.1 — issue #80 point 5) :
+# disponible ou non, et version du moteur, au moment de la dernière détection
+# (une seule fois au démarrage de l'appli, et de nouveau après chaque relance
+# du moteur d'évaluation par la reprise automatique, issue #79 — jamais
+# retestée à chaque exercice). Sert à repérer un changement entre deux
+# démarrages (ex. Stockfish mis à jour en arrière-plan par le système) pour le
+# signaler dans le journal (issue #82). Sous DATA_DIR, donc gitignoré comme le
+# reste des données.
+EVAL_BREAKDOWN_STATE_PATH = DATA_DIR / "eval_breakdown_state.json"
+
 # Compteur cumulé de tokens consommés par l'API Claude (issue #54) — pas de
 # notion de prix ni de table de coût par modèle, seulement les tokens bruts
 # renvoyés par chaque réponse de l'API, cumulés par modèle depuis une date de

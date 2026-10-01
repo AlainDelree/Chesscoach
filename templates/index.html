@@ -172,6 +172,59 @@
       padding: 3px 8px;
       cursor: pointer;
     }
+    /* Icône d'état "décomposition d'évaluation" (issue #82) — même habillage
+       que #usage-tokens-widget ci-dessus (position relative + détail affiché
+       au survol/clic), couleur neutre en temps normal, rouge d'alerte
+       (#cc2200, déjà utilisé ailleurs pour les coups en erreur — cf.
+       board.css .move-chip.erreur) quand la décomposition est indisponible.
+       Jamais le terracotta (--cc-accent), réservé au cliquable d'après la
+       règle de palette d'Alain (cf. board.css). */
+    #eval-status-widget {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    #eval-status-toggle {
+      background: none;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      margin: 0;
+      color: var(--cc-text-muted);
+      font-size: 0.68rem;
+      font-family: var(--cc-font-body);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #eval-status-toggle:hover { background: none; color: var(--cc-accent-strong); text-decoration: underline; }
+    #eval-status-widget.eval-status-alert #eval-status-toggle {
+      color: #cc2200;
+      font-weight: 700;
+      text-decoration: underline;
+    }
+    #eval-status-detail {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 6px;
+      background: var(--cc-surface);
+      color: var(--cc-text);
+      border-radius: var(--cc-radius-md);
+      padding: 8px 10px;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      max-width: 280px;
+      box-shadow: var(--cc-shadow-md);
+      z-index: 20;
+    }
+    #eval-status-widget:hover #eval-status-detail,
+    #eval-status-widget.eval-status-open #eval-status-detail {
+      display: block;
+    }
+
     @media (max-width: 900px) {
       .usage-full { display: none; }
       .usage-compact { display: inline; }
@@ -194,6 +247,18 @@
       }
       #usage-detail table { width: 100%; }
       #usage-detail td { white-space: normal; word-break: break-word; }
+      /* Même raison que #usage-detail ci-dessus (issue #54) : position:fixed
+         ancré au bouton plutôt qu'absolute, pour ne jamais déborder du
+         viewport quelle que soit la position du widget dans la rangée
+         d'en-tête mobile (issue #82). */
+      #eval-status-detail {
+        position: fixed;
+        left: 8px;
+        right: 8px;
+        margin-top: 0;
+        max-width: none;
+        white-space: normal;
+      }
     }
 
     /* Issue #65 point 2 : sur écran tactile, un tap déclenche :hover puis le
@@ -871,6 +936,11 @@
       }
       #game-model-pill { order: 2; padding: 8px 12px; }
       #game-menu-btn   { order: 3; padding: 8px 10px; }
+      /* Icône d'état de la décomposition d'évaluation (issue #82) : déplacée
+         ici à côté du menu "..." par _registerMobileRelocatable (controls.js),
+         même slot flex — collée juste après lui plutôt qu'à sa propre place
+         d'origine (.header-actions, masquée sur mobile ci-dessus). */
+      #eval-status-widget { order: 4; flex-shrink: 0; padding: 0 2px; }
       #game-model-popup, #game-menu-dropdown { display: none; }
       #game-model-popup.open, #game-menu-dropdown.open { display: block; }
       #game-model-popup,
@@ -1365,6 +1435,24 @@
         </div>
       </div>
       <a class="cout-api-link" href="https://platform.claude.com/cost" target="_blank" rel="noopener noreferrer">Coût API</a>
+      <!-- Icône d'état de la décomposition d'évaluation Stockfish (issue
+           #82) : discrète en temps normal, en alerte si la commande "eval"
+           (retirée à partir de Stockfish 16.1) n'est plus disponible — ex.
+           mise à jour système involontaire du binaire, qui ferait sinon
+           retomber le mode Exercice sur les seules idées mécaniques (issue
+           #80) sans qu'Alain s'en aperçoive. Rendu initial côté serveur
+           (EngineManager.eval_breakdown_disponible/_version, détectés une
+           fois au démarrage — cf. app.py index()) ; masquée si Stockfish est
+           entièrement absent (autre panne, déjà signalée ailleurs, hors
+           sujet ici). Dupliquée vers #mobile-mode-bar-slot sur mobile par
+           _registerMobileRelocatable (controls.js), même mécanisme que les
+           autres blocs déplacés de cette rangée. -->
+      {% if eval_breakdown_disponible is not none %}
+      <div id="eval-status-widget" class="{{ 'eval-status-alert' if not eval_breakdown_disponible else '' }}">
+        <button type="button" id="eval-status-toggle">eval</button>
+        <div id="eval-status-detail">{{ eval_breakdown_message }}</div>
+      </div>
+      {% endif %}
     </div>
   </header>
 

@@ -518,10 +518,43 @@ function toggleHistoriqueCollapsed() {
   if (chevron) chevron.textContent = collapsed ? "Déplier ▼" : "Replier ▲";
 }
 
+// ── Icône d'état "décomposition d'évaluation" (issue #82) ──────────────────
+// Rendu initial entièrement côté serveur (app.py index()) — ce widget n'est
+// jamais mis à jour en direct (contrairement à #usage-tokens-widget, qui
+// suit chaque appel au coach) : l'état ne change qu'au prochain démarrage de
+// l'appli ou à la prochaine relance du moteur. Même bascule clic/tap que
+// #usage-tokens-widget (usage_tokens.js) : le survol (CSS :hover) suffit sur
+// desktop, le clic/tap bascule un état persistant pour le tactile.
+function _initEvalStatusWidget() {
+  const widget = document.getElementById("eval-status-widget");
+  const toggleBtn = document.getElementById("eval-status-toggle");
+  const detail = document.getElementById("eval-status-detail");
+  if (!widget || !toggleBtn) return;
+  toggleBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const opening = !widget.classList.contains("eval-status-open");
+    widget.classList.toggle("eval-status-open");
+    // Même calcul que #usage-detail (usage_tokens.js) : sur mobile, le
+    // détail passe en position:fixed (CSS) et a donc besoin d'un "top"
+    // explicite ancré au bouton, quelle que soit sa position réelle dans
+    // la rangée d'en-tête (desktop vs #mobile-mode-bar-slot).
+    if (opening && detail && _mobileModeBarQuery.matches) {
+      const rect = toggleBtn.getBoundingClientRect();
+      detail.style.top = Math.round(rect.bottom + 6) + "px";
+    } else if (detail) {
+      detail.style.top = "";
+    }
+  });
+  document.addEventListener("click", (e) => {
+    if (!widget.contains(e.target)) widget.classList.remove("eval-status-open");
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   updateSharedControlBar();
   updateReviewControlsEnabled();
   switchModeTab("library");
+  _initEvalStatusWidget();
 
   const bar = document.getElementById("mode-tab-bar");
   if (bar) {
@@ -544,6 +577,13 @@ document.addEventListener("DOMContentLoaded", () => {
   _registerMobileRelocatable("pgn-lib-browse-block",    "mobile-bottom-slot");
   _registerMobileRelocatable("training-program-panel",  "mobile-bottom-slot");
   _registerMobileRelocatable("game-analysis-panel",     "mobile-analysis-slot");
+  // Icône d'état "décomposition d'évaluation" (issue #82) : à côté du menu
+  // "..." sur mobile (#mobile-mode-bar-slot, collé dans tous les modes depuis
+  // l'issue #81), dans .header-actions sur grand écran (emplacement d'origine
+  // dans templates/index.html) — absente du DOM si Stockfish n'est pas
+  // installé du tout (cf. app.py index()), _registerMobileRelocatable est
+  // alors un no-op (élément introuvable).
+  _registerMobileRelocatable("eval-status-widget", "mobile-mode-bar-slot");
   _placeMobileRelocatablesForViewport(_mobileModeBarQuery.matches);
   if (typeof _updateBoardLinesCommandBar === "function") _updateBoardLinesCommandBar();
 

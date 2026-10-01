@@ -227,8 +227,43 @@ def _handle_llm_model_indisponible_si_besoin(error: str) -> None:
     })
 
 
+def _version_stockfish_affichee(nom_moteur: str) -> str:
+    """Isole le numéro de version pour l'affichage (issue #82) — ex.
+    "Stockfish 16" -> "16" — le message qui l'utilise ("Stockfish <version>
+    ...") rajoute déjà le mot "Stockfish" lui-même. Repli sur le nom complet
+    si ce n'est pas un nom Stockfish standard (moteur UCI générique)."""
+    prefixe = "Stockfish "
+    return nom_moteur[len(prefixe):].strip() if nom_moteur.startswith(prefixe) else nom_moteur
+
+
+def _eval_breakdown_message(disponible: bool | None, version_affichee: str) -> str:
+    """Message affiché par l'icône d'état de l'en-tête (issue #82, point 2) —
+    chaîne vide si disponible est None (pas de moteur du tout, hors sujet
+    pour cette icône, cf. index() ci-dessous qui la masque alors)."""
+    if disponible is None:
+        return ""
+    if disponible:
+        return f"Décomposition d'évaluation disponible, Stockfish {version_affichee}."
+    return (
+        f"Stockfish {version_affichee} ne fournit plus la décomposition d'évaluation : "
+        "les idées du coup ne sont plus calculées (seules les idées mécaniques "
+        "restent). Une mise à jour de Stockfish est probablement la cause."
+    )
+
+
 @app.route("/")
 def index():
+    # Icône d'état de la décomposition d'évaluation Stockfish (issue #82) :
+    # rendu initial fait côté serveur à partir de l'état mémorisé par
+    # EngineManager au démarrage (engine_manager.eval_breakdown_disponible/
+    # _version, cf. engine_stockfish.py _detecter_eval_breakdown), comme les
+    # autres indicateurs ci-dessous. None (pas seulement False) si Stockfish
+    # est entièrement absent — autre panne, déjà signalée par ailleurs, hors
+    # sujet pour cette icône : le gabarit la masque dans ce cas.
+    eval_breakdown_disponible = engine_manager.eval_breakdown_disponible if engine_manager else None
+    _version_affichee = (
+        _version_stockfish_affichee(engine_manager.eval_breakdown_version) if engine_manager else ""
+    )
     return render_template(
         "index.html",
         objectifs_courants=coach_memory.get("objectifs_courants", []),
@@ -245,6 +280,8 @@ def index():
         # de disponibilité ci-dessus — évite un sélecteur activé puis
         # désactivé après coup au premier exercice tenté.
         lichess_puzzles_disponible=bool(lichess_puzzles_pool),
+        eval_breakdown_disponible=eval_breakdown_disponible,
+        eval_breakdown_message=_eval_breakdown_message(eval_breakdown_disponible, _version_affichee),
     )
 
 
