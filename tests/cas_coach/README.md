@@ -73,6 +73,46 @@ motifs_attendus:
 pastille_attendue: vert, orange ou rouge
 ```
 
+### Syntaxe d'une ligne de `motifs_interdits`/`motifs_attendus` (issue #94)
+
+Par défaut, une ligne est une simple sous-chaîne cherchée dans la réponse du
+coach (insensible à la casse et aux accents, comme `faits_attendus`). Deux
+variantes supplémentaires, dans les deux blocs :
+
+- **Alternatives** : plusieurs formulations séparées par `|`, présent si
+  AU MOINS UNE correspond — utile quand le coach paraphrase sans jamais
+  employer un mot précis (ex. `défensif|pare la menace|sécurité du roi`
+  dans `h4_menace_gxh3_defensif`, le coach explique parfois la défense sans
+  jamais écrire « défensif »).
+- **Expression régulière** : préfixe `regex: <motif>` — recherché tel quel
+  (`re.search`, `re.IGNORECASE`) sur la réponse BRUTE, pas normalisée ;
+  l'auteur du motif gère lui-même casse/accents/négation via la syntaxe
+  regex. Utile quand la seule proximité textuelle ne suffit pas, ex.
+  limiter un motif interdit au voisinage immédiat d'une suite de coups
+  précise (voir `regex: qxh4[\s,]*gxh4...équilibr` dans
+  `h4_menace_gxh3_defensif`, qui ne doit JAMAIS se déclencher sur le cas
+  `c4_bxc6_bxc6_reste_verte`, dont l'« échange équilibré » porte sur
+  « Bxc6+ bxc6 », des coups différents).
+
+**Négation proche tolérée pour un motif interdit non-regex** : si le motif
+(ou une de ses alternatives) apparaît précédé, à moins de 20 caractères,
+d'un mot de négation (« pas », « jamais », « aucun »/« aucune », « ni »,
+« non »), cette occurrence n'est PAS comptée comme une présence du motif
+interdit — constat ayant motivé cet ajout : la réponse correcte du coach
+sur le cas h4 (« un coup défensif, pas une expansion offensive ») contenait
+littéralement « expansion », provoquant un échec à tort du motif interdit
+`expansion` malgré la négation explicite juste avant. Un motif `regex:...`
+garde l'entière responsabilité de la négation (via `(?<!pas )` ou
+équivalent) : cette tolérance automatique ne s'applique qu'aux motifs
+ordinaires.
+
+**Pastille non conforme** : depuis l'issue #94, l'échec affiche désormais
+la couleur réellement obtenue, la raison donnée par
+`coach_reliability.evaluer_fiabilite` et les types de contrôles qui ont
+déclenché une alerte — à la fois dans le tableau récapitulatif et dans le
+détail par tentative, plus besoin de relire l'extrait de réponse pour
+comprendre pourquoi la pastille diffère de `pastille_attendue`.
+
 Champs obligatoires : `id`, `fen`, `coup_propose`, `camp_alain`,
 `meilleur_coup`. Les autres (`description`, `source`, `faits_attendus`,
 `motifs_interdits`, `motifs_attendus`, `pastille_attendue`) sont optionnels
@@ -150,7 +190,13 @@ le commentaire) et `pastille_attendue`, puis à supprimer le commentaire.
   « Bxc6+ bxc6 » ne doit plus être signalée comme une suite de coups
   illégale.
 - `h4_menace_gxh3_defensif` — h4 pare une menace réelle sur h3 et ne doit
-  pas être présenté comme un plan offensif (issue #80).
+  pas être présenté comme un plan offensif (issue #80). Étendu par l'issue
+  #94 : motif attendu avec alternatives (`défensif|pare la menace|sécurité
+  du roi`, le coach ne dit pas toujours « défensif » littéralement) et
+  motif interdit par expression régulière limité au voisinage de « Qxh4
+  gxh4 » pour l'étiquette « équilibré » (la dame noire perdue contre un
+  pion, 8 points, qualifiée à tort d'« échange équilibré » — voir
+  `game_facts._resultat_echange_case`).
 
 Deux cas supplémentaires, tirés de `parties_test_coach.pgn` (parties sans
 erreur connue, pour avoir aussi des cas de référence « tout va bien »),

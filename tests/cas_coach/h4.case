@@ -1,7 +1,7 @@
 # Cas de non-régression — voir tests/cas_coach/README.md pour le format.
 id: h4_menace_gxh3_defensif
-description: h4 pare une menace adverse réelle sur h3 (...gxh3+ et ...Qxh3+, dame noire en h5) — a déjà été présenté à tort comme un plan offensif (« expansion à l'aile roi ») au lieu d'un coup défensif (issue #80)
-source: mes_erreurs — position réellement rejouée en exercice ChessCoach (voir le rapport de clôture de l'issue #80)
+description: h4 pare une menace adverse réelle sur h3 (...gxh3+ et ...Qxh3+, dame noire en h5) — a déjà été présenté à tort comme un plan offensif (« expansion à l'aile roi ») au lieu d'un coup défensif (issue #80). Étendu par l'issue #94 : la suite Qxh4 gxh4 (si la dame noire prend le pion h4) ne doit JAMAIS être qualifiée d'« échange équilibré » — c'est une dame perdue contre un pion, gain net de 8 points pour les Blancs.
+source: mes_erreurs — position réellement rejouée en exercice ChessCoach (voir le rapport de clôture de l'issue #80, puis issue #94)
 fen: 1r1r2k1/4Qpbp/2Bp1n2/3Pp2q/2P1P1p1/2N3PP/PP3PK1/R1B2R2 w - - 0 23
 camp_alain: blancs
 coup_propose: h4
@@ -9,11 +9,13 @@ meilleur_coup: h4
 
 faits_attendus:
   menace_significative_contient: h3
+  texte_contient: gain net de 8 point(s) pour Blancs (Alain)
 
 motifs_interdits:
   expansion
+  regex: qxh4[\s,]*gxh4[^.\n]{0,80}[ée]quilibr|[ée]quilibr[^.\n]{0,80}qxh4[\s,]*gxh4
 
 motifs_attendus:
-  défensif
+  défensif|pare la menace|sécurité du roi
 
 pastille_attendue: vert

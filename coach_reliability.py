@@ -504,18 +504,49 @@ def _construire_candidats(fen_reference: str, fen_reference2: str = "",
     return candidats
 
 
+def _legal_apres_demi_coup_cache(coup: str, board: "chess.Board") -> bool:
+    """Essaie `coup` (un seul coup SAN) depuis `board`, après chacun des
+    demi-coups légaux de `board`, un seul à la fois (issue #94, point 4) —
+    jamais `board` lui-même modifié. Sert de filet de sécurité pour un coup
+    cité ISOLÉMENT (sans suite rattachée) qui décrit en réalité une reprise :
+    constat réel ayant motivé cet ajout, "si la dame prend en h4, gxh4
+    reprend" cite "gxh4" seul, sans jamais écrire "Qxh4" — ce coup n'est
+    légal sur aucune position candidate SANS la prise de dame intermédiaire,
+    mais le devient dès qu'on y insère N'IMPORTE QUEL demi-coup caché (ici,
+    la prise de dame réelle fait partie des coups légaux essayés). Retourne
+    False dès que `board` n'a aucun coup légal (position terminale)."""
+    for coup_cache in board.legal_moves:
+        board_intermediaire = board.copy()
+        board_intermediaire.push(coup_cache)
+        if _tenter_suite([coup], board_intermediaire) == "ok":
+            return True
+    return False
+
+
 def detecter_suites_illegales(texte: str, candidats: list) -> list:
     """Détecte une suite de coups cités à la suite les uns des autres
     (issue #90, point 1) qu'AUCUNE des positions candidates ne permet de
-    jouer jusqu'au bout. Tolérant par construction : une suite jouable
-    depuis au moins une position candidate n'est jamais signalée — une ligne
-    hypothétique citée en prose peut tout à fait partir d'un point de départ
-    différent de ceux fournis (cf. limites en en-tête de module). Prudent
-    (point 2) : une suite dont l'échec ne s'explique, sur CHAQUE position
-    candidate essayée, que par une ambiguïté ou une notation invalide n'est
-    jamais signalée non plus, de même qu'une suite citée entre parenthèses
-    ou introduite par "si" (jamais vérifiée du tout) — mieux vaut un faux
-    négatif qu'une pastille rouge et une relance pour rien.
+    jouer jusqu'au bout, même en autorisant pour un coup ISOLÉ (une seule
+    suite d'un seul coup) un demi-coup intermédiaire caché quelconque avant
+    de l'essayer (issue #94, point 4 — cf. _legal_apres_demi_coup_cache).
+    Tolérant par construction : une suite jouable depuis au moins une
+    position candidate n'est jamais signalée — une ligne hypothétique citée
+    en prose peut tout à fait partir d'un point de départ différent de ceux
+    fournis (cf. limites en en-tête de module). Prudent (point 2) : une
+    suite dont l'échec ne s'explique, sur CHAQUE position candidate essayée,
+    que par une ambiguïté ou une notation invalide n'est jamais signalée non
+    plus, de même qu'une suite citée entre parenthèses ou introduite par
+    "si" (jamais vérifiée du tout) — mieux vaut un faux négatif qu'une
+    pastille rouge et une relance pour rien.
+
+    Constat ayant motivé le demi-coup caché (issue #94) : "si la dame prend
+    en h4, gxh4 reprend" cite "gxh4" seul, en décrivant par des mots la prise
+    précédente plutôt que de l'écrire ("Qxh4") — ce coup est pourtant bel et
+    bien légal, une fois cette prise jouée. Sans ce filet, un coup isolé mais
+    plausible (rattaché par le texte à un coup non cité) déclenchait à tort
+    une alerte rouge et une relance automatique inutile. Un coup réellement
+    illégal (pièce absente, prise géométriquement impossible...) continue
+    d'être signalé : aucun demi-coup cache ne le rend légal nulle part.
 
     Retourne une liste de dicts {"type": "coup_illegal", "detail": str,
     "coups_cites": list, "positions_essayees": list} — "positions_essayees"
@@ -541,6 +572,11 @@ def detecter_suites_illegales(texte: str, candidats: list) -> list:
                 break
             if statut in ("ambigu", "invalide"):
                 doute = True
+        if not reussie and not doute and len(suite["coups"]) == 1:
+            reussie = any(
+                _legal_apres_demi_coup_cache(suite["coups"][0], board)
+                for _label, board in candidats
+            )
         if reussie or doute:
             continue
         labels_essayes = [label for label, _ in candidats]
@@ -548,7 +584,7 @@ def detecter_suites_illegales(texte: str, candidats: list) -> list:
             detail = (
                 f"coup cité \"{suite['coups'][0]}\" illégal sur toutes les "
                 f"positions essayées ({len(labels_essayes)}), trait inversé "
-                "compris"
+                "et un demi-coup intermédiaire caché compris"
             )
         else:
             detail = (
@@ -660,12 +696,25 @@ def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
     matériel réel de cette suite, rejouée sur l'échiquier depuis l'une des
     positions candidates (même construction que detecter_suites_illegales —
     cette fonction ne duplique ni ne recalcule la légalité : une suite
-    illégale partout, ambiguë ou douteuse (parenthèse/\"si\") est simplement
-    ignorée ici, c'est le rôle de detecter_suites_illegales de la signaler).
-    Un qualificatif précédé d'une négation à proximité immédiate (\"pas\",
-    \"jamais\"...) n'est jamais signalé non plus (prudence : \"ce n'est PAS
-    un échange équilibré\" affirme l'inverse, une simple inversion de sens
-    par regex serait trop incertaine, cf. _qualificatif_nie).
+    illégale partout ou ambiguë est simplement ignorée ici, c'est le rôle de
+    detecter_suites_illegales de la signaler). Un qualificatif précédé d'une
+    négation à proximité immédiate (\"pas\", \"jamais\"...) n'est jamais
+    signalé non plus (prudence : \"ce n'est PAS un échange équilibré\"
+    affirme l'inverse, une simple inversion de sens par regex serait trop
+    incertaine, cf. _qualificatif_nie).
+
+    Différence volontaire sur le filtre \"douteuse\" (issue #94, point 3,
+    même raisonnement que detecter_echange_type_incoherent ci-dessous) : une
+    suite citée ENTRE PARENTHÈSES par simple concision (style courant du
+    coach, ex. \"(Qxh4 gxh4) : échange équilibré\") n'est PAS ignorée ici —
+    seule suite[\"si_hypothetique\"] l'est (cf. _extraire_suites). Constat
+    ayant motivé ce changement : la version originale de ce contrôle
+    ignorait TOUTE suite entre parenthèses (champ \"douteuse\"), ce qui a
+    laissé passer sans alerte \"si la dame prend en h4, gxh3 reprend (Qxh4
+    gxh4) : un échange équilibré\" sur une suite qui perd en réalité une
+    dame contre un pion (8 points). Un filet de sécurité reste la tentative
+    de rejeu elle-même (board_avant reste None, donc ignoré, si la suite ne
+    se joue depuis aucune position candidate).
 
     Chaque alerte porte un champ \"gravite\" (\"orange\"/\"rouge\", selon que
     l'écart matériel réel dépasse SEUIL_ECHANGE_GRAVE_PTS) — cf.
@@ -678,7 +727,7 @@ def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
         return []
     alertes = []
     for suite in _extraire_suites(texte):
-        if suite["douteuse"] or len(suite["coups"]) < 2:
+        if suite["si_hypothetique"] or len(suite["coups"]) < 2:
             continue
         fenetre = _fenetre_qualificatif_echange(texte, suite)
 

@@ -23,7 +23,10 @@ Pour chaque entrée affichée : horodatage, mode d'origine et modèle, position
 (FEN), coup (notation + numéro de coup si disponible), contexte restant
 (sans les champs très volumineux "pgn"/"faits_calcules" — liste complète des
 coups de la partie / bloc de faits calculés), dernière question posée (le
-dernier message "user" envoyé) et réponse (ou erreur) du coach.
+dernier message "user" envoyé), la PREMIÈRE réponse du coach et les alertes
+qui ont déclenché une relance automatique le cas échéant (issue #94, point
+5 — absent si aucune relance n'a eu lieu pour cette entrée), et réponse
+finale (ou erreur) du coach.
 
 --log-dir permet de pointer vers un dossier de test au lieu du journal réel
 (utilisé par les tests de cette issue — jamais nécessaire en usage normal).
@@ -124,6 +127,12 @@ def _afficher(entree: dict) -> None:
     question = _derniere_question(entree.get("messages"))
     if question:
         print(f"Dernière question : {question}")
+    premiere_reponse = entree.get("premiere_reponse") or {}
+    if premiere_reponse.get("texte") is not None:
+        alertes = premiere_reponse.get("alertes") or []
+        details = "; ".join(a.get("detail", "?") for a in alertes) or "?"
+        print(f"Première réponse (avant relance automatique, alerte(s) : {details}) :")
+        print(f"  {premiere_reponse['texte']}")
     if entree.get("erreur"):
         print(f"Erreur : {entree['erreur']}")
     elif entree.get("reponse") is not None:

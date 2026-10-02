@@ -238,6 +238,19 @@ SEUIL_MENACE_SIGNIFICATIVE_CP = 100
 # du coup — réglable en ce seul endroit (cf. diff_idees_evaluation).
 SEUIL_IDEE_PION = 0.3
 
+# Seuil (en points classiques) en deçà duquel le solde net d'une suite de
+# capture/reprise immédiate (_resultat_echange_case) est qualifié
+# "équilibré" plutôt que "gain net"/"perte nette" explicite — réglable en ce
+# seul endroit (issue #94, point 1). Constat ayant motivé cette issue : le
+# coach a qualifié "échange équilibré" un cas où les Noirs perdaient leur
+# dame contre un pion (solde net de 8 points), parce que la description
+# mécanique transmise disait elle-même "échange favorable ou équilibré" —
+# une étiquette trop floue pour empêcher le coach de retenir la lecture la
+# plus optimiste. Les valeurs de pièces (_VALEURS ci-dessus) étant toutes
+# entières, un solde "proche de zéro" ne peut en pratique être qu'exactement
+# nul pour une reprise immédiate unique — ce seuil reste à 0 par défaut.
+SEUIL_ECHANGE_EQUILIBRE_PTS = 0
+
 
 def _couleur_accordee(piece_type: int, est_blanc: bool) -> str:
     if est_blanc:
@@ -284,9 +297,18 @@ def _resultat_echange_case(board_apres: "chess.Board", case: int, camp_alain: st
     attaquée par l'adversaire, décrit le résultat si cet adversaire la
     capture (attaquant le moins cher d'abord — hypothèse d'échange standard
     —, puis reprise mécanique éventuelle comme _solde_net_apres_capture) —
-    issue #80, point 2, exemple attendu : "Qxh4 gxh4 perdrait la dame".
-    Chaîne vide si la pièce n'est pas attaquée, ou si la capture
-    géométriquement possible s'avère en fait illégale (clouage...)."""
+    issue #80, point 2. Chaîne vide si la pièce n'est pas attaquée, ou si la
+    capture géométriquement possible s'avère en fait illégale (clouage...).
+
+    Réécrit par l'issue #94, point 1 : l'ancienne étiquette unique "échange
+    favorable ou équilibré pour <camp>" couvrait aussi bien un vrai
+    équilibre matériel qu'une dame gagnée contre un pion — trop floue pour
+    empêcher le coach de retenir "équilibré" dans ce dernier cas (constat
+    réel, cas h4). Le résultat est désormais toujours chiffré : "échange
+    équilibré" seulement si le solde net est dans SEUIL_ECHANGE_EQUILIBRE_PTS
+    de zéro, sinon "gain net"/"perte nette" de ce solde pour le camp qui
+    possédait la pièce initialement attaquée (camp_piece), accompagné d'une
+    phrase courte disant ce qui est pris et donné."""
     piece = board_apres.piece_at(case)
     if piece is None:
         return ""
@@ -299,6 +321,8 @@ def _resultat_echange_case(board_apres: "chess.Board", case: int, camp_alain: st
     coup_capture = chess.Move(attaquants[0], case)
     if coup_capture not in board_apres.legal_moves:
         return ""
+    piece_attaquante = board_apres.piece_at(attaquants[0])
+    nom_piece_attaquante = _nom_piece_capturee(piece_attaquante.piece_type)
     board_echange = board_apres.copy()
     try:
         san_capture = board_echange.san(coup_capture)
@@ -309,16 +333,29 @@ def _resultat_echange_case(board_apres: "chess.Board", case: int, camp_alain: st
     solde_net = _solde_net_apres_capture(board_echange, case, variation)
     recapture_move = _premier_coup_vers(board_echange, case)
     nom_piece_perdue = _nom_piece_capturee(piece.piece_type)
+    camp_piece = camp_label(piece.color, camp_alain)
     if recapture_move is None or solde_net is None:
-        return f" : {san_capture} perdrait {nom_piece_perdue}, aucune reprise possible"
+        return (
+            f" : {san_capture} perdrait {nom_piece_perdue} ({variation} point(s)), "
+            f"aucune reprise possible : perte nette de {variation} point(s) pour {camp_piece}"
+        )
     try:
         san_recapture = board_echange.san(recapture_move)
     except Exception:
         san_recapture = recapture_move.uci()
-    if solde_net < 0:
-        return f" : {san_capture} {san_recapture} perdrait {nom_piece_perdue}"
-    label = camp_label(piece.color, camp_alain)
-    return f" : {san_capture} {san_recapture}, échange favorable ou équilibré pour {label}"
+    if solde_net > SEUIL_ECHANGE_EQUILIBRE_PTS:
+        bilan = (
+            f"{camp_label(not piece.color, camp_alain)} prennent {nom_piece_perdue} puis perdent "
+            f"{nom_piece_attaquante} en reprise : gain net de {solde_net} point(s) pour {camp_piece}"
+        )
+    elif solde_net < -SEUIL_ECHANGE_EQUILIBRE_PTS:
+        bilan = (
+            f"{camp_piece} perdent {nom_piece_perdue} contre {nom_piece_attaquante} : "
+            f"perte nette de {-solde_net} point(s) pour {camp_piece}"
+        )
+    else:
+        bilan = "échange équilibré"
+    return f" : {san_capture} {san_recapture}, {bilan}"
 
 
 def _statut_attaque_case(board_apres: "chess.Board", case: int, camp_piece,

@@ -40,6 +40,7 @@ ajouter un nouveau cas.
 
 import argparse
 import json
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -356,6 +357,83 @@ def _texte_contient(sous_chaine: str, texte: str) -> bool:
     return _normaliser(sous_chaine) in _normaliser(texte)
 
 
+# ── Motifs attendus/interdits : alternatives, regex, négation (issue #94,
+# point 6a/6b) ───────────────────────────────────────────────────────────
+# Un motif de motifs_attendus/motifs_interdits (fichier .case) peut désormais
+# être :
+#   - une simple sous-chaîne (comportement historique, insensible à la casse
+#     et aux accents, cf. _texte_contient) ;
+#   - plusieurs alternatives séparées par "|" (ex. "défensif|pare la
+#     menace|sécurité du roi") : présent si AU MOINS UNE des alternatives
+#     est trouvée — motivé par le cas h4, où deux essais sur trois du coach
+#     paraphrasent "défensif" sans jamais écrire ce mot ;
+#   - un motif préfixé par "regex:" : expression régulière Python complète,
+#     recherchée sur le texte BRUT (pas normalisé — l'auteur du motif gère
+#     lui-même casse/accents/négation via la syntaxe regex), pour les cas où
+#     la seule proximité textuelle ne suffit pas (ex. "équilibré" accolé à
+#     une suite de coups précise, issue #94, point 6d).
+_PREFIXE_REGEX = "regex:"
+
+
+def _motif_regex(motif: str):
+    """Compile `motif` en expression régulière s'il commence par "regex:",
+    None sinon (motif ordinaire, cf. _motif_present ci-dessous)."""
+    if motif.startswith(_PREFIXE_REGEX):
+        return re.compile(motif[len(_PREFIXE_REGEX):].strip(), re.IGNORECASE | re.DOTALL)
+    return None
+
+
+def _motif_present(motif: str, texte: str) -> bool:
+    """Présence de `motif` dans `texte` (issue #94, point 6a) — un motif
+    "regex:..." est recherché tel quel sur le texte brut ; sinon, chaque
+    alternative séparée par "|" est comparée en sous-chaîne (_texte_contient),
+    présent si au moins une correspond."""
+    pattern = _motif_regex(motif)
+    if pattern is not None:
+        return bool(pattern.search(texte))
+    return any(_texte_contient(alt.strip(), texte) for alt in motif.split("|") if alt.strip())
+
+
+# Négations reconnues à proximité immédiate d'un motif INTERDIT (issue #94,
+# point 6b) — même famille de mots que coach_reliability._NEGATION_RE,
+# dupliquée ici plutôt qu'importée : ce script vérifie la réponse du COACH
+# dans son ensemble, pas une suite de coups précise, portée volontairement
+# différente (une simple fenêtre de caractères, pas de limite à la phrase).
+_NEGATION_MOTIF_RE = re.compile(r"\b(pas|jamais|aucun\w*|ni|non)\b", re.IGNORECASE)
+_FENETRE_NEGATION_MOTIF = 20
+
+
+def _motif_interdit_present(motif: str, texte: str) -> bool:
+    """Comme _motif_present, mais tolérant à une négation proche pour un
+    motif ORDINAIRE (pas "regex:", dont l'auteur garde l'entière
+    responsabilité de la négation via la syntaxe regex elle-même) — issue
+    #94, point 6b. Constat ayant motivé cet ajout : une réponse correcte du
+    coach sur le cas h4 ("un coup défensif, pas une expansion offensive")
+    contient littéralement "expansion", provoquant un échec à tort du motif
+    interdit malgré la négation explicite juste avant. Chaque occurrence
+    d'une alternative est ignorée si une négation apparaît dans les
+    _FENETRE_NEGATION_MOTIF caractères qui la précèdent ; motif présent dès
+    qu'UNE occurrence échappe à cette tolérance."""
+    pattern = _motif_regex(motif)
+    if pattern is not None:
+        return bool(pattern.search(texte))
+    texte_norm = _normaliser(texte)
+    for alt in motif.split("|"):
+        alt_norm = _normaliser(alt.strip())
+        if not alt_norm:
+            continue
+        debut = 0
+        while True:
+            pos = texte_norm.find(alt_norm, debut)
+            if pos == -1:
+                break
+            fenetre = texte_norm[max(0, pos - _FENETRE_NEGATION_MOTIF):pos]
+            if not _NEGATION_MOTIF_RE.search(fenetre):
+                return True
+            debut = pos + 1
+    return False
+
+
 def _camp_chess(camp: str):
     return chess.WHITE if camp == "blancs" else chess.BLACK
 
@@ -459,15 +537,30 @@ def appeler_coach(messages: list, context: dict, modele: str) -> tuple:
 def verifier_reponse(cas: dict, response: str, fiabilite: dict) -> list:
     resultats = []
     for motif in cas["motifs_interdits"]:
-        present = _texte_contient(motif, response)
+        present = _motif_interdit_present(motif, response)
         resultats.append((not present, f"motif_interdit absent: {motif!r}" + ("" if not present else " — PRÉSENT")))
     for motif in cas["motifs_attendus"]:
-        present = _texte_contient(motif, response)
+        present = _motif_present(motif, response)
         resultats.append((present, f"motif_attendu présent: {motif!r}" + ("" if present else " — ABSENT")))
     attendue = cas.get("pastille_attendue", "").strip()
     if attendue:
-        obtenue = (fiabilite or {}).get("couleur", "?")
-        resultats.append((obtenue == attendue, f"pastille: attendue {attendue!r}, obtenue {obtenue!r}"))
+        fiabilite = fiabilite or {}
+        obtenue = fiabilite.get("couleur", "?")
+        if obtenue == attendue:
+            resultats.append((True, f"pastille: {obtenue!r} (conforme)"))
+        else:
+            # Couleur obtenue, sa raison et les contrôles déclenchés affichés
+            # explicitement (issue #94, point 6c) — avant cet ajout, seule la
+            # couleur apparaissait, obligeant à relire extrait/réponse pour
+            # comprendre pourquoi la pastille différait de l'attendu.
+            raison = fiabilite.get("raison", "?")
+            controles = ", ".join(sorted({
+                a.get("type", "?") for a in (fiabilite.get("alertes") or [])
+            })) or "(aucun)"
+            resultats.append((False, (
+                f"pastille: attendue {attendue!r}, obtenue {obtenue!r} — "
+                f"raison : {raison} — contrôles déclenchés : {controles}"
+            )))
     return resultats
 
 
@@ -659,15 +752,25 @@ def main() -> int:
         faits_ok = not r["echecs_faits"]
         if not faits_ok:
             echec_global = True
+        detail_parts = list(r["echecs_faits"])
         if args.api and faits_ok:
             n_ok = sum(1 for t in r["tentatives"] if t["ok"])
             n_total = len(r["tentatives"])
             if n_ok < n_total:
                 echec_global = True
+                # Motifs d'échec API distincts affichés directement dans le
+                # tableau récapitulatif (issue #94, point 6c), pas seulement
+                # dans le détail par tentative imprimé après le tableau —
+                # couleur obtenue, raison et contrôles déclenchés compris
+                # pour un échec de pastille (cf. verifier_reponse).
+                motifs_api = sorted({
+                    motif for t in r["tentatives"] if not t["ok"] for motif in t["motifs"]
+                })
+                detail_parts.extend(motifs_api)
             api_txt = f"{n_ok}/{n_total}"
         else:
             api_txt = "(non testé)" if not args.api else "—"
-        detail = "" if faits_ok else "; ".join(r["echecs_faits"])
+        detail = "; ".join(detail_parts)
         print(f"{r['id']:<28} {'OK' if faits_ok else 'KO':<8} {api_txt:<16} {detail}")
     print("=" * 78)
 

@@ -376,6 +376,16 @@ _MATERIEL_ADDENDUM = (
     "d'une suite citée montre une perte nette pour un camp, ne la qualifie "
     "jamais de \"rien de décisif\", \"pas grand-chose\" ou équivalent — "
     "nomme explicitement ce qui est perdu et pour quel camp."
+    "\n\n"
+    "Reprendre le gain net déjà chiffré, jamais le requalifier (issue #94, "
+    "point 2) : quand une description mécanique donne déjà le résultat "
+    "d'une suite de captures sous la forme \"gain net de N points pour "
+    "<camp>\", \"perte nette de N points pour <camp>\" ou \"échange "
+    "équilibré\", reprends ce chiffre et ce camp tels quels — ne les "
+    "requalifie jamais toi-même en \"favorable\", \"équilibré\" ou "
+    "\"défavorable\" sans ce chiffre (constat réel ayant motivé cette "
+    "consigne, cas h4 : une dame noire perdue contre un pion, soit 8 points, "
+    "dite à tort \"échange équilibré\")."
 )
 
 # Complément conditionné à la présence du bloc "Pièces clouées..." dans le
@@ -1701,7 +1711,8 @@ def _purge_vieux_logs_coach(log_path: Path, fichier_actif: Path) -> None:
 
 def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str,
                      model: str = None, reponse: str = None, erreur: str = None, usage: dict = None,
-                     fiabilite: dict = None, avertissement: str = None) -> str | None:
+                     fiabilite: dict = None, avertissement: str = None,
+                     premiere_reponse: dict = None) -> str | None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -1753,6 +1764,22 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     à une réponse signalée (cf. app.py on_signalement_envoyer), sans avoir à
     rapprocher par FEN/coup (ambigu, un même coup pouvant se répéter dans
     une partie, cf. get_move_explanations ci-dessus).
+
+    Étendu par l'issue #94, point 5 : `premiere_reponse` (dict {"texte":
+    str, "alertes": list} ou None) — quand une relance automatique de
+    fiabilité a eu lieu (cf. get_coach_response), conserve la toute PREMIÈRE
+    réponse du coach (celle qui a déclenché la relance) et les alertes qui
+    l'ont déclenchée, dans un champ SÉPARÉ de `reponse` (qui reste la
+    réponse finale, corrigée ou non). Avant cet ajout, la première réponse
+    était perdue dès que la relance réussissait (`reponse` était
+    simplement réécrite) — impossible de relire après coup ce que le coach
+    avait réellement dit avant correction, pour juger si l'alerte qui a
+    déclenché la relance était un faux positif. None dans le cas normal
+    (aucune relance) : ce champ reste absent/vide pour la quasi-totalité des
+    entrées, exactement comme `avertissement`. Un nouveau champ ajouté en
+    fin de dict : ne modifie aucune clé existante, donc aucun impact sur
+    lire_journal_coach.py (ni sur la fonction `coachlog` d'Alain) qui ne lit
+    déjà que des clés explicitement nommées.
     """
     if not log_path:
         return None
@@ -1774,6 +1801,7 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
             "usage": usage,
             "fiabilite": fiabilite,
             "avertissement": avertissement,
+            "premiere_reponse": premiere_reponse,
         }
         with open(fichier_actif, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -2265,12 +2293,20 @@ def get_coach_response(messages, context, coach_memory, config):
         pv_coup_propose=pv_coup_propose_ctx, pv_meilleur_coup=pv_meilleur_coup_ctx,
     )
     avertissement = None
+    premiere_reponse = None
     if fiabilite["alertes"]:
         # Avertissement journalisé dans tous les cas (issue #87, point 4),
         # que la relance ci-dessous réussisse ou non — rien de visible pour
         # Alain dans le cas normal (aucune incohérence détectée), c'est le
         # cas ici qui ne l'est pas.
         avertissement = fiabilite["raison"]
+        # Première réponse conservée séparément (issue #94, point 5), AVANT
+        # que `response`/`fiabilite` ne soient éventuellement réécrits par
+        # la relance ci-dessous — sinon, en cas de correction réussie, cette
+        # première réponse (celle qui a déclenché la relance) serait
+        # définitivement perdue, empêchant de relire après coup si l'alerte
+        # qui l'a déclenchée était un faux positif.
+        premiere_reponse = {"texte": response, "alertes": fiabilite["alertes"]}
         rappel = (
             "Ta réponse précédente contient une incohérence détectée "
             f"automatiquement : {fiabilite['raison']}. Corrige UNIQUEMENT ce "
@@ -2333,5 +2369,6 @@ def get_coach_response(messages, context, coach_memory, config):
     log_id = _log_coach_call(
         log_path, prompt_sys, context, clean_messages, mode_origine, model=model,
         reponse=response, usage=usage_appel, fiabilite=fiabilite, avertissement=avertissement,
+        premiere_reponse=premiere_reponse,
     )
     return response, None, fiabilite, log_id
