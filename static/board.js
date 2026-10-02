@@ -1089,10 +1089,23 @@ function _coachRenderBubble(role, text, allowPageScroll, extraClass, fiabilite, 
   // son message envoyé). Réponse du coach : afficher le DÉBUT de la réponse
   // en haut de la zone plutôt que sa fin (issue #53).
   _coachScrollReveal(history, bubble, !isUser, allowPageScroll);
-  // Plateau réduit mobile sur réponse du coach (issue #81 point 1) — pas pour
-  // les annonces automatiques "je joue ..." (extraClass dédié, moins
-  // dignes de prendre toute la place de lecture qu'une vraie réponse).
-  if (!isUser && extraClass !== "coach-bubble-auto-move" && typeof _mobileGameOnCoachMessage === "function") {
+  // Plateau réduit mobile sur réponse du coach (issue #81 point 1, règle
+  // resserrée issue #95 point 5) — seulement pour une vraie réponse à une
+  // demande d'Alain (question libre, "Demander l'avis du coach", commentaire
+  // après un coup, analyse...), jamais pour :
+  //  - les annonces automatiques "je joue ..." (coach-bubble-auto-move,
+  //    inchangé, issue #81) ;
+  //  - un message d'annonce/instruction envoyé par l'application elle-même
+  //    au démarrage d'une ouverture/finale (coach-bubble-announce, voir
+  //    opening.js/finales.js : "Ouverture X chargée...", "Finale X
+  //    chargée...") — avant ce correctif, un tel message suffisait à lui
+  //    seul à déclencher le plateau réduit via le débordement de l'onglet
+  //    Coach, alors qu'Alain n'avait rien fait défiler (rapport de tests
+  //    GSM). Le débordement d'un onglet reste par ailleurs toujours couvert
+  //    indépendamment (ResizeObserver/_autoCompactForOverflow, mobile_game.js)
+  //    pour tout contenu qui déborde, quelle qu'en soit la cause.
+  if (!isUser && extraClass !== "coach-bubble-auto-move" && extraClass !== "coach-bubble-announce"
+      && typeof _mobileGameOnCoachMessage === "function") {
     _mobileGameOnCoachMessage();
   }
 }
@@ -1336,6 +1349,13 @@ function askCoachOnDemand(fen, themeFinale, campAlain, extraContext) {
 function setCoachOnDemandButtonsDisabled(disabled) {
   const btn = document.getElementById("shared-ask-coach-btn");
   if (btn) btn.disabled = disabled;
+  // "Commenter la partie" (issue #95, point 3) : même aller-retour
+  // (coach_comment_on_demand) que "Demander l'avis du coach" ci-dessus —
+  // désactivé pendant l'attente, sur les deux présentations (desktop/mobile).
+  const desktopCommentBtn = document.getElementById("game-over-banner-comment-btn");
+  if (desktopCommentBtn) desktopCommentBtn.disabled = disabled;
+  const mobileCommentBtn = document.getElementById("mobile-game-over-comment-btn");
+  if (mobileCommentBtn) mobileCommentBtn.disabled = disabled;
 }
 
 if (typeof socket !== "undefined") {
@@ -1405,8 +1425,13 @@ function resetBoardToNeutral() {
 // ajouté sous forme de bouton dans la bannière quand fourni par l'appelant
 // (pedagogic.js/free_play.js uniquement — pas opening.js/finales.js, hors
 // périmètre de l'issue #41).
+//
+// `onCommenter` (issue #95, point 3) : callback optionnel similaire, pour le
+// bouton "Commenter la partie" — fourni par pedagogic.js uniquement (demande
+// un commentaire global de la partie qui vient de se terminer, même effet
+// que "Demander l'avis du coach").
 
-function showGameOverBanner(gameOverInfo, campAlain, onAnalyser) {
+function showGameOverBanner(gameOverInfo, campAlain, onAnalyser, onCommenter) {
   const el = document.getElementById("game-over-banner");
   if (!el || !gameOverInfo) return;
   let categorie = "nulle";
@@ -1428,6 +1453,15 @@ function showGameOverBanner(gameOverInfo, campAlain, onAnalyser) {
     btn.onclick = onAnalyser;
     el.appendChild(btn);
   }
+  if (typeof onCommenter === "function") {
+    const btnCommenter = document.createElement("button");
+    btnCommenter.type = "button";
+    btnCommenter.id = "game-over-banner-comment-btn";
+    btnCommenter.className = "game-over-banner-analyse-btn";
+    btnCommenter.textContent = "Commenter la partie";
+    btnCommenter.onclick = onCommenter;
+    el.appendChild(btnCommenter);
+  }
   el.style.display = "block";
   // Classe sur <body> (issue #70 point 4) : permet au CSS du mode jeu mobile
   // de masquer la barre d'actions/le bandeau avant-partie pendant que ce
@@ -1435,7 +1469,7 @@ function showGameOverBanner(gameOverInfo, campAlain, onAnalyser) {
   // fragile sur le style inline ci-dessus.
   document.body.classList.add("game-over-active");
 
-  _showMobileGameOverBar(gameOverInfo.message, categorie, onAnalyser);
+  _showMobileGameOverBar(gameOverInfo.message, categorie, onAnalyser, onCommenter);
   // Plateau réduit mobile dès la fin de partie si l'onglet déjà ouvert
   // déborde (issue #86 point 1/2) — pas seulement au prochain défilement ou
   // changement d'onglet.
@@ -1450,7 +1484,10 @@ function showGameOverBanner(gameOverInfo, campAlain, onAnalyser) {
 // quelles). "Analyser cette partie" seulement si l'appelant fournit onAnalyser
 // (mêmes conditions que le grand bandeau, inchangé) ; "Nouvelle partie"
 // (mobileNewGameFromBanner, mobile_game.js) y est toujours proposé.
-function _showMobileGameOverBar(message, categorie, onAnalyser) {
+// "Commenter la partie" (issue #95, point 3) : même principe que "Analyser
+// cette partie" ci-dessus, affiché seulement si onCommenter est fourni
+// (pedagogic.js uniquement).
+function _showMobileGameOverBar(message, categorie, onAnalyser, onCommenter) {
   const bar = document.getElementById("mobile-game-over-bar");
   if (!bar) return;
   bar.className = "mobile-game-over-bar game-over-banner--" + categorie + " show";
@@ -1460,6 +1497,11 @@ function _showMobileGameOverBar(message, categorie, onAnalyser) {
   if (analyseBtn) {
     analyseBtn.style.display = (typeof onAnalyser === "function") ? "" : "none";
     analyseBtn.onclick = (typeof onAnalyser === "function") ? onAnalyser : null;
+  }
+  const commentBtn = document.getElementById("mobile-game-over-comment-btn");
+  if (commentBtn) {
+    commentBtn.style.display = (typeof onCommenter === "function") ? "" : "none";
+    commentBtn.onclick = (typeof onCommenter === "function") ? onCommenter : null;
   }
 }
 

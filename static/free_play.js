@@ -71,9 +71,19 @@ function startFreeGame() {
 // inchangé de startFreeGame().
 function startFreeGameFromFen(fen) {
   ensureModeSwitchClean("free");
-  // Nouvelle partie (issue #64) : l'historique du chat envoyé à l'API repart
-  // de zéro, séparé à l'écran des échanges de la partie précédente.
-  if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
+  // Nouvelle partie (issue #64, vidage complet depuis l'issue #95 point 7) :
+  // l'historique du chat envoyé à l'API repart de zéro ET l'affichage est
+  // intégralement vidé — comme un nouvel exercice (coachClear(), cf.
+  // exercise.js startExercise) plutôt qu'un simple trait séparateur
+  // (coachNewSegment) qui laissait l'ancien commentaire visible sans rien
+  // indiquer qu'il datait d'avant, sous un trait "Nouvelle partie" placé en
+  // dessous de lui (rapport de tests GSM d'Alain).
+  if (typeof coachClear === "function") coachClear();
+  // coachClear() (contrairement à coachNewSegment() utilisé auparavant ici)
+  // ne vide pas lui-même le tableau "Lignes du coach" du mode partie
+  // (gameCoachLinesReset, game_coach_lines.js) — appel explicite pour
+  // conserver ce même effet au démarrage d'une nouvelle partie.
+  if (typeof gameCoachLinesReset === "function") gameCoachLinesReset();
   // Issue #71 point 6 : le rapport d'analyse affiché (Bibliothèque/Revue)
   // n'a plus de rapport avec la partie qui démarre.
   if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();

@@ -25,6 +25,54 @@ let openingAbandonne  = false; // fin de partie spécifiquement par "Abandonner"
 let openingFenAvantCoup     = null;  // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 let openingInBookAvantCoup  = false; // valeur de openingInBook avant ce même coup
 
+// ── Liste déroulante des ouvertures (issue #95, point 4) ────────────────────
+// Remplace la saisie libre du nom d'ouverture — même principe que
+// finaleList/populateFinaleSelect (finales.js), peuplée depuis
+// opening_book.get_known_openings() (app.py on_opening_list).
+let openingList = []; // bibliothèque reçue du serveur (opening_list_response)
+
+function populateOpeningSelect() {
+  const selectEl = document.getElementById("opening-select");
+  if (!selectEl) return;
+  const previousValue = selectEl.value;
+  selectEl.innerHTML = '<option value="">— Choisir une ouverture —</option>';
+  openingList.forEach((nom) => {
+    const opt = document.createElement("option");
+    opt.value = nom;
+    opt.textContent = nom;
+    selectEl.appendChild(opt);
+  });
+  if (previousValue && openingList.includes(previousValue)) selectEl.value = previousValue;
+}
+
+// Sélectionne `nom` dans #opening-select, en ajoutant une option temporaire
+// si absente de openingList (ex. suggestion rapide "1.Nf3" hors des familles
+// nommées ci-dessous, cf. renderOpeningSuggestions) — plutôt que de l'ignorer
+// silencieusement.
+function _openingSelectSetValue(nom) {
+  const selectEl = document.getElementById("opening-select");
+  if (!selectEl || !nom) return;
+  let opt = Array.from(selectEl.options).find((o) => o.value === nom);
+  if (!opt) {
+    opt = document.createElement("option");
+    opt.value = nom;
+    opt.textContent = nom;
+    selectEl.appendChild(opt);
+  }
+  selectEl.value = nom;
+}
+
+if (typeof socket !== "undefined") {
+  socket.on("opening_list_response", (data) => {
+    openingList = (data && data.openings) || [];
+    populateOpeningSelect();
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof socket !== "undefined") socket.emit("opening_list", {});
+});
+
 // ── Boutons "Jouer les Blancs/Noirs" déplacés avant le plateau sur mobile
 // (issue #70 point 4, généralise placePedagogicStartButtonsForViewport de
 // pedagogic.js au mode ouverture — même choix de camp) ───────────────────
@@ -62,11 +110,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // ── Suggestions rapides d'ouvertures populaires (issue #27) ────────────────
 // Coups les plus pondérés du livre Polyglot gm2001.bin à la position de
-// départ (opening_book.get_starting_suggestions côté serveur), en plus du
-// champ texte libre déjà existant. Un clic préremplit ce même champ — le nom
-// reconnu (1.e4/1.d4/1.c4/1.Nf3) pour les quatre familles standards, sinon
-// juste le coup lui-même — puis Alain clique "Jouer les Blancs/Noirs" comme
-// pour un nom saisi à la main : aucun nouveau chemin de démarrage de partie.
+// départ (opening_book.get_starting_suggestions côté serveur), en plus de la
+// liste déroulante ci-dessus (issue #95, point 4 : remplace l'ancien champ
+// texte libre). Un clic sélectionne l'ouverture correspondante dans
+// #opening-select (_openingSelectSetValue, ajoute une option temporaire si
+// besoin) — le nom reconnu (1.e4/1.d4/1.c4/1.Nf3) pour les quatre familles
+// standards, sinon juste le coup lui-même — puis Alain clique "Jouer les
+// Blancs/Noirs" comme pour un choix fait directement dans la liste : aucun
+// nouveau chemin de démarrage de partie.
 function renderOpeningSuggestions(suggestions) {
   const listEl  = document.getElementById("opening-suggestions");
   const labelEl = document.getElementById("opening-suggestions-label");
@@ -83,10 +134,7 @@ function renderOpeningSuggestions(suggestions) {
     btn.className = "opening-suggestion-btn";
     const label = s.nom || `1.${s.san}`;
     btn.textContent = s.pct !== null && s.pct !== undefined ? `${label} (${s.pct}%)` : label;
-    btn.onclick = () => {
-      const nameEl = document.getElementById("opening-name-input");
-      if (nameEl) nameEl.value = s.nom || `1.${s.san}`;
-    };
+    btn.onclick = () => _openingSelectSetValue(s.nom || `1.${s.san}`);
     listEl.appendChild(btn);
   });
 }
@@ -162,11 +210,11 @@ function askOpeningCoach() {
 }
 
 function startOpeningGame(camp) {
-  const nameEl = document.getElementById("opening-name-input");
-  const openingName = nameEl ? nameEl.value.trim() : "";
+  const selectEl = document.getElementById("opening-select");
+  const openingName = selectEl ? selectEl.value.trim() : "";
   if (!openingName) {
     const statusEl = document.getElementById("opening-status");
-    if (statusEl) statusEl.textContent = "Indiquez le nom d'une ouverture.";
+    if (statusEl) statusEl.textContent = "Choisissez une ouverture dans la liste.";
     return;
   }
   ensureModeSwitchClean("opening");
@@ -306,7 +354,11 @@ if (typeof socket !== "undefined") {
     updateOpeningStatus();
 
     const moves = (data.moves_ouverture || []).join(" ");
-    _coachRenderBubble("assistant", `Ouverture "${data.opening_name}" : ${moves}. À vous de jouer.`, false, undefined, null, { mode_origine: "ouverture" });
+    // extraClass "coach-bubble-announce" (issue #95, point 5) : message
+    // d'annonce envoyé par l'application au démarrage, pas une réponse à une
+    // demande d'Alain — ne doit jamais à lui seul déclencher le plateau
+    // réduit mobile (cf. _coachRenderBubble, board.js).
+    _coachRenderBubble("assistant", `Ouverture "${data.opening_name}" : ${moves}. À vous de jouer.`, false, "coach-bubble-announce", null, { mode_origine: "ouverture" });
   });
 
   socket.on("opening_stockfish_move", (data) => {

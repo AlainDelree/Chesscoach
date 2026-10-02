@@ -82,6 +82,72 @@ def get_starting_suggestions(book_path, limit: int = 8) -> list[dict]:
     ]
 
 
+# Liste des ouvertures connues (issue #95, point 4) : remplace la saisie
+# libre du nom d'ouverture par une liste déroulante (même principe que le
+# sélecteur de finales, finales.py get_finales()) — contrairement aux
+# finales, cette liste n'est pas persistée dans un fichier JSON extensible
+# (aucun mécanisme "enregistrer cette ouverture" n'a été demandé) : c'est une
+# liste statique d'ouvertures classiques largement reconnues, à étendre
+# directement ici si besoin. Le nom choisi est transmis tel quel à
+# llm_coach.get_opening_moves (inchangé) — Claude reste seul responsable de
+# retrouver la séquence de coups caractéristique, cette liste ne fait que
+# fiabiliser la saisie du nom lui-même (plus de faute de frappe/ambiguïté).
+KNOWN_OPENINGS = sorted([
+    "Attaque Trompowsky",
+    "Défense alekhine",
+    "Défense Benoni",
+    "Défense Benoni moderne",
+    "Défense Caro-Kann",
+    "Défense est-indienne",
+    "Défense française",
+    "Défense Grünfeld",
+    "Défense hollandaise",
+    "Défense Nimzo-indienne",
+    "Défense nord-indienne",
+    "Défense ouest-indienne",
+    "Défense Philidor",
+    "Défense Pirc",
+    "Défense scandinave",
+    "Défense sicilienne",
+    "Défense sicilienne, variante Najdorf",
+    "Défense sicilienne, variante dragon",
+    "Défense slave",
+    "Gambit Benko",
+    "Gambit dame accepté",
+    "Gambit dame refusé",
+    "Gambit évans",
+    "Gambit letton",
+    "Gambit Ménage (Blackmar-Diemer)",
+    "Gambit roi",
+    "Ouverture anglaise",
+    "Ouverture Bird",
+    "Ouverture du Roi (1.e4)",
+    "Ouverture de la Dame (1.d4)",
+    "Ouverture Réti",
+    "Partie Alapine",
+    "Partie autrichienne",
+    "Partie Bogo-indienne",
+    "Partie catalane",
+    "Partie des quatre cavaliers",
+    "Partie écossaise",
+    "Partie espagnole (Ruy Lopez)",
+    "Partie italienne",
+    "Partie Petroff",
+    "Partie Ponziani",
+    "Partie russe",
+    "Partie Vienne",
+    "Système Colle",
+    "Système Londres",
+])
+
+
+def get_known_openings() -> list[str]:
+    """Retourne la liste des ouvertures connues du programme (issue #95,
+    point 4), pour peupler le menu déroulant du panneau "Travail d'ouverture"
+    — voir KNOWN_OPENINGS ci-dessus pour les limites de cette liste statique."""
+    return list(KNOWN_OPENINGS)
+
+
 def choose_weighted_move(book_path, board: chess.Board) -> chess.Move | None:
     """Tire un coup pondéré aléatoirement parmi les entrées du livre pour
     cette position (chess.polyglot.MemoryMappedReader.weighted_choice) —
