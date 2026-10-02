@@ -97,6 +97,11 @@ let exerciseMenaceAdverseTexte   = null;
 let exerciseIdeesCoupProposeTexte  = null;
 let exerciseIdeesCoupReelTexte     = null;
 let exerciseIdeesMeilleurCoupTexte = null;
+// Réponses adverses alternatives (issue #91) : même raison que les champs
+// ci-dessus — dit si la réponse adverse de la ligne principale est forcée
+// (seule réponse qui évite une perte nette ou un mat) ou non.
+let exerciseReponseAdverseCoupProposeTexte  = null;
+let exerciseReponseAdverseMeilleurCoupTexte = null;
 
 // Phase (catégorie) du dernier exercice tiré, quel que soit le sélecteur de
 // phase courant (issue #76, "Exercice suivant") — distincte de
@@ -774,6 +779,8 @@ function exerciseChatContextExtra() {
     idees_coup_propose_texte: exerciseIdeesCoupProposeTexte || "",
     idees_coup_reel_texte: exerciseIdeesCoupReelTexte || "",
     idees_meilleur_coup_texte: exerciseIdeesMeilleurCoupTexte || "",
+    reponse_adverse_coup_propose_texte: exerciseReponseAdverseCoupProposeTexte || "",
+    reponse_adverse_meilleur_coup_texte: exerciseReponseAdverseMeilleurCoupTexte || "",
     // Source "Problèmes Lichess" (issue #78) : absents (undefined, ignorés
     // par llm_coach._build_context_text) pour la source "mes erreurs".
     source_lichess: exerciseCurrentSource === "lichess",
@@ -1116,6 +1123,10 @@ if (typeof socket !== "undefined") {
     exerciseIdeesCoupProposeTexte  = (data && data.idees_coup_propose_texte) || null;
     exerciseIdeesCoupReelTexte     = (data && data.idees_coup_reel_texte) || null;
     exerciseIdeesMeilleurCoupTexte = (data && data.idees_meilleur_coup_texte) || null;
+    // Réponses adverses alternatives (issue #91) — même raison que les
+    // champs ci-dessus.
+    exerciseReponseAdverseCoupProposeTexte  = (data && data.reponse_adverse_coup_propose_texte) || null;
+    exerciseReponseAdverseMeilleurCoupTexte = (data && data.reponse_adverse_meilleur_coup_texte) || null;
     // Niveau de la catégorie mis à jour après ce résultat (issue #78) — la
     // ligne d'état "Problème <note> · ton niveau en <catégorie> <niveau>"
     // reflète donc le niveau APRÈS ce résultat, pas celui du tirage.

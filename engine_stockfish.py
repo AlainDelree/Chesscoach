@@ -1224,13 +1224,22 @@ class EngineManager:
         )
 
     def get_multipv(self, board: chess.Board, n: int = 3,
-                    depth: int = 12) -> list[dict]:
+                    depth: int = 12, with_pv: bool = False,
+                    pv_max_plies: int = 6) -> list[dict]:
         """
         Retourne les n meilleurs coups avec leur évaluation.
         Utile pour l'écran d'analyse.
 
+        with_pv / pv_max_plies (issue #91, point 1) : si with_pv=True,
+        chaque élément reçoit en plus "pv" (liste de coups UCI, jusqu'à
+        pv_max_plies demi-coups) — la ligne complète réellement calculée
+        pour CE coup précis, pas seulement son premier demi-coup. Désactivé
+        par défaut pour ne pas changer le contrat des appelants existants
+        (get_threats, qui ne lit jamais ce champ).
+
         Retourne une liste de dict :
-          [{"move": str (UCI), "cp": int, "mate": int | None}, ...]
+          [{"move": str (UCI), "cp": int, "mate": int | None}, ...] (plus
+          "pv": list[str] si with_pv=True).
         Liste vide en cas de panne moteur persistante (issue #79)."""
         def _action(engine):
             infos = engine.analyse(board, chess.engine.Limit(depth=depth), multipv=n, info=chess.engine.INFO_ALL)
@@ -1249,13 +1258,58 @@ class EngineManager:
                         mate = pov.mate()
                     else:
                         cp = pov.score()
-                result.append({"move": move_uci, "cp": cp, "mate": mate})
+                entry = {"move": move_uci, "cp": cp, "mate": mate}
+                if with_pv:
+                    entry["pv"] = [m.uci() for m in pv[:pv_max_plies]]
+                result.append(entry)
             return result
         return self._appel_protege(
             "get_multipv", self._lock_eval,
             self._ensure_engine_eval, self._set_engine_eval, self._creer_moteur_eval,
             _action, [],
         )
+
+    def get_reponses_adverses(self, board: chess.Board, depth: int = DEPTH_EXERCICE_TEMPS_REEL,
+                               n: int = 4, pv_max_plies: int = 4) -> dict:
+        """Réponses adverses alternatives à une position (issue #91, point 1,
+        constat réel — cf. coach_reliability.py en-tête de module) : calcule
+        les `n` meilleures réponses du camp au trait sur `board` (typiquement
+        la position APRÈS le coup proposé ou le meilleur coup, pour connaître
+        le sort des réponses adverses AUTRES que celle de la ligne
+        principale) via get_multipv(with_pv=True), et la perte d'avantage de
+        chacune par rapport à la MEILLEURE réponse (pas par rapport à une
+        baseline théorique comme get_threats — ici "meilleure" est déjà
+        connue, la première entrée de multipv).
+
+        Ne décide PAS elle-même si une seule réponse est "forcée" (ce
+        jugement, avec son seuil réglable, revient à game_facts.
+        build_reponse_adverse_obligee_texte, même séparation des
+        responsabilités que get_threats/describe_menace_adverse) — cette
+        méthode ne fait que renvoyer les faits bruts du moteur.
+
+        Retourne {"disponible": False, "raison": str} si `board` n'a aucun
+        coup légal (position terminale — rien à comparer) ou si Stockfish
+        est indisponible, sinon {"disponible": True, "reponses": [{"move":
+        str (UCI), "cp": int|None, "mate": int|None, "pv": list[str] (UCI),
+        "perte_cp": int|None (écart par rapport à la meilleure réponse, sur
+        le même barème mat/cp unique que evaluate_move — None pour la
+        meilleure réponse elle-même, toujours 0 ou plus pour les autres)},
+        ...]} (déjà triée par le moteur, meilleure réponse en premier)."""
+        if not board.legal_moves:
+            return {"disponible": False, "raison": "position_terminale"}
+        reponses = self.get_multipv(board, n=n, depth=depth, with_pv=True, pv_max_plies=pv_max_plies)
+        if not reponses:
+            return {"disponible": False, "raison": "moteur_indisponible"}
+        val_meilleure = _score_valeur_joueur({"cp": reponses[0]["cp"], "mate": reponses[0]["mate"]})
+        for i, r in enumerate(reponses):
+            if i == 0:
+                r["perte_cp"] = None
+                continue
+            val = _score_valeur_joueur({"cp": r["cp"], "mate": r["mate"]})
+            r["perte_cp"] = (
+                max(0, val_meilleure - val) if val_meilleure is not None and val is not None else None
+            )
+        return {"disponible": True, "raison": None, "reponses": reponses}
 
     def analyser_partie(self, moves_uci: list[str],
                         callback=None,

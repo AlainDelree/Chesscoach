@@ -41,7 +41,20 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
   - ces contrôles ne vérifient JAMAIS la justesse stratégique ou tactique de
     l'explication, seulement des faits bruts (existence d'un type de pièce,
     contenu d'une case, légalité d'un coup) : une réponse peut rester fausse
-    sur le fond sans déclencher la moindre alerte.
+    sur le fond sans déclencher la moindre alerte ;
+  - le contrôle "échanges mal qualifiés" (issue #91, point 3 — cf.
+    detecter_echanges_mal_qualifies) rejoue une suite d'AU MOINS DEUX
+    captures citées (même extraction que le contrôle "suites illégales"
+    ci-dessus, jamais dupliquée ni contredite) et compare son résultat
+    matériel réel au qualificatif employé à proximité ("équilibré(e)",
+    "favorable"/"défavorable" — ce dernier couple seulement si un camp est
+    explicitement mentionné à proximité). Les verbes "gagne"/"perd", cités en
+    exemple par l'issue, ne sont volontairement PAS vérifiés : trop généraux
+    en français pour être associés avec confiance à la suite citée, mieux
+    vaut ne rien signaler qu'un faux positif. Une incohérence détectée ici
+    porte une gravité ("orange"/"rouge" selon l'écart matériel réel,
+    SEUIL_ECHANGE_GRAVE_PTS) — c'est la seule famille d'alerte qui n'entraîne
+    pas systématiquement une pastille rouge.
 """
 
 import logging
@@ -351,6 +364,8 @@ def _extraire_suites(texte: str) -> list:
         resultat.append({
             "coups": s["coups"],
             "texte": texte[s["debut"]:s["fin"]],
+            "debut": s["debut"],
+            "fin": s["fin"],
             "douteuse": douteuse,
             "raison_doute": raison,
         })
@@ -515,6 +530,196 @@ def detecter_suites_illegales(texte: str, candidats: list) -> list:
     return alertes
 
 
+# ── Vérification des échanges cités (issue #91, tâche 3) ───────────────────
+# Constat ayant motivé cet ajout (même cas que l'en-tête du module) : le coach
+# a écrit "après Rxe5 Nxe5, l'échange reste équilibré" alors que cette suite,
+# rejouée sur l'échiquier, perd une tour (5 points) contre un fou (3 points) —
+# un gain net de 2 points pour les Noirs, pas un échange équilibré. Les
+# contrôles existants (pièces inexistantes, coups illégaux) ne détectent
+# aucune erreur de ce genre : ceux-ci ne portent jamais sur la JUSTESSE
+# stratégique, seulement sur des faits bruts.
+#
+# Portée volontairement limitée (prudence, cf. docstring de module) :
+#   - seules les suites d'AU MOINS DEUX coups cités à la suite (une suite
+#     d'un seul coup n'est pas un "échange" à vérifier de cette façon) sont
+#     concernées ;
+#   - le qualificatif "équilibré"/"équilibrée" ne nécessite aucun camp
+#     explicite (c'est une affirmation symétrique : delta matériel nul) ;
+#   - les qualificatifs "favorable"/"défavorable" ne sont vérifiés QUE s'un
+#     camp (Blancs/Noirs) est explicitement mentionné à proximité immédiate
+#     (_FENETRE_CAMP_PROXIMITE_ECHANGE) — sans cette mention, le camp visé
+#     est trop incertain pour être deviné, le qualificatif n'est alors
+#     jamais vérifié (faux négatif assumé) ;
+#   - les verbes "gagne"/"perd" cités par l'issue comme exemples ne sont
+#     DÉLIBÉRÉMENT PAS vérifiés : ce sont des verbes à usage bien trop
+#     général en français ("gagner la partie", "perdre du temps"...) pour
+#     être associés avec confiance à la suite de coups cités juste avant,
+#     même avec un camp explicite à proximité — le risque de faux positif
+#     (relancer le coach sur une phrase qui n'a rien à voir avec l'échange
+#     cité) est jugé trop élevé face au bénéfice. Mieux vaut ne rien
+#     signaler qu'un faux positif, cf. consigne explicite de l'issue #91.
+_VALEURS_MATERIELLES = {
+    chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9,
+}
+
+# Seuil (en points classiques) au-delà duquel une incohérence d'échange est
+# jugée assez grave pour une pastille ROUGE plutôt qu'ORANGE — réglable en ce
+# seul endroit (issue #91, tâche 1 et 3 : "seuils réglables en un seul
+# endroit").
+SEUIL_ECHANGE_GRAVE_PTS = 3
+
+_QUALIF_EQUILIBRE_RE = re.compile(r"\béquilibr\w*\b", re.IGNORECASE)
+_QUALIF_FAVORABLE_RE = re.compile(r"\bfavorables?\b", re.IGNORECASE)
+_QUALIF_DEFAVORABLE_RE = re.compile(r"\bd[ée]favorables?\b", re.IGNORECASE)
+_CAMP_MOT_RE = re.compile(r"\b(blancs?|blanches?|noirs?|noires?)\b", re.IGNORECASE)
+
+# Fenêtre de recherche d'un qualificatif autour d'une suite citée : un peu
+# avant (un qualificatif peut précéder, ex. "échange favorable Rxe5 Nxe5"),
+# surtout après (cas réel : "Rxe5 Nxe5... l'échange reste équilibré"),
+# coupée à la première fin de phrase rencontrée pour ne jamais associer un
+# qualificatif d'une phrase sans rapport.
+_FENETRE_AVANT_ECHANGE = 40
+_FENETRE_APRES_ECHANGE = 150
+# Distance maximale (caractères) entre "favorable"/"défavorable" et le mot de
+# camp qui lui donne un sens univoque — au-delà, le camp visé est trop
+# incertain (cf. portée ci-dessus).
+_FENETRE_CAMP_PROXIMITE_ECHANGE = 30
+
+
+def _materiel_camp(board: "chess.Board", couleur) -> int:
+    return sum(
+        _VALEURS_MATERIELLES[pt] * len(board.pieces(pt, couleur))
+        for pt in _VALEURS_MATERIELLES
+    )
+
+
+# Négation juste avant le qualificatif (issue #91, prudence) : "ce n'est PAS
+# un échange équilibré" affirme en fait l'inverse du qualificatif qu'elle
+# contient — une détection naïve par simple mot-clé le signalerait à tort. Ne
+# pas essayer d'inverser le sens (trop incertain avec une simple regex, cf.
+# double négation, "pas vraiment", portée des négations imbriquées) : une
+# négation détectée à proximité immédiate suffit à abstenir ce qualificatif
+# plutôt que de risquer un faux positif.
+_NEGATION_RE = re.compile(r"\b(pas|jamais|aucunement|nullement)\b", re.IGNORECASE)
+_FENETRE_NEGATION_ECHANGE = 20
+
+
+def _qualificatif_nie(fenetre: str, position: int) -> bool:
+    return bool(_NEGATION_RE.search(fenetre[max(0, position - _FENETRE_NEGATION_ECHANGE):position]))
+
+
+def _fenetre_qualificatif_echange(texte: str, suite: dict) -> str:
+    debut = max(0, suite["debut"] - _FENETRE_AVANT_ECHANGE)
+    fin = min(len(texte), suite["fin"] + _FENETRE_APRES_ECHANGE)
+    morceau_apres = texte[suite["fin"]:fin]
+    m_fin_phrase = re.search(r"[.\n]", morceau_apres)
+    if m_fin_phrase:
+        fin = suite["fin"] + m_fin_phrase.start()
+    return texte[debut:fin]
+
+
+def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
+    """Détecte une suite de captures citées (issue #91, tâche 3, AU MOINS
+    deux coups — cf. portée ci-dessus) qualifiée dans le texte
+    ("équilibré"/"favorable"/"défavorable", ce dernier couple seulement avec
+    un camp explicite à proximité) d'une façon CONTREDITE par le résultat
+    matériel réel de cette suite, rejouée sur l'échiquier depuis l'une des
+    positions candidates (même construction que detecter_suites_illegales —
+    cette fonction ne duplique ni ne recalcule la légalité : une suite
+    illégale partout, ambiguë ou douteuse (parenthèse/\"si\") est simplement
+    ignorée ici, c'est le rôle de detecter_suites_illegales de la signaler).
+    Un qualificatif précédé d'une négation à proximité immédiate (\"pas\",
+    \"jamais\"...) n'est jamais signalé non plus (prudence : \"ce n'est PAS
+    un échange équilibré\" affirme l'inverse, une simple inversion de sens
+    par regex serait trop incertaine, cf. _qualificatif_nie).
+
+    Chaque alerte porte un champ \"gravite\" (\"orange\"/\"rouge\", selon que
+    l'écart matériel réel dépasse SEUIL_ECHANGE_GRAVE_PTS) — cf.
+    evaluer_fiabilite, qui l'utilise pour choisir la couleur de la pastille
+    sans jamais la dégrader en rouge pour une incohérence mineure.
+
+    Retourne une liste de dicts {"type": "echange_mal_qualifie", "gravite":
+    str, "detail": str}."""
+    if not candidats:
+        return []
+    alertes = []
+    for suite in _extraire_suites(texte):
+        if suite["douteuse"] or len(suite["coups"]) < 2:
+            continue
+        fenetre = _fenetre_qualificatif_echange(texte, suite)
+
+        board_avant = None
+        board_apres = None
+        for _label, board in candidats:
+            if _tenter_suite(suite["coups"], board) == "ok":
+                board_avant = board
+                board_apres = board.copy()
+                for coup in suite["coups"]:
+                    board_apres.push(board_apres.parse_san(coup))
+                break
+        if board_avant is None:
+            continue
+
+        delta = (
+            (_materiel_camp(board_apres, chess.WHITE) - _materiel_camp(board_apres, chess.BLACK))
+            - (_materiel_camp(board_avant, chess.WHITE) - _materiel_camp(board_avant, chess.BLACK))
+        )
+        gravite = "rouge" if abs(delta) >= SEUIL_ECHANGE_GRAVE_PTS else "orange"
+
+        for m in _QUALIF_EQUILIBRE_RE.finditer(fenetre):
+            if delta == 0 or _qualificatif_nie(fenetre, m.start()):
+                continue
+            camp_gagnant = "les Blancs" if delta > 0 else "les Noirs"
+            alertes.append({
+                "type": "echange_mal_qualifie",
+                "gravite": gravite,
+                "detail": (
+                    f"\"{m.group(0)}\" accolé à la suite citée \"{suite['texte']}\" "
+                    "prétend un échange équilibré, alors que cette suite, rejouée "
+                    f"sur l'échiquier, donne un gain net de {abs(delta)} point(s) "
+                    f"pour {camp_gagnant}"
+                ),
+            })
+
+        for regex, attendu_positif in (
+            (_QUALIF_FAVORABLE_RE, True), (_QUALIF_DEFAVORABLE_RE, False),
+        ):
+            for m in regex.finditer(fenetre):
+                if _qualificatif_nie(fenetre, m.start()):
+                    continue
+                camp_m, meilleure_distance = None, None
+                for cm in _CAMP_MOT_RE.finditer(fenetre):
+                    distance = abs(cm.start() - m.start())
+                    if distance <= _FENETRE_CAMP_PROXIMITE_ECHANGE and (
+                        meilleure_distance is None or distance < meilleure_distance
+                    ):
+                        camp_m, meilleure_distance = cm, distance
+                if camp_m is None:
+                    continue
+                couleur = _couleur_depuis_mot(camp_m.group(1))
+                if couleur is None:
+                    continue
+                delta_pour_camp = delta if couleur == chess.WHITE else -delta
+                est_coherent = (delta_pour_camp > 0) if attendu_positif else (delta_pour_camp < 0)
+                if est_coherent:
+                    continue
+                camp_txt = "Blancs" if couleur == chess.WHITE else "Noirs"
+                resultat_reel = (
+                    "équilibré" if delta == 0 else
+                    f"favorable aux {'Blancs' if delta > 0 else 'Noirs'} ({abs(delta)} point(s) net)"
+                )
+                alertes.append({
+                    "type": "echange_mal_qualifie",
+                    "gravite": gravite,
+                    "detail": (
+                        f"\"{m.group(0)}\" (associé aux {camp_txt}) accolé à la suite "
+                        f"citée \"{suite['texte']}\" ne correspond pas au résultat "
+                        f"matériel réel de cette suite, rejouée sur l'échiquier : {resultat_reel}"
+                    ),
+                })
+    return alertes
+
+
 def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str = "",
                        analyse_indisponible: bool = False, verdict_partiel: bool = False,
                        coup_propose: str = "", coup_reel: str = "", meilleur_coup: str = "",
@@ -574,6 +779,16 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "par une notation ambiguë/invalide/entre parenthèses/hypothétique "
         "(\"si...\") (limite : une ligne qui ne part d'aucun de ces points "
         "reste hors de portée, faux négatif assumé)",
+        "cohérence matérielle des échanges cités (issue #91) : une suite "
+        "d'au moins deux captures citées, qualifiée \"équilibré(e)\" ou "
+        "\"favorable\"/\"défavorable\" (ce dernier couple seulement si un "
+        "camp Blancs/Noirs est explicitement mentionné à proximité), est "
+        "rejouée sur l'échiquier et son résultat matériel réel est comparé "
+        "au qualificatif employé (limite : les verbes \"gagne\"/\"perd\", "
+        "trop généraux en français pour être associés avec confiance à la "
+        "suite citée, ne sont volontairement PAS vérifiés — ni un "
+        "qualificatif sans camp explicite pour \"favorable\"/\"défavorable\" "
+        "— faux négatifs assumés, cf. coach_reliability.py)",
     ]
 
     boards_reference = []
@@ -603,11 +818,20 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         pv_coup_propose, pv_meilleur_coup,
     )
     alertes += detecter_suites_illegales(texte, candidats_suites)
+    alertes += detecter_echanges_mal_qualifies(texte, candidats_suites)
 
     if alertes:
         premiere = alertes[0]["detail"]
+        # Gravité par alerte (issue #91) : seules les alertes "echange_mal_
+        # qualifie" portent un champ "gravite" explicite (cf. ci-dessus) —
+        # toute alerte SANS ce champ (types déjà présents avant l'issue #91)
+        # reste traitée comme avant, implicitement grave (couleur rouge),
+        # pour ne jamais adoucir leur traitement existant. La couleur ne
+        # descend à orange que si TOUTES les alertes de ce texte sont
+        # explicitement de gravité "orange".
+        couleur = "orange" if alertes and all(a.get("gravite") == "orange" for a in alertes) else "rouge"
         return {
-            "couleur": "rouge",
+            "couleur": couleur,
             "raison": f"incohérence détectée par les contrôles automatiques : {premiere}",
             "controles": controles, "alertes": alertes,
         }

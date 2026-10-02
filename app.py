@@ -492,6 +492,36 @@ def _calculer_idees_coup(fen_avant: str, coup, camp_alain: str, menace_data: dic
     )
 
 
+# Nombre de réponses adverses comparées par _calculer_reponses_adverses
+# (issue #91, point 1) — réglable en CE SEUL endroit. 4 reprend le choix déjà
+# fait pour get_threats (n=2) mais en légèrement plus large : une menace de
+# mat peut n'apparaître qu'au-delà des 2 meilleures réponses d'une position
+# par ailleurs favorable à l'adversaire (cf. cas réel Re8, où Qxe8 domine
+# largement toute alternative).
+N_REPONSES_ADVERSES = 4
+
+
+def _calculer_reponses_adverses(fen_apres_coup: str) -> dict:
+    """Réponses adverses alternatives à la position résultant d'un coup
+    (issue #91, point 1) : fonction mode-agnostique comme
+    _calculer_menace_adverse/_calculer_idees_coup ci-dessus, à la même
+    profondeur que le verdict du mode Exercice (DEPTH_EXERCICE_TEMPS_REEL) —
+    dit si la réponse de la ligne principale est la SEULE qui évite une
+    perte nette ou un mat, ou si plusieurs réponses se valent (cf.
+    EngineManager.get_reponses_adverses / game_facts.
+    build_reponse_adverse_obligee_texte, qui en fait le texte de contexte).
+    Retourne {"disponible": False, "raison": ...} sans erreur visible si
+    Stockfish est indisponible, si fen_apres_coup est illisible, ou si cette
+    position est déjà terminale (mat/pat, aucun coup adverse possible)."""
+    if not engine_manager or not fen_apres_coup:
+        return {"disponible": False, "raison": "moteur_indisponible"}
+    try:
+        board = chess.Board(fen_apres_coup)
+    except Exception:
+        return {"disponible": False, "raison": "position_illisible"}
+    return engine_manager.get_reponses_adverses(board, depth=DEPTH_EXERCICE_TEMPS_REEL, n=N_REPONSES_ADVERSES)
+
+
 def _log_analyse_erreur(mode: str, message: str) -> None:
     """Trace un échec du bouton "Analyser cette partie" (issue #77 point 1)
     dans ANALYSE_ERREURS_LOG_PATH : heure, mode d'origine, message — pour
@@ -1837,6 +1867,34 @@ def on_exercise_answer(data):
         game_facts.describe_pv_with_balance(fen_avant, pv_meilleur_coup, camp_alain, max_plies=4),
     )
 
+    # Réponses adverses alternatives (issue #91, point 1) : pour le coup
+    # proposé ET pour le meilleur coup, dit si la réponse adverse de la
+    # ligne principale ci-dessus est la SEULE qui évite une perte nette ou
+    # un mat (menace décrite mécaniquement), ou si plusieurs réponses se
+    # valent — sans cette donnée, le coach ne peut pas savoir qu'une
+    # réponse est forcée et en invente une fausse raison (cas réel,
+    # cf. coach_reliability.py en-tête de module). fen_apres_meilleur_coup
+    # recalculée séparément (meilleur_coup peut différer de coup_propose).
+    fen_apres_meilleur_coup = ""
+    if meilleur_coup:
+        try:
+            board_meilleur = chess.Board(fen_avant)
+            board_meilleur.push_san(meilleur_coup)
+            fen_apres_meilleur_coup = board_meilleur.fen()
+        except Exception:
+            pass
+    reponse_adverse_coup_propose_texte = (
+        game_facts.build_reponse_adverse_obligee_texte(
+            "le coup proposé", fen_apres, _calculer_reponses_adverses(fen_apres), camp_alain,
+        ) if coup_propose_san and fen_apres != fen_avant else ""
+    )
+    reponse_adverse_meilleur_coup_texte = (
+        game_facts.build_reponse_adverse_obligee_texte(
+            "le meilleur coup", fen_apres_meilleur_coup,
+            _calculer_reponses_adverses(fen_apres_meilleur_coup), camp_alain,
+        ) if fen_apres_meilleur_coup else ""
+    )
+
     # Texte différent pour une « Position précise » (issue #83) : pas de
     # "partie d'origine" ni de "coup réellement joué" pour une position
     # collée à la main plutôt que tirée d'une de mes erreurs passées — le
@@ -1900,6 +1958,10 @@ def on_exercise_answer(data):
         "pv_meilleur_coup": pv_meilleur_coup,
         "pv_coup_propose_detail": pv_coup_propose_detail,
         "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
+        # Réponses adverses alternatives (issue #91, point 1) : cf. commentaire
+        # au point de calcul ci-dessus.
+        "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
+        "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
         "eval_alain_cp": eval_alain_cp,
         "eval_alain_mat": eval_alain_mat,
         "verdict_qualite": verdict_qualite,
@@ -1959,6 +2021,12 @@ def on_exercise_answer(data):
             # sur le bilan matériel réel de la ligne.
             "pv_coup_propose_detail": pv_coup_propose_detail,
             "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
+            # Réponses adverses alternatives (issue #91) : transmis au client
+            # pour la même raison que pv_coup_propose_detail ci-dessus — sans
+            # ça, une question de suivi perdrait cet ancrage dès le tour
+            # suivant.
+            "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
+            "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
             # Position de départ, descriptions mécaniques des trois coups et
             # évaluation point de vue d'Alain (issue #73) : transmis au
             # client pour qu'une question de suivi posée dans le chat libre

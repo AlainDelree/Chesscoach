@@ -1800,3 +1800,142 @@ def format_idees_coup(label: str, idees: list[dict]) -> str:
         detail = f" ({idee['detail']})" if idee.get("detail") else ""
         lignes.append(f"  {i}. {idee['libelle']}{detail}")
     return "\n".join(lignes)
+
+
+# ── Réponse adverse forcée (issue #91, tâche 1) ────────────────────────────
+# Constat réel ayant motivé cette extension (même cas que l'en-tête du
+# module) : les données envoyées au coach décrivaient la ligne principale
+# (Re8 Qxe8 Qxe8) mais pas le sort des AUTRES réponses adverses possibles —
+# le coach ne pouvait donc pas savoir que Qxe8 était forcé (toute autre
+# réponse perd par mat en 1, menace principale Qb8 mat) et a inventé une
+# fausse raison ("la dame perd la tour gratuitement").
+#
+# Seuil réglable en CE SEUL endroit (issue #91) : perte d'avantage
+# (centipawns, même barème mat/cp unique que evaluate_move/get_threats)
+# au-delà de laquelle une réponse adverse alternative est jugée perdante —
+# en plus d'un mat détecté directement (toujours perdant, quel que soit ce
+# seuil).
+SEUIL_REPONSE_FORCEE_CP = 300
+
+
+def _decrire_menace_evitee(board_apres_coup: "chess.Board", alternative: dict) -> str:
+    """Décrit mécaniquement (issue #91, point 1) la menace que la MOINS
+    mauvaise réponse perdante éviterait d'affronter — rejoue la ligne (pv)
+    réellement calculée par le moteur pour CETTE alternative précise, coup
+    par coup, en SAN, jusqu'au premier mat rencontré (le cas qui motive
+    l'issue) ou jusqu'à épuisement de la ligne. Sur un mat, ajoute qui
+    défend la pièce qui mate (ex. "dame protégée par la tour e8 et la dame
+    a8") — l'information manquante dans le cas réel ayant motivé l'issue.
+    Chaîne vide si la ligne est vide ou illisible dès le premier coup."""
+    pv = alternative.get("pv") or []
+    if not pv:
+        return ""
+    b = board_apres_coup.copy()
+    sans = []
+    mat_trouve = False
+    defenseurs_txt = ""
+    for uci in pv:
+        try:
+            move = chess.Move.from_uci(uci)
+        except Exception:
+            break
+        if move not in b.legal_moves:
+            break
+        piece = b.piece_at(move.from_square)
+        try:
+            san = b.san(move)
+        except Exception:
+            san = uci
+        b.push(move)
+        sans.append(san)
+        if b.is_checkmate():
+            mat_trouve = True
+            if piece is not None:
+                defenseurs = sorted(b.attackers(piece.color, move.to_square))
+                if defenseurs:
+                    noms = ", ".join(
+                        f"{_NOM_PIECE_MAJ[b.piece_at(sq).piece_type]} {chess.square_name(sq)}"
+                        for sq in defenseurs
+                    )
+                    defenseurs_txt = f", {_NOM_PIECE[piece.piece_type]} protégé(e) par {noms}"
+            break
+    if mat_trouve:
+        return f"mat en {len(sans)} demi-coup(s) ({' '.join(sans)}){defenseurs_txt}"
+    if sans:
+        return f"notamment {' '.join(sans)}, perte nette de matériel selon Stockfish"
+    return ""
+
+
+def build_reponse_adverse_obligee_texte(label: str, fen_apres_coup: str, reponses_data: dict,
+                                         camp_alain: str = "") -> str:
+    """API publique (issue #91, point 1) : formate en texte de contexte le
+    résultat de EngineManager.get_reponses_adverses (calculée côté app.py)
+    pour `label` ("le coup proposé" / "le meilleur coup") — dit explicitement
+    si la réponse adverse de la ligne principale est la SEULE qui évite une
+    perte nette ou un mat (SEUIL_REPONSE_FORCEE_CP, réglable en un seul
+    endroit ci-dessus), avec la menace évitée décrite mécaniquement
+    (_decrire_menace_evitee), ou si plusieurs réponses se valent — jamais
+    laissé au silence, qui a déjà produit une fausse raison inventée (cf.
+    en-tête du module).
+
+    Retourne toujours une phrase explicite, même quand le calcul est
+    indisponible (position terminale ou Stockfish indisponible) — même
+    philosophie que describe_menace_adverse."""
+    if not reponses_data or not reponses_data.get("disponible"):
+        raison = (reponses_data or {}).get("raison")
+        if raison == "position_terminale":
+            return (
+                f"Réponse(s) adverse(s) après {label} (issue #91) : non calculée(s), "
+                "position déjà terminale (mat ou pat), aucun coup adverse possible."
+            )
+        return (
+            f"Réponse(s) adverse(s) après {label} (issue #91) : non calculée(s), "
+            "Stockfish indisponible pour ce calcul."
+        )
+
+    reponses = reponses_data.get("reponses") or []
+    if not reponses:
+        return (
+            f"Réponse(s) adverse(s) après {label} (issue #91) : aucune réponse légale "
+            "trouvée (position terminale)."
+        )
+
+    try:
+        board = chess.Board(fen_apres_coup)
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] build_reponse_adverse_obligee_texte a échoué : {e}")
+        return ""
+
+    meilleure = reponses[0]
+    try:
+        san_meilleure = board.san(chess.Move.from_uci(meilleure["move"]))
+    except Exception:
+        san_meilleure = meilleure["move"]
+
+    alternatives = reponses[1:]
+    if not alternatives:
+        return (
+            f"Réponse adverse après {label} (issue #91) : {san_meilleure} est le SEUL "
+            "coup légal dans cette position, aucune alternative à comparer."
+        )
+
+    def _perd(r: dict) -> bool:
+        if r.get("mate") is not None and r["mate"] < 0:
+            return True
+        return (r.get("perte_cp") or 0) >= SEUIL_REPONSE_FORCEE_CP
+
+    if not all(_perd(r) for r in alternatives):
+        return (
+            f"Réponse(s) adverse(s) après {label} (issue #91) : plusieurs réponses se "
+            f"valent (aucune n'est une réponse UNIQUE qui évite une perte nette ou un "
+            f"mat) — la meilleure selon Stockfish est {san_meilleure}."
+        )
+
+    menace_texte = _decrire_menace_evitee(board, alternatives[0])
+    detail = f" ({menace_texte})" if menace_texte else ""
+    return (
+        f"Réponse adverse après {label} (issue #91) : {san_meilleure} est la SEULE "
+        f"réponse qui évite une perte nette ou un mat — toute autre réponse perd"
+        f"{detail}. N'invente AUCUNE autre raison : c'est la vraie raison pour "
+        "laquelle cette réponse est forcée."
+    )

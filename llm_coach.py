@@ -535,6 +535,71 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     )
 )
 
+# Longueur maximale indicative (en nombre de mots) de la réponse du coach en
+# mode "exercice" (issue #91, tâche 2) — réglable en CE SEUL endroit. Une
+# limite INDICATIVE : elle encadre la demande faite au modèle, elle n'est
+# jamais vérifiée mécaniquement après coup (contrairement aux contrôles de
+# coach_reliability.py) — un dépassement ponctuel ne déclenche donc aucune
+# alerte automatique ni relance.
+_LONGUEUR_MAX_MOTS_REPONSE_EXERCICE = 120
+
+# Complément de system prompt (issue #91, tâche 2), constat sur un exercice
+# réel (position Q7/ppkq3p/2p3n1/2Pp1p2/1P6/2b5/P5PP/4R2K w - - 9 35, coup
+# proposé Re3, meilleur coup Re8) : la réponse, pourtant au verdict juste et
+# à la pastille verte, s'est reprise au milieu d'une phrase ("ton fou... "
+# "pardon, le fou adverse" — les Blancs n'ont pourtant aucun fou dans cette
+# position), a qualifié d'"échange" un gain net de dame contre une tour, et
+# a jugé "équilibré" un échange qui perdait en fait une tour contre un fou.
+# Ce complément impose une structure courte en 4 parties et interdit ces
+# trois inventions, en plus d'exploiter la nouvelle donnée "réponse adverse
+# forcée" (issue #91, point 1, cf. _build_context_text ci-dessous).
+_REPONSE_STRUCTUREE_ADDENDUM = (
+    f"Réponse courte et structurée (issue #91) : {_LONGUEUR_MAX_MOTS_REPONSE_EXERCICE} "
+    "mots au maximum (indicatif, vise nettement moins si le verdict et la "
+    "position s'y prêtent), en 4 parties dans cet ordre, sans titre ni "
+    "numérotation visible : "
+    "(1) le verdict reformulé en une phrase ; "
+    "(2) pourquoi le coup proposé est une erreur ou une bonne idée, en "
+    "t'appuyant sur la réponse adverse RÉELLE de la ligne principale (ce "
+    "qu'elle capture ou évite d'après les données fournies, jamais une "
+    "justification positionnelle générique improvisée) ; "
+    "(3) l'idée du meilleur coup en une ou deux phrases SEULEMENT — y "
+    "compris, quand le contexte le précise explicitement (bloc \"Réponse "
+    "adverse après...\"), le fait que la réponse adverse qu'il entraîne est "
+    "FORCÉE (seule réponse qui évite un mat ou une perte nette) : dans ce "
+    "cas, dis-le et nomme la menace évitée telle que décrite dans ce bloc, "
+    "sans l'ignorer ni la minimiser en simple alternative parmi d'autres ; "
+    "si ce bloc indique au contraire que plusieurs réponses se valent, ne "
+    "prétends JAMAIS qu'une réponse est forcée ; "
+    "(4) une seule phrase de conseil. "
+    "\n\n"
+    "Interdiction de se reprendre en cours de réponse (issue #91) : "
+    "n'écris jamais une affirmation que tu corriges ou annules dans la "
+    "phrase suivante (par exemple \"ton fou... pardon, le fou adverse\", "
+    "\"en fait non\", \"je me corrige\", \"ou plutôt\") — réfléchis AVANT "
+    "d'écrire et n'envoie que la version déjà correcte, directement, "
+    "jamais un brouillon suivi de sa correction."
+    "\n\n"
+    "Qualificatif d'échange réservé aux données fournies (issue #91) : "
+    "n'écris \"échange équilibré\", \"favorable\" ou \"défavorable\" que si "
+    "ce jugement figure explicitement dans les données du contexte "
+    "(description mécanique, détail coup par coup, résumé du matériel) — "
+    "jamais ton propre calcul mental du résultat matériel d'une suite de "
+    "coups, qui s'est déjà révélé faux (une tour contre un fou jugée à tort "
+    "\"échange équilibré\"). N'appelle JAMAIS \"échange\" une capture qui "
+    "gagne du matériel NET d'après ces mêmes données (par exemple gagner la "
+    "dame adverse pour une tour est un gain de dame, jamais un \"échange de "
+    "tours\" ni un \"échange\" tout court) : décris alors ce qui est "
+    "réellement gagné ou cédé."
+    "\n\n"
+    "Objectifs personnels d'Alain cités au plus une fois (issue #91) : si sa "
+    "mémoire de progression (objectifs_courants) est pertinente pour cette "
+    "explication, mentionne-la au plus une fois dans toute la réponse, et "
+    "seulement si elle éclaire vraiment le coup en question — jamais à la "
+    "fois en ouverture et en conclusion, et jamais comme simple rappel "
+    "générique sans lien avec ce coup précis."
+)
+
 # Complément au-dessus, spécifique à la source « Problèmes Lichess » du mode
 # "exercice" (issue #78, en complément de _EXERCISE_SYSTEM_ADDENDUM, pas un
 # remplacement) : contrairement à la source "mes erreurs", il n'y a aucune
@@ -1191,6 +1256,20 @@ def _build_context_text(context) -> str:
     # Qh8+ Ke7 Qxd8+ Kxd8, qui échange les deux dames, solde net 0).
     pv_coup_propose_detail  = (context.get("pv_coup_propose_detail") or "").strip()
     pv_meilleur_coup_detail = (context.get("pv_meilleur_coup_detail") or "").strip()
+    # Réponse adverse alternative (issue #91, point 1), déjà calculée et
+    # décrite mécaniquement par app.py/game_facts (EngineManager.
+    # get_reponses_adverses + build_reponse_adverse_obligee_texte) : dit si
+    # la réponse adverse de la ligne principale (pv_coup_propose/
+    # pv_meilleur_coup ci-dessus) est la SEULE qui évite une perte nette ou
+    # un mat (menace décrite), ou si plusieurs réponses se valent — sans ce
+    # champ, le coach ne peut pas savoir qu'une réponse est forcée et en
+    # invente une fausse raison (voir _REPONSE_STRUCTUREE_ADDENDUM).
+    reponse_adverse_coup_propose_texte = (
+        context.get("reponse_adverse_coup_propose_texte") or ""
+    ).strip()
+    reponse_adverse_meilleur_coup_texte = (
+        context.get("reponse_adverse_meilleur_coup_texte") or ""
+    ).strip()
     # Vrai juste après un "Reprendre mon coup" tant qu'Alain n'a pas encore
     # reproposé de coup (issue #17) : évite qu'un verdict/coup discuté plus
     # tôt dans la même conversation du chat libre soit pris pour l'état réel
@@ -1343,6 +1422,8 @@ def _build_context_text(context) -> str:
             )
         if pv_coup_propose_detail:
             lines.append(pv_coup_propose_detail)
+        if reponse_adverse_coup_propose_texte:
+            lines.append(reponse_adverse_coup_propose_texte)
         if idees_coup_propose_texte:
             lines.append(idees_coup_propose_texte)
     if coup_reel:
@@ -1374,6 +1455,8 @@ def _build_context_text(context) -> str:
             )
         if pv_meilleur_coup_detail:
             lines.append(pv_meilleur_coup_detail)
+        if reponse_adverse_meilleur_coup_texte:
+            lines.append(reponse_adverse_meilleur_coup_texte)
         if idees_meilleur_coup_texte:
             lines.append(idees_meilleur_coup_texte)
     if rating_probleme is not None:
@@ -1997,6 +2080,7 @@ def get_coach_response(messages, context, coach_memory, config):
     prompt_sys = _SYSTEM_PROMPT
     if (context or {}).get("mode_exercice"):
         prompt_sys = f"{prompt_sys}\n\n{_EXERCISE_SYSTEM_ADDENDUM}"
+        prompt_sys = f"{prompt_sys}\n\n{_REPONSE_STRUCTUREE_ADDENDUM}"
         if (context or {}).get("source_lichess"):
             # Source « Problèmes Lichess » (issue #78) : réponse courte, pas
             # de "coup réel à l'époque" — complément du garde-fou générique
@@ -2131,8 +2215,11 @@ def get_coach_response(messages, context, coach_memory, config):
             f"automatiquement : {fiabilite['raison']}. Corrige UNIQUEMENT ce "
             "point précis (ne parle jamais d'un type de pièce absent du camp "
             "concerné, ni d'une attaque, une case ou un coup non confirmé "
-            "par les données du contexte) et renvoie une réponse complète "
-            "corrigée, sans mentionner ce correctif à Alain."
+            "par les données du contexte, ni d'un résultat d'échange — "
+            "\"équilibré\", \"favorable\", \"défavorable\" — qui ne "
+            "correspond pas au résultat matériel réel de la suite de coups "
+            "citée, issue #91) et renvoie une réponse complète corrigée, "
+            "sans mentionner ce correctif à Alain."
         )
         messages_relance = clean_messages + [
             {"role": "assistant", "content": response},
