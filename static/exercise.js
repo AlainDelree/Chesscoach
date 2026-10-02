@@ -939,7 +939,7 @@ if (typeof socket !== "undefined") {
     if (text) {
       // Verdict de l'exercice : Alain l'attend, la page doit défiler jusqu'à
       // lui sur mobile (issue #67, comportement voulu par la maquette).
-      _coachRenderBubble("assistant", text, true);
+      _coachRenderBubble("assistant", text, true, undefined, data && data.fiabilite);
       if (typeof _coachHistory !== "undefined") {
         _coachHistory.push({ role: "assistant", content: text });
       }

@@ -337,6 +337,81 @@
 }
 .coach-bubble.error a { color: #5a1a1a; text-decoration: underline; display: inline-block; margin-top: 4px; }
 
+/* Pastille de fiabilité (issue #87, point 5) : résultat des contrôles
+   déterministes exécutés après chaque réponse du coach (coach_reliability.py)
+   — vert = aucune incohérence détectée (PAS "réponse vérifiée juste", cf. le
+   texte complet affiché au clic/survol), orange = analyse partielle/
+   indisponible ou relance automatique nécessaire, rouge = incohérence
+   détectée et non corrigée. Couleurs volontairement DIFFÉRENTES du terracotta
+   (--cc-accent, réservé au cliquable d'après la règle de palette d'Alain,
+   cf. en-tête de ce fichier) — vert/orange-doré/rouge n'ont pas sa teinte.
+   Lisible sans dépendre de la seule couleur : un glyphe (✓ / ! / ✕) ET un
+   texte court accompagnent chaque couleur. Le détail (raison en une phrase)
+   s'affiche dans le FLUX NORMAL du document (jamais en position absolue/
+   superposée) pour ne jamais déborder du viewport à 390px/360px — il pousse
+   simplement le reste de la bulle, plutôt que de risquer un débordement
+   horizontal comme documenté pour #eval-status-detail (issue #82,
+   templates/index.html). */
+.coach-fiabilite-wrap {
+  display: block;
+  margin-top: 6px;
+}
+.coach-fiabilite-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: var(--cc-radius-pill);
+  padding: 2px 9px 2px 7px;
+  font-family: var(--cc-font-body);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.6;
+  cursor: pointer;
+  max-width: 100%;
+}
+.coach-fiabilite-glyph {
+  display: inline-block;
+  width: 1.1em;
+  text-align: center;
+  font-weight: 900;
+}
+.coach-fiabilite-label { white-space: nowrap; }
+.coach-fiabilite-vert {
+  background: #e1f2e2;
+  color: #1e5c22;
+  border-color: #a9d6ac;
+}
+.coach-fiabilite-orange {
+  background: #faf0d7;
+  color: #7a5a06;
+  border-color: #e3c876;
+}
+.coach-fiabilite-rouge {
+  background: #fadada;
+  color: #8c1f1f;
+  border-color: #e3a3a3;
+}
+.coach-fiabilite-detail {
+  display: none;
+  margin-top: 4px;
+  padding: 6px 9px;
+  border-radius: var(--cc-radius-sm);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+  font-size: 0.74rem;
+  font-weight: 400;
+  line-height: 1.4;
+  max-width: 100%;
+  word-break: break-word;
+}
+.coach-fiabilite-wrap.coach-fiabilite-open .coach-fiabilite-detail {
+  display: block;
+}
+@media (hover: hover) and (pointer: fine) {
+  .coach-fiabilite-wrap:hover .coach-fiabilite-detail { display: block; }
+}
+
 /* Séparateur discret entre deux parties/exercices dans le chat (issue #64) —
    les anciens échanges restent visibles à l'écran, seulement démarqués de la
    partie/exercice courant(e) plutôt qu'effacés (coachClear() garde son effet

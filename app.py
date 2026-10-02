@@ -903,7 +903,7 @@ def on_analyse_expliquer_coup(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -911,6 +911,7 @@ def on_analyse_expliquer_coup(data):
     else:
         emit("analyse_expliquer_coup_response", {
             "uci": move.get("uci"), "idx": move.get("idx"), "text": response,
+            "fiabilite": fiabilite,
         })
 
 
@@ -1031,13 +1032,13 @@ def on_coach_comment_on_demand(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
         emit("coach_on_demand_error", {"error": error})
     else:
-        emit("coach_on_demand_response", {"text": response, "meilleur_coup": meilleur_coup_san})
+        emit("coach_on_demand_response", {"text": response, "meilleur_coup": meilleur_coup_san, "fiabilite": fiabilite})
 
 
 # Profondeur et budget de la vérification Stockfish ciblée du chat coach
@@ -1280,7 +1281,7 @@ def on_coach_ask(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -1291,7 +1292,7 @@ def on_coach_ask(data):
         # — omis du payload si aucune vérification n'a abouti, plutôt que
         # transmis à None (cf. gameCoachLinesOnStockfishLine, qui vérifie de
         # toute façon sa présence).
-        payload = {"text": response}
+        payload = {"text": response, "fiabilite": fiabilite}
         if stockfish_line:
             payload["stockfish_line"] = stockfish_line
         emit("coach_response", payload)
@@ -1607,6 +1608,12 @@ def on_exercise_answer(data):
     # llm_coach._EXERCISE_SYSTEM_ADDENDUM pour l'interdiction de le citer).
     pieces_depart_texte = game_facts.describe_pieces_lists(fen_avant, camp_alain)
     pieces_actuelles_texte = game_facts.describe_pieces_lists(fen_apres, camp_alain)
+    # Résumé du matériel par type de pièce, avec les absences dites
+    # explicitement (issue #87, point 1) — calculé sur la position de DÉPART
+    # de l'exercice, seule référence stable pour tout le fil de la
+    # conversation (coup_propose/coup_reel/meilleur_coup partent tous de
+    # cette même position).
+    materiel_resume_texte = game_facts.describe_material_summary(fen_avant, camp_alain)
 
     # Idées détectées pour chacun des trois coups comparés (issue #80, point
     # 5) : décomposition classique de l'évaluation Stockfish avant/après
@@ -1684,6 +1691,7 @@ def on_exercise_answer(data):
         # Listes de pièces et menace adverse (issue #80, points 1 et 3).
         "pieces_depart_texte": pieces_depart_texte,
         "pieces_actuelles_texte": pieces_actuelles_texte,
+        "materiel_resume_texte": materiel_resume_texte,
         "menace_adverse_texte": menace_adverse_texte,
         "coup_propose": coup_propose_san,
         "coup_propose_description_mecanique": coup_propose_description_mecanique,
@@ -1725,7 +1733,7 @@ def on_exercise_answer(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -1733,6 +1741,10 @@ def on_exercise_answer(data):
     else:
         emit("exercise_comment", {
             "text": response,
+            # Pastille de fiabilité (issue #87, point 5) : couleur/raison/
+            # contrôles déjà calculés par get_coach_response — affichée par
+            # le client telle quelle, jamais recalculée côté UI.
+            "fiabilite": fiabilite,
             "coup_propose": coup_propose_san,
             "coup_reel": coup_reel,
             "meilleur_coup": meilleur_coup,
@@ -1772,6 +1784,7 @@ def on_exercise_answer(data):
             # static/exercise.js).
             "pieces_depart_texte": pieces_depart_texte,
             "pieces_actuelles_texte": pieces_actuelles_texte,
+            "materiel_resume_texte": materiel_resume_texte,
             "menace_adverse_texte": menace_adverse_texte,
             "idees_coup_propose_texte": idees_coup_propose_texte,
             "idees_coup_reel_texte": idees_coup_reel_texte,
@@ -1902,6 +1915,9 @@ def _on_exercise_answer_lichess(uci: str) -> None:
     menace_adverse_texte = game_facts.describe_menace_adverse(menace_adverse_data, fen_avant, camp_alain)
     pieces_depart_texte = game_facts.describe_pieces_lists(fen_avant, camp_alain)
     pieces_actuelles_texte = game_facts.describe_pieces_lists(fen_apres, camp_alain)
+    # Résumé du matériel par type de pièce (issue #87, point 1) — même
+    # raison que la source "mes erreurs" ci-dessus.
+    materiel_resume_texte = game_facts.describe_material_summary(fen_avant, camp_alain)
     idees_coup_propose_texte = game_facts.format_idees_coup(
         "le coup proposé",
         _calculer_idees_coup(fen_avant, coup_propose_san, camp_alain, menace_adverse_data),
@@ -1939,6 +1955,7 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         "camp_alain": camp_alain,
         "pieces_depart_texte": pieces_depart_texte,
         "pieces_actuelles_texte": pieces_actuelles_texte,
+        "materiel_resume_texte": materiel_resume_texte,
         "menace_adverse_texte": menace_adverse_texte,
         "coup_propose": coup_propose_san,
         "coup_propose_description_mecanique": coup_propose_description_mecanique,
@@ -1986,7 +2003,7 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -1994,6 +2011,7 @@ def _on_exercise_answer_lichess(uci: str) -> None:
     else:
         emit("exercise_comment", {
             "text": response,
+            "fiabilite": fiabilite,
             "coup_propose": coup_propose_san,
             "coup_reel": "",
             "meilleur_coup": meilleur_coup,
@@ -2011,6 +2029,7 @@ def _on_exercise_answer_lichess(uci: str) -> None:
             "eval_alain_mat": eval_alain_mat,
             "pieces_depart_texte": pieces_depart_texte,
             "pieces_actuelles_texte": pieces_actuelles_texte,
+            "materiel_resume_texte": materiel_resume_texte,
             "menace_adverse_texte": menace_adverse_texte,
             "idees_coup_propose_texte": idees_coup_propose_texte,
             "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
@@ -2170,7 +2189,7 @@ def on_pedagogic_move(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -2178,6 +2197,7 @@ def on_pedagogic_move(data):
     else:
         emit("pedagogic_comment", {
             "text": response,
+            "fiabilite": fiabilite,
             "coup_propose": coup_alain_san,
             "meilleur_coup": meilleur_coup_san,
         })
@@ -2467,7 +2487,7 @@ def on_opening_move(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -2475,6 +2495,7 @@ def on_opening_move(data):
     else:
         emit("opening_comment", {
             "text": response,
+            "fiabilite": fiabilite,
             "coup_propose": coup_alain_san,
             "dans_le_livre": dans_le_livre,
             "popularite_pct": popularite_pct,
@@ -2945,7 +2966,7 @@ def on_finale_move(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -2953,6 +2974,7 @@ def on_finale_move(data):
     else:
         emit("finale_comment", {
             "text": response,
+            "fiabilite": fiabilite,
             "coup_propose": coup_alain_san,
             "meilleur_coup": meilleur_coup_san,
         })
