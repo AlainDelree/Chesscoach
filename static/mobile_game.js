@@ -116,6 +116,12 @@ let _currentGameTab = "coach";
 
 function switchGameTab(tabKey) {
   if (GAME_TABS.indexOf(tabKey) === -1) return;
+  // changed (issue #86 point 3) : distingue un vrai changement d'onglet (clic
+  // d'Alain) d'un simple réappel avec le même onglet — onGameUiRefresh()
+  // rappelle switchGameTab(_currentGameTab) à chaque rafraîchissement global
+  // (coup joué, redimensionnement...), qui ne doit jamais faire sauter le
+  // défilement en cours.
+  const changed = tabKey !== _currentGameTab;
   _currentGameTab = tabKey;
   GAME_TABS.forEach((key) => {
     const btn = document.getElementById(`game-tab-btn-${key}`);
@@ -127,6 +133,27 @@ function switchGameTab(tabKey) {
     }
     if (panel) panel.classList.toggle("active", isActive);
   });
+  // Issue #86 point 3 : remonter tout en haut à chaque vrai changement
+  // d'onglet — sans ça, la position de défilement laissée par l'onglet
+  // précédent (ex. tout en bas d'une longue conversation Coach) restait
+  // active en ouvrant Lignes/Analyse/Coups, dont le contenu est en général
+  // bien plus court : Alain se retrouvait face à une zone vide sans indice
+  // qu'il fallait remonter (rapport signalé). Immédiat (pas "smooth"), même
+  // principe que switchModeTab (controls.js).
+  if (changed && isGameUiActive() && typeof window.scrollTo === "function") {
+    window.scrollTo(0, 0);
+    // Le scrollTo ci-dessus déclenche un évènement "scroll" natif
+    // asynchrone, qui repasse par _updateBoardCompactState() (écouteur posé
+    // au chargement de la page, donc appelé AVANT celui-ci) et force le
+    // plateau complet (scrollY<=0, une des actions de retour prévues) —
+    // potentiellement par-dessus la décision "contenu du nouvel onglet
+    // encore trop grand" ci-dessous. Reportée d'un tick (après cet
+    // évènement, les écouteurs du même type s'exécutant dans leur ordre
+    // d'ajout), cette seconde vérification a toujours le dernier mot, sans
+    // jamais annuler la remontée en haut elle-même (ADDITIVE, cf. commentaire
+    // sur _autoCompactForOverflow plus bas).
+    setTimeout(() => { if (typeof _autoCompactForOverflow === "function") _autoCompactForOverflow(); }, 0);
+  }
   // Issue #81 point 1 : un onglet dont le contenu dépasse la zone visible
   // (ex. Coups sur une longue partie) passe tout de suite au plateau réduit,
   // plutôt que de laisser Alain découvrir après coup qu'il doit défiler.
@@ -330,15 +357,23 @@ function _updateGameBoardMaxSize() {
   // Issue #77 : pas de remesure non plus pendant l'affichage du bandeau de
   // fin de partie (#mobile-game-over-bar, désormais dans le "chrome below"
   // mesuré ci-dessous, là où cette zone était vide avant l'issue #77) — sinon
-  // sa hauteur réelle (texte + 2 boutons, variable selon la longueur du
-  // résultat) fait varier --bd-size-game-max au moment même de l'abandon/du
-  // mat, donnant l'impression d'un passage en plateau réduit alors que
-  // ".board-compact"/_gameBoardSizeChoice ne changent jamais (cause
-  // identifiée lors des tests GSM, cf. rapport de clôture — le réglage de
-  // taille lui-même n'est jamais modifié, seul le rendu réel du plateau
-  // varie). Garde la dernière valeur mesurée PENDANT la partie jusqu'au
-  // retour à une nouvelle partie (hideGameOverBanner, qui retire cette classe
-  // et redéclenche par ricochet onGameUiRefresh()/cette fonction).
+  // sa hauteur réelle (variable selon la longueur du résultat, même rendue
+  // compacte par l'issue #86 point 1) fait varier --bd-size-game-max au
+  // moment même de l'abandon/du mat, donnant l'impression d'un passage en
+  // plateau réduit alors que ".board-compact"/_gameBoardSizeChoice ne
+  // changent jamais (cause identifiée lors des tests GSM, cf. rapport de
+  // clôture — le réglage de taille lui-même n'est jamais modifié, seul le
+  // rendu réel du plateau varie). Garde la dernière valeur mesurée PENDANT la
+  // partie jusqu'au retour à une nouvelle partie (hideGameOverBanner, qui
+  // retire cette classe et redéclenche par ricochet onGameUiRefresh()/cette
+  // fonction) — valeur sûre bien que parfois un peu plus petite que
+  // nécessaire : la bande de fin de partie compacte (issue #86) prend de
+  // toute façon moins de place que les contrôles de partie actifs qu'elle
+  // remplace (#shared-mode-controls et ses boutons), jamais plus (limite
+  // documentée dans le rapport de clôture). Si le contenu de l'onglet ouvert
+  // déborde malgré tout, _mobileGameOnGameOver()/_autoCompactForOverflow()
+  // (appelées par showGameOverBanner) passent directement en plateau réduit
+  // sans attendre cette mesure.
   if (document.body.classList.contains("game-over-active")) return;
   // Tout ce qui n'est PAS le plateau lui-même : au-dessus (rangée d'en-tête
   // collée + matériel capturé du dessus) via board.top, et en dessous
@@ -369,20 +404,40 @@ function _isCurrentGameRunning() {
   return !!runningMap[tab];
 }
 
-// ── Plateau réduit au défilement (issue #70 point 5, refondu #71 point 4) ──
+// ── Plateau réduit au défilement (issue #70 point 5, refondu #71 point 4,
+// règle stabilisée #86 point 2) ─────────────────────────────────────────────
 // Le plateau complet (+ les deux barres de boutons, via #board-full-view)
 // rétrécit (--bd-size local, cf. <style>, même nœud DOM, même rendu) quand
 // la zone à onglets défile ou que le champ de question a le focus (clavier
 // ouvert) — jamais pendant la lecture/preview d'une ligne du coach (le
 // plateau doit alors rester affiché en grand, point 6 de l'issue #70), et
-// jamais tant qu'aucune partie n'est en cours ou que la page est tout en
-// haut (issue #71 point 2 : sans ce garde-fou, arriver dans un mode de
-// partie — page pas encore défilée, avant tout coup — pouvait déclencher
-// l'état réduit avant même d'avoir vu le plateau complet une seule fois).
-// Retour au plateau complet en tapant le plateau réduit (boardCompactExpand
-// ci-dessous, remonte en haut de page et enlève le focus du champ) ou en
-// remontant en haut par un autre moyen (le scroll y est réévalué en
-// continu).
+// jamais tant qu'aucune partie n'a jamais démarré (_isGameSessionActive ci-
+// dessous) ou que la page est tout en haut (issue #71 point 2 : sans ce
+// garde-fou, arriver dans un mode de partie — page pas encore défilée, avant
+// tout coup — pouvait déclencher l'état réduit avant même d'avoir vu le
+// plateau complet une seule fois).
+//
+// RÈGLE AVANT issue #86 (bug constaté lors des tests GSM, rapport de
+// clôture) : un SEUL seuil (BOARD_COMPACT_SCROLL_THRESHOLD) pilotait les DEUX
+// sens — `wrap.classList.toggle("board-compact", focused || scrolled)`
+// repassait donc en plateau complet dès que le défilement repassait sous ce
+// seuil, pas seulement en haut de page. Deux conséquences : (1) aucune
+// hystérésis, un micro-défilement autour du seuil (24px) faisait battre le
+// plateau entre les deux tailles ; (2) cette bascule change elle-même la
+// hauteur de #board-sticky-wrap (collé en haut), ce qui peut décaler le
+// contenu sous le doigt pendant un geste de défilement tactile et redéclencher
+// la mesure au prochain tick — oscillation perçue par Alain comme aléatoire.
+// RÈGLE APRÈS : fonction strictement ADDITIVE pour le passage en réduit
+// (jamais annulée par le simple fait de remonter un peu) — seuls les points
+// de sortie explicitement prévus par la tâche (remontée tout en haut de la
+// zone ici ; tap sur le plateau réduit via boardCompactExpand ; coup joué via
+// _forceBoardFull ; lecture d'une ligne "Play" via _linePlaybackActive
+// ci-dessus, qui court-circuite déjà tout l'état réduit) ramènent le plateau
+// complet. Le seuil de déclenchement (24px) et le seuil de retour (0px,
+// scrollY<=0 strictement) sont donc deux valeurs différentes (hystérésis) :
+// un changement de taille ne modifie jamais lui-même scrollY (propriété du
+// navigateur, pas de la mise en page), donc ne peut plus se redéclencher lui-
+// même.
 const BOARD_COMPACT_SCROLL_THRESHOLD = 24;
 
 function _linePlaybackActive() {
@@ -390,22 +445,36 @@ function _linePlaybackActive() {
     || (typeof gameCoachLinesPreviewActive !== "undefined" && gameCoachLinesPreviewActive);
 }
 
+// Une "session de partie" couvre aussi bien une partie EN COURS que la
+// consultation de son résultat juste après la fin (issue #86 point 1 et 2) :
+// avant cette issue, _isCurrentGameRunning() seul excluait aussi l'état
+// "partie terminée" du plateau réduit, alors que c'est justement le moment où
+// l'onglet Analyse se remplit le plus (bug concret du rapport : un seul
+// commentaire de coup visible après un abandon). Reste exclu l'état "avant
+// toute partie" (boutons de démarrage/invite), qui n'a rien à protéger.
+function _isGameSessionActive() {
+  return _isCurrentGameRunning() || document.body.classList.contains("game-over-active");
+}
+
 function _updateBoardCompactState() {
   const wrap = document.getElementById("board-sticky-wrap");
   if (!wrap) return;
-  if (!isGameUiActive() || _linePlaybackActive() || !_isCurrentGameRunning()) {
+  if (!isGameUiActive() || _linePlaybackActive() || !_isGameSessionActive()) {
     wrap.classList.remove("board-compact");
     return;
   }
   const scrollY = window.scrollY;
+  // Seule action de retour pilotée par le scroll : remontée tout en haut de
+  // la zone (scrollY strictement à 0), l'une des actions prévues par la
+  // tâche. Entre 0 et le seuil de déclenchement, l'état en cours (complet OU
+  // réduit) est conservé tel quel — jamais de retrait automatique.
   if (scrollY <= 0) {
     wrap.classList.remove("board-compact");
     return;
   }
   const coachInput = document.getElementById("coach-input");
   const focused = !!(coachInput && document.activeElement === coachInput);
-  const scrolled = scrollY > BOARD_COMPACT_SCROLL_THRESHOLD;
-  wrap.classList.toggle("board-compact", focused || scrolled);
+  if (focused || scrollY > BOARD_COMPACT_SCROLL_THRESHOLD) wrap.classList.add("board-compact");
 }
 
 // Contenu de l'onglet actif plus haut que la zone visible restante (issue
@@ -426,16 +495,63 @@ function _activeTabContentOverflows() {
 }
 
 // Déclenche le plateau réduit quand le contenu de l'onglet actif déborde de
-// l'écran (point 1) — appelée seulement aux points de coupure concernés
-// (ouverture d'un onglet, arrivée d'une réponse du coach), jamais depuis le
-// scroll/focus ci-dessus : ADDITIVE uniquement (ne referme jamais le plateau
-// réduit tout seul), pour ne pas annuler un retour au plateau complet
-// explicite (boardCompactExpand) si le contenu déborde toujours juste après.
+// l'écran (point 1, étendu issue #86 point 2 à l'état "partie terminée" via
+// _isGameSessionActive) — appelée aux points de coupure connus (ouverture
+// d'un onglet, arrivée d'une réponse du coach, fin de partie) ET en continu
+// via le ResizeObserver sur les panneaux d'onglets ci-dessous (contenu qui se
+// remplit après coup : résultats d'analyse qui arrivent, tableau des lignes
+// qui se peuple) — jamais depuis le scroll/focus ci-dessus : ADDITIVE
+// uniquement (ne referme jamais le plateau réduit tout seul), pour ne pas
+// annuler un retour au plateau complet explicite (boardCompactExpand) si le
+// contenu déborde toujours juste après, et pour ne jamais se redéclencher
+// elle-même (elle ne fait qu'ajouter une classe déjà présente le cas échéant).
 function _autoCompactForOverflow() {
-  if (!isGameUiActive() || _linePlaybackActive() || !_isCurrentGameRunning()) return;
+  if (!isGameUiActive() || _linePlaybackActive() || !_isGameSessionActive()) return;
   const wrap = document.getElementById("board-sticky-wrap");
   if (!wrap) return;
   if (_activeTabContentOverflows()) wrap.classList.add("board-compact");
+}
+
+// Contenu qui arrive APRÈS l'ouverture de l'onglet (issue #86 point 2 : "y
+// compris quand ce contenu arrive après coup — résultats d'analyse qui se
+// chargent, onglet qui se remplit") : un ResizeObserver générique sur les 4
+// panneaux, plutôt qu'un rappel explicite à ajouter dans chaque fichier qui
+// peut faire grandir leur contenu (game_analysis.js, game_coach_lines.js,
+// renderHistory()...) — même principe que le ResizeObserver sur
+// #board-sticky-wrap plus bas (_updateGameBoardMaxSize). Un panneau inactif
+// est display:none (donc sans boîte de mise en page) : lui ajouter du contenu
+// ne déclenche aucun callback tant qu'il n'est pas rendu actif, ce qui est
+// sans conséquence puisque switchGameTab() appelle déjà _autoCompactForOverflow()
+// à l'activation. _autoCompactForOverflow() ne regarde de toute façon que le
+// panneau ".active" courant, quel que soit celui qui a déclenché le callback.
+let _gameTabPanelsObserver = null;
+function _ensureGameTabPanelsObserved() {
+  if (_gameTabPanelsObserver || typeof ResizeObserver === "undefined") return;
+  _gameTabPanelsObserver = new ResizeObserver(() => {
+    // Garde-fou (issue #71 point 2, préservé — repéré par un test Playwright
+    // de cette issue qui le faisait régresser) : un ResizeObserver se
+    // déclenche de façon asynchrone, APRÈS la fin du rafraîchissement global
+    // qui l'a provoqué (ex. onGameUiRefresh() déplace le contenu réel dans
+    // les panneaux, ce qui change leur taille) — donc APRÈS le
+    // _updateBoardCompactState() de ce même rafraîchissement, qui force déjà
+    // le plateau complet tant que scrollY<=0 (une des actions de retour
+    // prévues). Sans ce garde-fou ici, ce callback annulerait cette remise à
+    // plat pour un débordement qui n'a jamais vraiment gêné personne
+    // (contenu de base d'un onglet encore vide, page jamais défilée) —
+    // exactement le cas que l'issue #71 point 2 voulait éviter ("jamais...
+    // avant d'avoir vu le plateau complet une seule fois"). Exception :
+    // l'état "partie terminée" (issue #86 point 1/2), où rester tout en haut
+    // de page est le cas normal (on vient d'abandonner/de faire mat) et où le
+    // contenu qui déborde (rapport d'analyse) doit quand même déclencher le
+    // réduit — cf. _mobileGameOnGameOver ci-dessous, qui appelle directement
+    // _autoCompactForOverflow() sans passer par ce garde-fou.
+    if (window.scrollY <= 0 && !document.body.classList.contains("game-over-active")) return;
+    _autoCompactForOverflow();
+  });
+  GAME_TABS.forEach((key) => {
+    const panel = document.getElementById(`game-tab-panel-${key}`);
+    if (panel) _gameTabPanelsObserver.observe(panel);
+  });
 }
 
 // Retour au plateau complet forcé (point 1 : coup joué) — plus léger que
@@ -468,6 +584,19 @@ function _mobileGameOnMoveCountChanged(count) {
 // réponse du coach (point 1) — une réponse longue mérite la place de lecture
 // maximale, même si Alain n'a pas encore défilé ni touché le plateau réduit.
 function _mobileGameOnCoachMessage() {
+  if (typeof _autoCompactForOverflow === "function") _autoCompactForOverflow();
+}
+
+// Appelée depuis showGameOverBanner() (board.js, issue #86 point 1) dès que
+// la bande de fin de partie s'affiche : si l'onglet déjà ouvert déborde (ex.
+// onglet Analyse d'une partie déjà longue), passe tout de suite en plateau
+// réduit plutôt que d'attendre un défilement ou un changement d'onglet — sans
+// cela, la bande de fin de partie (même rendue compacte, une ligne) et le
+// plateau encore complet pouvaient à eux deux ne plus laisser qu'une ligne de
+// contenu visible juste après un abandon/un mat (constat du rapport de
+// clôture). _isGameSessionActive() (ci-dessus) inclut déjà l'état "partie
+// terminée" posé par showGameOverBanner juste avant cet appel.
+function _mobileGameOnGameOver() {
   if (typeof _autoCompactForOverflow === "function") _autoCompactForOverflow();
 }
 
@@ -688,6 +817,12 @@ document.addEventListener("DOMContentLoaded", () => {
     new ResizeObserver(_updateGameBoardMaxSize).observe(wrap);
   }
   window.addEventListener("resize", _updateGameBoardMaxSize);
+  // Issue #86 point 2 : contenu d'onglet qui déborde une fois arrivé après
+  // coup (résultats d'analyse, lignes du coach) — les 4 panneaux existent dès
+  // le chargement de la page, pas seulement en mode jeu mobile actif, donc
+  // sans danger à les observer inconditionnellement ici (no-op tant qu'aucun
+  // n'est rendu visible, cf. commentaire sur _ensureGameTabPanelsObserved).
+  _ensureGameTabPanelsObserved();
 
   _gameUiQuery.addEventListener("change", () => onGameUiRefresh());
   window.addEventListener("scroll", _updateBoardCompactState, { passive: true });

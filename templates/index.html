@@ -1245,38 +1245,54 @@
          (showGameOverBanner) pose style.display="block" en ligne. */
       body.mobile-game-active #game-over-banner { display: none !important; }
       /* Bande compacte de fin de partie (issue #77 point 2, d'après la
-         maquette design/partie_mobile/FinCoach.dc.html) : une ligne avec le
-         résultat et les boutons "Analyser cette partie"/"Nouvelle partie",
-         à la place de la barre d'actions — réutilise les couleurs par
-         résultat de .game-over-banner--* (board.css) plutôt que de les
-         dupliquer, cf. _showMobileGameOverBar (board.js). Masquée en
-         plateau réduit comme la barre d'actions (cf. règle
-         #board-sticky-wrap.board-compact plus haut, qui liste aussi cet id). */
+         maquette design/partie_mobile/FinCoach.dc.html ; rendue réellement
+         tenable sur une seule ligne par l'issue #86 point 1) : le résultat et
+         les boutons "Analyser cette partie"/"Nouvelle partie", à la place de
+         la barre d'actions — réutilise les couleurs par résultat de
+         .game-over-banner--* (board.css) plutôt que de les dupliquer, cf.
+         _showMobileGameOverBar (board.js). Masquée en plateau réduit comme la
+         barre d'actions (cf. règle #board-sticky-wrap.board-compact plus
+         haut, qui liste aussi cet id) — désormais atteignable après une fin
+         de partie grâce à _isGameSessionActive() (mobile_game.js), pas
+         seulement pendant une partie en cours.
+         AVANT l'issue #86 : flex-wrap:wrap + le texte en flex:1 1 100% le
+         forçaient sur sa PROPRE ligne, les deux boutons se répartissant la
+         largeur sur la ligne suivante — deux lignes dans les faits malgré le
+         commentaire de l'issue #77, consommant de la place dans la partie
+         fixe de l'écran pendant toute la lecture du résultat (constat du
+         rapport de clôture). APRÈS : flex-wrap:nowrap, texte tronqué avec
+         ellipse (flex:1 1 auto + min-width:0) plutôt que d'exiger sa propre
+         ligne, boutons dimensionnés à leur contenu (flex:0 0 auto, jamais
+         tronqués) avec une police/un remplissage plus petits — une seule
+         ligne quelle que soit la longueur du message de résultat. */
       #mobile-game-over-bar { display: none; }
       body.mobile-game-active #mobile-game-over-bar.show {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
-        gap: 6px 10px;
+        gap: 6px;
         width: 100%;
         box-sizing: border-box;
         margin-top: 6px;
-        padding: 8px 12px;
+        padding: 6px 10px;
         border-radius: var(--cc-radius-md);
       }
-      /* Le résultat occupe toute la largeur à lui seul (texte de longueur
-         variable selon le résultat : "Abandon — défaite" tient sur une
-         ligne, "Échec et mat — les Noirs gagnent" peut en prendre deux) —
-         les deux boutons suivent sur leur propre ligne plutôt que de se
-         répartir la largeur avec un texte long au milieu, moins compact que
-         la maquette (design/partie_mobile/FinCoach.dc.html) ne le laissait
-         deviner avec un seul bouton. */
       #mobile-game-over-bar #mobile-game-over-text {
-        flex: 1 1 100%;
-        font-size: 0.85rem;
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 0.78rem;
         font-weight: 700;
       }
-      #mobile-game-over-bar button { flex: 1; font-size: 0.8rem; min-height: 0; padding: 8px 6px; }
+      #mobile-game-over-bar button {
+        flex: 0 0 auto;
+        font-size: 0.72rem;
+        min-height: 0;
+        padding: 6px 8px;
+        white-space: nowrap;
+      }
 
       /* Onglets Coach / Lignes / Analyse / Coups (point 1) — un seul panneau
          visible à la fois, seule cette zone défile (le reste, plus haut,

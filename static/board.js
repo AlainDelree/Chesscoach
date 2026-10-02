@@ -1288,6 +1288,10 @@ function showGameOverBanner(gameOverInfo, campAlain, onAnalyser) {
   document.body.classList.add("game-over-active");
 
   _showMobileGameOverBar(gameOverInfo.message, categorie, onAnalyser);
+  // Plateau réduit mobile dès la fin de partie si l'onglet déjà ouvert
+  // déborde (issue #86 point 1/2) — pas seulement au prochain défilement ou
+  // changement d'onglet.
+  if (typeof _mobileGameOnGameOver === "function") _mobileGameOnGameOver();
 }
 
 // Bande compacte de fin de partie sur mobile (issue #77 point 2) : ce grand
