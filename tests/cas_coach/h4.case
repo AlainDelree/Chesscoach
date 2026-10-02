@@ -34,6 +34,6 @@ motifs_interdits:
   regex: qxh4[\s,]*gxh4[^.\n]{0,80}[ée]quilibr|[ée]quilibr[^.\n]{0,80}qxh4[\s,]*gxh4
 
 motifs_attendus:
-  défensif|pare la menace|sécurité du roi
+  regex:défensi|par(e|ir)\w* (la|une|cette) menace|sécurité (du|de ton) roi|menaces? (réelle|sur)
 
 pastille_attendue: vert
