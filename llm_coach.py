@@ -2103,9 +2103,21 @@ def get_coach_response(messages, context, coach_memory, config):
         or (bool((context.get("coup_propose") or "").strip()) and not (context.get("pv_coup_propose") or "").strip())
         or (bool((context.get("meilleur_coup") or "").strip()) and not (context.get("pv_meilleur_coup") or "").strip())
     )
+    # Points de départ supplémentaires pour le contrôle des suites de coups
+    # cités (issue #90, point 1) : coup_propose/coup_reel/meilleur_coup et
+    # les lignes (PV) du moteur, tous déjà présents dans `context` pour
+    # construire context_text ci-dessus — jamais recalculés, simplement
+    # relus tels quels.
+    coup_propose_ctx = (context or {}).get("coup_propose") or ""
+    coup_reel_ctx = (context or {}).get("coup_reel") or ""
+    meilleur_coup_ctx = (context or {}).get("meilleur_coup") or ""
+    pv_coup_propose_ctx = (context or {}).get("pv_coup_propose") or ""
+    pv_meilleur_coup_ctx = (context or {}).get("pv_meilleur_coup") or ""
     fiabilite = coach_reliability.evaluer_fiabilite(
         response, fen_reference, fen_reference2,
         analyse_indisponible=analyse_indisponible_ctx, verdict_partiel=verdict_partiel_ctx,
+        coup_propose=coup_propose_ctx, coup_reel=coup_reel_ctx, meilleur_coup=meilleur_coup_ctx,
+        pv_coup_propose=pv_coup_propose_ctx, pv_meilleur_coup=pv_meilleur_coup_ctx,
     )
     avertissement = None
     if fiabilite["alertes"]:
@@ -2137,6 +2149,8 @@ def get_coach_response(messages, context, coach_memory, config):
             fiabilite2 = coach_reliability.evaluer_fiabilite(
                 response2, fen_reference, fen_reference2,
                 analyse_indisponible=analyse_indisponible_ctx, verdict_partiel=verdict_partiel_ctx,
+                coup_propose=coup_propose_ctx, coup_reel=coup_reel_ctx, meilleur_coup=meilleur_coup_ctx,
+                pv_coup_propose=pv_coup_propose_ctx, pv_meilleur_coup=pv_meilleur_coup_ctx,
             )
             if response2 and not fiabilite2["alertes"]:
                 response = response2

@@ -20,12 +20,24 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
     tournure inhabituelle peut échapper à la détection (faux négatif), ou une
     couleur mentionnée par hasard à proximité d'un type de pièce sans lien
     réel peut déclencher une fausse alerte (faux positif) ;
-  - le contrôle "case/pièce" et le contrôle "coup cité" ne connaissent que
-    la position de départ et la position actuelle transmises par l'appelant
-    (pas chaque position intermédiaire d'une ligne hypothétique citée en
-    prose) : un coup ou une case cités dans une ligne hypothétique profonde
-    peuvent donc être signalés à tort (faux positif), ou une vraie erreur sur
-    une position intermédiaire peut ne pas être détectée (faux négatif) ;
+  - le contrôle "case/pièce" ne connaît que la position de départ et la
+    position actuelle transmises par l'appelant (pas chaque position
+    intermédiaire d'une ligne hypothétique citée en prose) : une case citée
+    dans une ligne hypothétique profonde peut donc être signalée à tort
+    (faux positif), ou une vraie erreur sur une position intermédiaire peut
+    ne pas être détectée (faux négatif) ;
+  - le contrôle "suite de coups cités" (issue #90) rejoue les coups cités
+    À LA SUITE les uns des autres (même phrase/proposition) depuis la
+    position de départ, la position actuelle, après le coup proposé/réel/
+    meilleur, et chaque position intermédiaire des lignes (PV) fournies au
+    coach pour le coup proposé et le meilleur coup — une suite jouable
+    depuis AU MOINS UN de ces points de départ n'est jamais signalée. Une
+    ligne hypothétique qui ne part d'AUCUN de ces points reste cependant
+    hors de portée (faux négatif assumé), et une suite dont l'échec ne
+    s'explique que par une notation ambiguë, invalide, entre parenthèses ou
+    introduite par "si" n'est jamais signalée non plus (prudence délibérée,
+    cf. detecter_suites_illegales — un faux négatif occasionnel est
+    préférable à un faux positif, qui déclenche une relance inutile) ;
   - ces contrôles ne vérifient JAMAIS la justesse stratégique ou tactique de
     l'explication, seulement des faits bruts (existence d'un type de pièce,
     contenu d'une case, légalité d'un coup) : une réponse peut rester fausse
@@ -276,55 +288,235 @@ def _variante_trait_inverse(board: "chess.Board"):
         return None
 
 
-def detecter_coups_illegaux(texte: str, boards_reference: list) -> list:
-    """Détecte un coup cité (notation SAN) illégal sur TOUTES les positions
-    de référence fournies, trait inversé compris (issue #87, point 5) —
-    typiquement la position de départ et la position actuelle de l'exercice.
-    Volontairement tolérant : un coup légal sur AU MOINS UNE des positions
-    de référence (dans un camp comme dans l'autre) n'est jamais signalé
-    (une ligne hypothétique citée en prose peut tout à fait partir d'une
-    position différente de ces deux-là, cf. limites en en-tête de module).
-    Retourne une liste de dicts {"type": "coup_illegal", "detail": str}."""
-    if not boards_reference:
-        return []
-    boards_essai = list(boards_reference)
-    for b in boards_reference:
-        variante = _variante_trait_inverse(b)
-        if variante is not None:
-            boards_essai.append(variante)
-    alertes = []
-    deja_vus = set()
-    for m in _SAN_RE.finditer(texte):
-        candidat = m.group(1)
-        if candidat in deja_vus or _CASE_SEULE_RE.match(candidat):
+# Séparateur ADMIS entre deux coups cités consécutifs d'une même suite
+# (issue #90, point 1) : espace(s)/virgule(s), numéro de coup ("12." /
+# "12..." / "6...") et annotations (!, ?, !?, ?!) — n'importe quel autre
+# texte entre deux coups (un mot de prose, "...") met fin à la suite en
+# cours, qui en démarre une nouvelle à partir du coup suivant.
+_SEPARATEUR_SUITE_RE = re.compile(r"^(?:[\s,]|\d+\.{1,3}|[!?])*$")
+
+# Un "si" isolé juste avant un coup cité signale une hypothèse non confirmée
+# ("si Dxd5, les Blancs gagnent...") — jamais vérifiée (point 2, prudence).
+_SI_HYPOTHETIQUE_RE = re.compile(r"\bsi\b\s*$", re.IGNORECASE)
+
+
+def _extraire_suites(texte: str) -> list:
+    """Regroupe les coups cités en notation SAN en suites (issue #90, point
+    1) : des coups consécutifs dans le texte, séparés uniquement par un
+    espace, une virgule, un numéro de coup ou une annotation, sont destinés
+    à être joués DANS L'ORDRE sur le plateau, plutôt que vérifiés isolément
+    chacun sur son propre coup — ce qui produisait le faux positif réel
+    ayant motivé cette issue ("bxc6" dans "Bxc6+ bxc6" n'est illégal
+    qu'isolé, pas joué à la suite de "Bxc6+").
+
+    Retourne une liste de dicts {"coups": [str, ...] (notation SAN inchangée,
+    casse jamais modifiée), "texte": str (sous-chaîne d'origine), "douteuse":
+    bool, "raison_doute": str|None} — "douteuse" signale un coup cité entre
+    parenthèses ou introduit par "si" (hypothèse, point 2) : une telle suite
+    n'est jamais vérifiée, ni comme légale ni comme illégale."""
+    candidats = [
+        m for m in _SAN_RE.finditer(texte)
+        if not _CASE_SEULE_RE.match(m.group(1))
+    ]
+    suites_brutes = []
+    courante = None
+    for m in candidats:
+        if courante is not None:
+            gap = texte[courante["fin"]:m.start()]
+            if _SEPARATEUR_SUITE_RE.match(gap):
+                courante["coups"].append(m.group(1))
+                courante["fin"] = m.end()
+                continue
+            suites_brutes.append(courante)
+        courante = {"debut": m.start(), "fin": m.end(), "coups": [m.group(1)]}
+    if courante is not None:
+        suites_brutes.append(courante)
+
+    resultat = []
+    for s in suites_brutes:
+        avant = texte[max(0, s["debut"] - 20):s["debut"]]
+        apres = texte[s["fin"]:s["fin"] + 20]
+        douteuse, raison = False, None
+        if "(" in avant and avant.rfind("(") > avant.rfind(")") and ")" in apres:
+            douteuse, raison = True, "coup cité entre parenthèses (remarque hypothétique)"
+        elif _SI_HYPOTHETIQUE_RE.search(avant):
+            douteuse, raison = True, "coup introduit par \"si\" (hypothèse non confirmée)"
+        resultat.append({
+            "coups": s["coups"],
+            "texte": texte[s["debut"]:s["fin"]],
+            "douteuse": douteuse,
+            "raison_doute": raison,
+        })
+    return resultat
+
+
+def _tenter_suite(coups: list, board: "chess.Board") -> str:
+    """Essaie de jouer `coups` (notation SAN, dans l'ordre) depuis une COPIE
+    de `board` — jamais `board` lui-même. Retourne "ok" si toute la suite
+    est jouable jusqu'au bout, "ambigu"/"invalide" si un coup n'a pas pu
+    être résolu avec certitude (issue #90, point 2 : chess.AmbiguousMoveError/
+    chess.InvalidMoveError — jamais traité comme une preuve d'illégalité),
+    "illegal" sinon (coup syntaxiquement valide mais impossible depuis cette
+    position, ou pièce citée inexistante)."""
+    b = board.copy()
+    for coup in coups:
+        try:
+            move = b.parse_san(coup)
+        except chess.AmbiguousMoveError:
+            return "ambigu"
+        except chess.InvalidMoveError:
+            return "invalide"
+        except Exception:
+            return "illegal"
+        b.push(move)
+    return "ok"
+
+
+def _construire_candidats(fen_reference: str, fen_reference2: str = "",
+                           coup_propose: str = "", coup_reel: str = "",
+                           meilleur_coup: str = "", pv_coup_propose: str = "",
+                           pv_meilleur_coup: str = "") -> list:
+    """Construit les positions depuis lesquelles essayer de jouer une suite
+    de coups citée, dans l'ordre de priorité demandé (issue #90, point 1) :
+    position de départ, position actuelle, après le coup proposé, après le
+    coup réellement joué, après le meilleur coup, puis chaque position
+    intermédiaire des lignes (PV) calculées par le moteur pour le coup
+    proposé et pour le meilleur coup (en reprenant la suite à chacune de
+    leurs étapes) — et enfin, en dernier recours, le trait inversé de la
+    position de départ et de la position actuelle (une ligne citée en prose
+    alterne forcément les deux camps, cf. _variante_trait_inverse ;
+    conservé de l'issue #87 pour ne pas régresser sur un coup isolé cité du
+    point de vue de l'adversaire). Un coup ou une PV illisible/absent est
+    simplement ignoré (pas d'exception remontée à l'appelant).
+
+    Retourne une liste de tuples (label: str, board: chess.Board)."""
+    candidats = []
+    refs = []
+    for fen in (fen_reference, fen_reference2):
+        fen = (fen or "").strip()
+        if not fen:
             continue
-        deja_vus.add(candidat)
-        legal_quelque_part = False
-        for board in boards_essai:
+        try:
+            refs.append(chess.Board(fen))
+        except Exception as e:
+            logger.warning(f"[COACH_RELIABILITY] FEN de référence illisible : {e}")
+
+    board_depart = refs[0] if refs else None
+    if board_depart is not None:
+        candidats.append(("position de départ", board_depart))
+    for b in refs[1:]:
+        if b.fen() != board_depart.fen():
+            candidats.append(("position actuelle", b))
+
+    if board_depart is not None:
+        for label, coup in (
+            ("après le coup proposé", coup_propose),
+            ("après le coup réellement joué", coup_reel),
+            ("après le meilleur coup", meilleur_coup),
+        ):
+            coup = (coup or "").strip()
+            if not coup:
+                continue
+            b = board_depart.copy()
             try:
-                board.parse_san(candidat)
-                legal_quelque_part = True
-                break
+                b.push_san(coup)
             except Exception:
                 continue
-        if not legal_quelque_part:
-            alertes.append({
-                "type": "coup_illegal",
-                "detail": (
-                    f"coup cité \"{candidat}\" illégal sur la position de "
-                    "départ comme sur la position actuelle de l'exercice, "
-                    "trait inversé compris"
-                ),
-            })
+            candidats.append((label, b))
+
+        for label_ligne, pv in (
+            ("ligne du coup proposé", pv_coup_propose),
+            ("ligne du meilleur coup", pv_meilleur_coup),
+        ):
+            pv = (pv or "").strip()
+            if not pv:
+                continue
+            b = board_depart.copy()
+            for n, coup in enumerate(pv.split(), start=1):
+                try:
+                    b.push_san(coup)
+                except Exception:
+                    break
+                candidats.append((f"{label_ligne}, après {n} coup(s)", b.copy()))
+
+    for label, b in list(candidats):
+        if label in ("position de départ", "position actuelle"):
+            variante = _variante_trait_inverse(b)
+            if variante is not None:
+                candidats.append((f"{label} (trait inversé)", variante))
+
+    return candidats
+
+
+def detecter_suites_illegales(texte: str, candidats: list) -> list:
+    """Détecte une suite de coups cités à la suite les uns des autres
+    (issue #90, point 1) qu'AUCUNE des positions candidates ne permet de
+    jouer jusqu'au bout. Tolérant par construction : une suite jouable
+    depuis au moins une position candidate n'est jamais signalée — une ligne
+    hypothétique citée en prose peut tout à fait partir d'un point de départ
+    différent de ceux fournis (cf. limites en en-tête de module). Prudent
+    (point 2) : une suite dont l'échec ne s'explique, sur CHAQUE position
+    candidate essayée, que par une ambiguïté ou une notation invalide n'est
+    jamais signalée non plus, de même qu'une suite citée entre parenthèses
+    ou introduite par "si" (jamais vérifiée du tout) — mieux vaut un faux
+    négatif qu'une pastille rouge et une relance pour rien.
+
+    Retourne une liste de dicts {"type": "coup_illegal", "detail": str,
+    "coups_cites": list, "positions_essayees": list} — "positions_essayees"
+    (les libellés des candidats, dans l'ordre essayé) sert au journal
+    (issue #90, point 3) à juger ensuite un faux positif."""
+    if not candidats:
+        return []
+    alertes = []
+    deja_vues = set()
+    for suite in _extraire_suites(texte):
+        cle = tuple(suite["coups"])
+        if cle in deja_vues:
+            continue
+        deja_vues.add(cle)
+        if suite["douteuse"]:
+            continue
+        reussie = False
+        doute = False
+        for _label, board in candidats:
+            statut = _tenter_suite(suite["coups"], board)
+            if statut == "ok":
+                reussie = True
+                break
+            if statut in ("ambigu", "invalide"):
+                doute = True
+        if reussie or doute:
+            continue
+        labels_essayes = [label for label, _ in candidats]
+        if len(suite["coups"]) == 1:
+            detail = (
+                f"coup cité \"{suite['coups'][0]}\" illégal sur toutes les "
+                f"positions essayées ({len(labels_essayes)}), trait inversé "
+                "compris"
+            )
+        else:
+            detail = (
+                f"suite de coups citée \"{suite['texte']}\" injouable depuis "
+                f"toutes les positions essayées ({len(labels_essayes)})"
+            )
+        alertes.append({
+            "type": "coup_illegal",
+            "detail": detail,
+            "coups_cites": suite["coups"],
+            "positions_essayees": labels_essayes,
+        })
     return alertes
 
 
 def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str = "",
-                       analyse_indisponible: bool = False, verdict_partiel: bool = False) -> dict:
-    """Fonction principale (issue #87, point 5) : exécute les contrôles
-    déterministes disponibles sur `texte` et retourne un verdict de fiabilité
-    prêt à afficher ("couleur" vert/orange/rouge) et à journaliser. Ne sait
-    rien d'une éventuelle relance automatique (point 4) : c'est à l'appelant
+                       analyse_indisponible: bool = False, verdict_partiel: bool = False,
+                       coup_propose: str = "", coup_reel: str = "", meilleur_coup: str = "",
+                       pv_coup_propose: str = "", pv_meilleur_coup: str = "") -> dict:
+    """Fonction principale (issue #87, point 5 ; étendue par l'issue #90,
+    point 1) : exécute les contrôles déterministes disponibles sur `texte`
+    et retourne un verdict de fiabilité prêt à afficher ("couleur"
+    vert/orange/rouge) et à journaliser. Ne sait rien d'une éventuelle
+    relance automatique (point 4) : c'est à l'appelant
     (llm_coach.get_coach_response, qui orchestre la relance) d'ajuster
     couleur/raison après coup selon qu'elle a eu lieu et a corrigé ou non —
     cette fonction se contente d'évaluer LE TEXTE qu'on lui donne.
@@ -334,6 +526,13 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
     simplement l'une des deux hors exercice) — "" si non disponible(s) :
     les contrôles qui en dépendent sont alors simplement absents du rapport,
     jamais remplacés par une supposition.
+    coup_propose / coup_reel / meilleur_coup (notation SAN, depuis
+    fen_reference) et pv_coup_propose / pv_meilleur_coup (lignes SAN
+    calculées par le moteur depuis fen_reference, issue #90) : points de
+    départ supplémentaires pour le contrôle des SUITES de coups cités (cf.
+    _construire_candidats/detecter_suites_illegales) — "" si non
+    disponible(s), le contrôle se contente alors des positions de référence
+    seules, comme avant l'issue #90.
     analyse_indisponible / verdict_partiel : contexte transmis par
     l'appelant — motifs "orange" indépendants du texte lui-même (analyse
     moteur partielle ou indisponible).
@@ -359,9 +558,15 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "(limite : une case d'une ligne hypothétique peut être signalée à "
         "tort, ou une vraie erreur sur une position intermédiaire peut "
         "passer inaperçue)",
-        "légalité des coups cités en notation SAN sur la position de départ "
-        "et la position actuelle (limite : un coup d'une ligne hypothétique "
-        "profonde peut être signalé à tort, ou passer inaperçu)",
+        "légalité des SUITES de coups cités à la suite les uns des autres "
+        "(issue #90) : rejouées dans l'ordre depuis la position de départ, "
+        "la position actuelle, après le coup proposé/réel/meilleur, et "
+        "chaque étape des lignes (PV) calculées par le moteur pour le coup "
+        "proposé et le meilleur coup — jamais signalée si jouable depuis AU "
+        "MOINS UN de ces points de départ, ni si l'échec ne s'explique que "
+        "par une notation ambiguë/invalide/entre parenthèses/hypothétique "
+        "(\"si...\") (limite : une ligne qui ne part d'aucun de ces points "
+        "reste hors de portée, faux négatif assumé)",
     ]
 
     boards_reference = []
@@ -386,7 +591,11 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         alertes += detecter_echange_impossible(texte, board_pieces)
     if boards_reference:
         alertes += detecter_case_piece_incoherente(texte, boards_reference)
-        alertes += detecter_coups_illegaux(texte, boards_reference)
+    candidats_suites = _construire_candidats(
+        fen_reference, fen_reference2, coup_propose, coup_reel, meilleur_coup,
+        pv_coup_propose, pv_meilleur_coup,
+    )
+    alertes += detecter_suites_illegales(texte, candidats_suites)
 
     if alertes:
         premiere = alertes[0]["detail"]
