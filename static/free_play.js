@@ -52,7 +52,7 @@ function abandonFreeGame() {
   if (boardEl) boardEl.onclick = null;
   const statusEl = document.getElementById("free-play-status");
   if (statusEl) statusEl.textContent = "Partie abandonnée.";
-  showGameOverBanner({ gagnant: null, message: "Partie abandonnée." }, null, () => analyserPartieDepuisPgn(_freeGamePgnForAnalysis()));
+  showGameOverBanner({ gagnant: null, message: "Partie abandonnée." }, null, () => analyserPartieDepuisPgn(_freeGamePgnForAnalysis()), undefined, true);
   // Issue #65 point 5 : "Demander l'avis du coach" doit se griser dès que la
   // partie est terminée (askFreeCoach devient un no-op) — updateSharedControlBar()
   // relit MODE_CAPS.free.askCoachAvailable (controls.js), qui teste freeGameOver.

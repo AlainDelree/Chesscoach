@@ -127,7 +127,8 @@ function abandonPedagogicGame() {
     { gagnant: opposant, message: "Partie abandonnée par Alain — défaite." },
     pedagogicCampAlain,
     () => analyserPartieDepuisPgn(_pedagogicGamePgnForAnalysis()),
-    commenterPartiePedagogique
+    commenterPartiePedagogique,
+    true
   );
   // Issue #65 point 5 : grise "Demander l'avis du coach" (askCoachAvailable,
   // controls.js) dès l'abandon, et déplace "Jouer les Blancs/Noirs" en haut

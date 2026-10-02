@@ -24,6 +24,7 @@ let openingGameOver   = false; // fin de partie détectée côté serveur (issue
 let openingAbandonne  = false; // fin de partie spécifiquement par "Abandonner" (issue #52, cf. coachBuildContext)
 let openingFenAvantCoup     = null;  // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 let openingInBookAvantCoup  = false; // valeur de openingInBook avant ce même coup
+let openingTheoryEndAnnounced = false; // message "Fin de la théorie" déjà affiché pour cette partie (issue #100, point 2)
 
 // ── Liste déroulante des ouvertures (issue #95, point 4) ────────────────────
 // Remplace la saisie libre du nom d'ouverture — même principe que
@@ -175,7 +176,9 @@ function abandonOpeningGame() {
   showGameOverBanner(
     { gagnant: opposant, message: "Partie abandonnée par Alain — défaite." },
     openingCampAlain,
-    () => analyserPartieDepuisPgn(_openingGamePgnForAnalysis())
+    () => analyserPartieDepuisPgn(_openingGamePgnForAnalysis()),
+    undefined,
+    true
   );
   // Issue #65 point 5 : grise "Demander l'avis du coach" (askCoachAvailable,
   // controls.js) dès l'abandon.
@@ -231,6 +234,7 @@ function startOpeningGame(camp) {
   openingAbandonne = false;
   openingFenAvantCoup    = null;
   openingInBookAvantCoup = false;
+  openingTheoryEndAnnounced = false;
   const statusEl = document.getElementById("opening-status");
   if (statusEl) statusEl.textContent = `Recherche de la théorie pour "${openingName}"...`;
   socket.emit("opening_start", { camp: openingCampAlain, opening_name: openingName });
@@ -260,6 +264,32 @@ function updateOpeningStatus() {
   text += openingInBook ? " — dans le livre" : " — hors du livre (Stockfish affaibli)";
   if (openingWaiting) text += " — le coach réfléchit...";
   statusEl.textContent = text;
+}
+
+// Fin de théorie (issue #100, point 2) : le livre d'ouvertures gm2001.bin ne
+// connaît plus de coup pour la position atteinte (coup d'Alain absent des
+// entrées du livre, ou plus aucune entrée du tout pour la position — y
+// compris côté adversaire, qui bascule alors aussi sur Stockfish affaibli,
+// cf. app.py on_opening_move) : message bref et unique, dans le chat du coach
+// ET la ligne d'état, plutôt qu'un simple changement silencieux du suffixe
+// "— dans/hors du livre" de updateOpeningStatus() (facile à manquer). Jamais
+// répété pour la même partie (openingTheoryEndAnnounced, remis à faux
+// uniquement au démarrage d'une nouvelle partie, startOpeningGame/
+// opening_started) — y compris si la partie redevient "hors livre" plusieurs
+// fois de suite (ne peut pas arriver, _opening_in_book ne repasse jamais à
+// vrai côté serveur, mais la garde reste par prudence si ce invariant
+// changeait). extraClass "coach-bubble-announce" (même mécanique que
+// l'annonce de démarrage ci-dessus) : ce message vient de l'application, pas
+// d'une question d'Alain, il ne doit donc jamais à lui seul déclencher le
+// plateau réduit mobile.
+const OPENING_THEORY_END_MESSAGE = "Fin de la théorie : le livre d'ouvertures ne connaît plus cette position, la partie continue contre le moteur.";
+
+function _announceOpeningTheoryEnd() {
+  if (openingTheoryEndAnnounced) return;
+  openingTheoryEndAnnounced = true;
+  _coachRenderBubble("assistant", OPENING_THEORY_END_MESSAGE, false, "coach-bubble-announce");
+  const statusEl = document.getElementById("opening-status");
+  if (statusEl) statusEl.textContent = OPENING_THEORY_END_MESSAGE;
 }
 
 function openingIsAlainTurn() {
@@ -337,6 +367,7 @@ if (typeof socket !== "undefined") {
     openingAbandonne = false;
     openingCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     openingInBook    = !!data.in_book;
+    openingTheoryEndAnnounced = false;
     setActiveMode("opening");
     if (typeof placeOpeningStartButtonsForViewport === "function") placeOpeningStartButtonsForViewport();
 
@@ -364,7 +395,15 @@ if (typeof socket !== "undefined") {
   socket.on("opening_stockfish_move", (data) => {
     openingWaiting = false;
     if (!openingActive || !openingGame || !data) return;
+    // Transition "dans le livre" -> "hors du livre" détectée ici (issue #100,
+    // point 2) : wasInBook capturé AVANT d'écraser openingInBook avec la
+    // nouvelle valeur reçue — couvre aussi bien un coup d'Alain absent du
+    // livre (_opening_in_book basculé côté serveur avant l'éventuelle réponse
+    // de l'adversaire) qu'une réponse d'adversaire introuvable dans le livre
+    // pour une position où le coup d'Alain, lui, y figurait encore.
+    const wasInBook = openingInBook;
     openingInBook = !!data.in_book;
+    const sortieDeLivre = wasInBook && !openingInBook;
 
     if (data.uci) {
       const move = openingGame.move({
@@ -383,9 +422,14 @@ if (typeof socket !== "undefined") {
       showGameOverBanner(data.game_over_info, openingCampAlain);
       if (typeof updateSharedControlBar === "function") updateSharedControlBar();
       if (typeof placeOpeningStartButtonsForViewport === "function") placeOpeningStartButtonsForViewport();
+      // Peu probable (la partie se termine le même coup que la sortie du
+      // livre) mais possible (ex. mat immédiat hors théorie) : le message de
+      // fin de théorie reste pertinent même si la partie est déjà terminée.
+      if (sortieDeLivre) _announceOpeningTheoryEnd();
       return;
     }
     updateOpeningStatus();
+    if (sortieDeLivre) _announceOpeningTheoryEnd();
   });
 
   socket.on("opening_comment", (data) => {
