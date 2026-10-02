@@ -144,6 +144,12 @@ reformulations futures), utiliser une directive :
   déclencher aucune alerte sur CE cas (utile pour les régressions de
   détection, ex. une suite de coups auparavant signalée « illégale » à
   tort, ou un échange mal qualifié).
+- `reponse_simulee_signalee: <texte>` — symétrique (issue #97) : en
+  simulant ce texte, `coach_reliability.evaluer_fiabilite` DOIT déclencher
+  au moins une alerte — sert à vérifier qu'un assouplissement d'un contrôle
+  (ex. la tolérance des lectures multiples ajoutée par l'issue #97) n'a
+  pas, par la même occasion, affaibli sa capacité à détecter une vraie
+  incohérence déjà couverte.
 
 ### Comment un fait est vérifié
 
@@ -196,7 +202,13 @@ le commentaire) et `pastille_attendue`, puis à supprimer le commentaire.
   motif interdit par expression régulière limité au voisinage de « Qxh4
   gxh4 » pour l'étiquette « équilibré » (la dame noire perdue contre un
   pion, 8 points, qualifiée à tort d'« échange équilibré » — voir
-  `game_facts._resultat_echange_case`).
+  `game_facts._resultat_echange_case`). Étendu par l'issue #97 : quatre
+  `reponse_simulee_verte`/`reponse_simulee_signalee` qui couvrent « Bxh6
+  Qxh6 » (fou contre fou, bilan nul) — équilibré avec « Bh6 » cité juste
+  avant la parenthèse (vert), sans « Bh6 » cité du tout (lecture ambiguë,
+  toujours vert), qualifié à tort de « favorable aux Blancs » (signalé) et
+  non-régression de « Qxh4 gxh4 » qualifié d'« équilibré » (toujours
+  signalé).
 
 Deux cas supplémentaires, tirés de `parties_test_coach.pgn` (parties sans
 erreur connue, pour avoir aussi des cas de référence « tout va bien »),

@@ -72,7 +72,32 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
     hypothetique"]) reste exclue, cf. _extraire_suites : le cas réel motivant
     ces deux contrôles citait justement sa suite entre parenthèses
     ("un échange de dames (Qxe8 Qxe8)"), ce que l'ancien filtre "douteuse"
-    (issue #90) aurait exclu à tort.
+    (issue #90) aurait exclu à tort ;
+  - trois correctifs supplémentaires (issue #97, cas réel : "les Noirs
+    peuvent jouer Bh6 pour échanger les fous (Bxh6 Qxh6), un échange
+    équilibré" signalé à tort comme un gain net de 3 points pour les Noirs) :
+    (1) un coup cité avec un "x" doit désormais être une VRAIE prise (y
+    compris en passant, cf. Board.is_capture) sur la position essayée, sinon
+    il est rejeté pour cette lecture — python-chess accepte sinon "Bxh6"
+    même sur une case vide, en ignorant simplement le "x" (_tenter_suite) ;
+    (2) l'extraction des suites (_extraire_suites) inclut désormais, pour
+    une suite entre parenthèses, le dernier coup cité juste avant la
+    parenthèse dans la même proposition ("Bh6" dans l'exemple ci-dessus)
+    comme lecture candidate SUPPLÉMENTAIRE (coup_precedent, en plus de la
+    lecture isolée, jamais à la place) ; (3) les trois contrôles de
+    qualificatif ci-dessus (échanges mal qualifiés, échange de type,
+    bilan matériel annoncé) rassemblent maintenant TOUTES les lectures
+    valides d'une suite (positions candidates x avec/sans coup précédent
+    cité x avec/sans demi-coup caché, cf. _rassembler_lectures) et ne
+    signalent une incohérence que si TOUTES ces lectures contredisent le
+    texte — une seule lecture cohérente suffit à ne rien signaler. Ce
+    dernier changement élargit volontairement la tolérance (encore un faux
+    négatif préféré à un faux positif), au prix, documenté, d'un risque
+    accru qu'une lecture "chanceuse" découverte via un demi-coup caché
+    masque une vraie erreur sur une suite par ailleurs correctement
+    identifiée ; les alertes qui survivent journalisent désormais le nombre
+    de lectures valides retenues et leur résultat (ex. "3 lecture(s) valide
+    (s) : 0, -3, 3"), pour juger après coup un éventuel faux positif.
 """
 
 import logging
@@ -337,6 +362,35 @@ _SEPARATEUR_SUITE_RE = re.compile(r"^(?:[\s,]|\d+\.{1,3}|[!?])*$")
 # ("si Dxd5, les Blancs gagnent...") — jamais vérifiée (point 2, prudence).
 _SI_HYPOTHETIQUE_RE = re.compile(r"\bsi\b\s*$", re.IGNORECASE)
 
+# Fenêtre de recherche du "coup précédent cité" devant une parenthèse (issue
+# #97, point 2) — bornée par la première fin de phrase rencontrée en
+# remontant, pour ne jamais aller chercher un coup d'une proposition sans
+# rapport.
+_FENETRE_COUP_PRECEDENT = 80
+
+
+def _coup_precedent_cite(texte: str, position_parenthese: int) -> str:
+    """Cherche, juste avant la parenthèse ouvrante à `position_parenthese`
+    (position ABSOLUE dans `texte`), le DERNIER coup cité en notation SAN
+    dans la même proposition (issue #97, point 2) — ex. "les Noirs peuvent
+    jouer Bh6 pour échanger les fous (Bxh6 Qxh6)" retrouve "Bh6" comme coup
+    précédent de la suite entre parenthèses "Bxh6 Qxh6". Borné par la
+    première fin de phrase rencontrée en remontant (jamais au-delà) et par
+    _FENETRE_COUP_PRECEDENT caractères. Retourne "" si aucun coup cité n'est
+    trouvé dans cette fenêtre."""
+    debut = max(0, position_parenthese - _FENETRE_COUP_PRECEDENT)
+    morceau = texte[debut:position_parenthese]
+    derniere_frontiere = None
+    for mm in re.finditer(r"[.\n!?]", morceau):
+        derniere_frontiere = mm.end()
+    if derniere_frontiere is not None:
+        morceau = morceau[derniere_frontiere:]
+    candidats = [
+        m.group(1) for m in _SAN_RE.finditer(morceau)
+        if not _CASE_SEULE_RE.match(m.group(1))
+    ]
+    return candidats[-1] if candidats else ""
+
 
 def _extraire_suites(texte: str) -> list:
     """Regroupe les coups cités en notation SAN en suites (issue #90, point
@@ -349,9 +403,15 @@ def _extraire_suites(texte: str) -> list:
 
     Retourne une liste de dicts {"coups": [str, ...] (notation SAN inchangée,
     casse jamais modifiée), "texte": str (sous-chaîne d'origine), "douteuse":
-    bool, "raison_doute": str|None} — "douteuse" signale un coup cité entre
-    parenthèses ou introduit par "si" (hypothèse, point 2) : une telle suite
-    n'est jamais vérifiée, ni comme légale ni comme illégale."""
+    bool, "raison_doute": str|None, "coup_precedent": str} — "douteuse"
+    signale un coup cité entre parenthèses ou introduit par "si" (hypothèse,
+    point 2) : une telle suite n'est jamais vérifiée, ni comme légale ni
+    comme illégale. "coup_precedent" (issue #97, point 2) : pour une suite
+    entre parenthèses seulement, le dernier coup cité juste avant la
+    parenthèse ouvrante dans la même proposition (cf. _coup_precedent_cite),
+    "" si aucun — sert de lecture candidate SUPPLÉMENTAIRE (coup_precedent +
+    coups de la suite) aux contrôles ci-dessous, en plus de la lecture
+    isolée de la parenthèse elle-même, jamais à la place."""
     candidats = [
         m for m in _SAN_RE.finditer(texte)
         if not _CASE_SEULE_RE.match(m.group(1))
@@ -376,9 +436,12 @@ def _extraire_suites(texte: str) -> list:
         apres = texte[s["fin"]:s["fin"] + 20]
         douteuse, raison = False, None
         entre_parentheses, si_hypothetique = False, False
+        coup_precedent = ""
         if "(" in avant and avant.rfind("(") > avant.rfind(")") and ")" in apres:
             douteuse, raison = True, "coup cité entre parenthèses (remarque hypothétique)"
             entre_parentheses = True
+            position_parenthese = max(0, s["debut"] - 20) + avant.rfind("(")
+            coup_precedent = _coup_precedent_cite(texte, position_parenthese)
         elif _SI_HYPOTHETIQUE_RE.search(avant):
             douteuse, raison = True, "coup introduit par \"si\" (hypothèse non confirmée)"
             si_hypothetique = True
@@ -402,8 +465,21 @@ def _extraire_suites(texte: str) -> list:
             # vraie hypothèse "si...".
             "entre_parentheses": entre_parentheses,
             "si_hypothetique": si_hypothetique,
+            "coup_precedent": coup_precedent,
         })
     return resultat
+
+
+def _variantes_coups(suite: dict) -> list:
+    """Les lectures (listes de coups) candidates pour `suite` (issue #97,
+    point 2 et 3) : la suite telle que citée, et, si un coup précédent a été
+    trouvé juste avant la parenthèse (suite["coup_precedent"]), la même
+    suite PRÉCÉDÉE de ce coup — jamais à la place de la lecture isolée,
+    toujours en plus."""
+    variantes = [suite["coups"]]
+    if suite.get("coup_precedent"):
+        variantes.append([suite["coup_precedent"]] + suite["coups"])
+    return variantes
 
 
 def _tenter_suite(coups: list, board: "chess.Board") -> str:
@@ -413,7 +489,15 @@ def _tenter_suite(coups: list, board: "chess.Board") -> str:
     être résolu avec certitude (issue #90, point 2 : chess.AmbiguousMoveError/
     chess.InvalidMoveError — jamais traité comme une preuve d'illégalité),
     "illegal" sinon (coup syntaxiquement valide mais impossible depuis cette
-    position, ou pièce citée inexistante)."""
+    position, pièce citée inexistante, ou coup noté avec un "x" qui n'est
+    PAS réellement une prise sur cette position précise, issue #97, point 1).
+
+    Constat ayant motivé ce dernier cas (cas réel, exercice h4) : python-chess
+    accepte la notation "Bxh6" même quand la case d'arrivée est vide (il
+    ignore simplement le "x"), ce qui a fait rejouer un coup qui N'EST PAS
+    une prise comme s'il en était une, produisant un bilan matériel inventé.
+    `Board.is_capture` reconnaît aussi la prise en passant — un coup noté
+    avec "x" qui capture en passant reste donc accepté normalement."""
     b = board.copy()
     for coup in coups:
         try:
@@ -424,8 +508,23 @@ def _tenter_suite(coups: list, board: "chess.Board") -> str:
             return "invalide"
         except Exception:
             return "illegal"
+        if "x" in coup and not b.is_capture(move):
+            return "illegal"
         b.push(move)
     return "ok"
+
+
+def _jouer_suite(coups: list, board: "chess.Board"):
+    """Comme `_tenter_suite`, mais retourne directement la position
+    d'arrivée (COPIE de `board`, jamais modifiée) si `coups` est
+    intégralement jouable, None sinon — évite de dupliquer le rejeu dans
+    chaque appelant (issue #97)."""
+    if _tenter_suite(coups, board) != "ok":
+        return None
+    b = board.copy()
+    for coup in coups:
+        b.push(b.parse_san(coup))
+    return b
 
 
 def _construire_candidats(fen_reference: str, fen_reference2: str = "",
@@ -521,6 +620,77 @@ def _legal_apres_demi_coup_cache(coup: str, board: "chess.Board") -> bool:
         if _tenter_suite([coup], board_intermediaire) == "ok":
             return True
     return False
+
+
+def _lectures_demi_coup_cache(coups: list, board: "chess.Board") -> list:
+    """Variante de `_legal_apres_demi_coup_cache` qui accepte une suite
+    entière (pas seulement un coup isolé) et retourne TOUTES les positions
+    d'arrivée obtenues en insérant, un seul à la fois, chacun des demi-coups
+    légaux de `board` avant d'essayer `coups` (issue #97, point 3) — au lieu
+    d'un simple booléen, nécessaire ici pour calculer le bilan matériel de
+    chaque lecture ainsi découverte. Retourne une liste de tuples
+    (board_avant: chess.Board, board_apres: chess.Board)."""
+    resultats = []
+    for coup_cache in board.legal_moves:
+        board_intermediaire = board.copy()
+        board_intermediaire.push(coup_cache)
+        board_apres = _jouer_suite(coups, board_intermediaire)
+        if board_apres is not None:
+            resultats.append((board_intermediaire, board_apres))
+    return resultats
+
+
+def _rassembler_lectures(suite: dict, candidats: list) -> list:
+    """Rassemble TOUTES les lectures valides d'une suite citée (issue #97,
+    point 3) : combine chaque position candidate (`candidats`), chaque
+    lecture des coups (_variantes_coups — avec ou sans le coup précédent
+    cité, point 2) et, quand la lecture directe échoue, chaque demi-coup
+    intermédiaire caché possible (_lectures_demi_coup_cache, même principe
+    que _legal_apres_demi_coup_cache mais généralisé à une suite entière).
+    Une lecture qui mène à la MÊME position d'arrivée qu'une lecture déjà
+    retenue (même FEN) n'est comptée qu'une seule fois — atteinte par deux
+    chemins différents, ce n'est pas une lecture supplémentaire.
+
+    Retourne une liste de tuples (board_avant: chess.Board, board_apres:
+    chess.Board), une entrée par lecture DISTINCTE — [] si la suite ne se
+    joue d'aucune façon connue (aucune lecture, cf. appelants : dans ce cas,
+    le contrôle appelant ne signale rien, comme avant cette issue)."""
+    lectures = []
+    vues = set()
+    for _label, board in candidats:
+        for coups in _variantes_coups(suite):
+            board_apres = _jouer_suite(coups, board)
+            if board_apres is not None:
+                cle = board_apres.fen()
+                if cle not in vues:
+                    vues.add(cle)
+                    lectures.append((board, board_apres))
+                continue
+            for board_avant_c, board_apres_c in _lectures_demi_coup_cache(coups, board):
+                cle = board_apres_c.fen()
+                if cle not in vues:
+                    vues.add(cle)
+                    lectures.append((board_avant_c, board_apres_c))
+    return lectures
+
+
+def _resume_valeurs(valeurs: list) -> str:
+    """Résumé, pour le journal (issue #97, point 4), des résultats
+    numériques de TOUTES les lectures valides d'une suite — DÉDUPLIQUÉS,
+    plusieurs lectures distinctes (positions candidates, coup précédent cité
+    ou non, demi-coup caché différent) donnant très souvent le même résultat
+    matériel (cf. _rassembler_lectures, qui déduplique seulement par
+    position d'arrivée, plus fine que ce résumé). Ex. "3 lecture(s)
+    distincte(s) : 0, -3, 3"."""
+    distinctes = sorted(set(valeurs))
+    return f"{len(distinctes)} lecture(s) distincte(s) : {', '.join(str(v) for v in distinctes)}"
+
+
+def _delta_materiel(board_avant: "chess.Board", board_apres: "chess.Board") -> int:
+    return (
+        (_materiel_camp(board_apres, chess.WHITE) - _materiel_camp(board_apres, chess.BLACK))
+        - (_materiel_camp(board_avant, chess.WHITE) - _materiel_camp(board_avant, chess.BLACK))
+    )
 
 
 def detecter_suites_illegales(texte: str, candidats: list) -> list:
@@ -721,6 +891,19 @@ def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
     evaluer_fiabilite, qui l'utilise pour choisir la couleur de la pastille
     sans jamais la dégrader en rouge pour une incohérence mineure.
 
+    Lectures multiples (issue #97, point 3 — cas réel ayant motivé le
+    changement : \"les Noirs peuvent jouer Bh6 pour échanger les fous (Bxh6
+    Qxh6), un échange équilibré\" signalé à tort, alors que c'est exact une
+    fois Bh6 pris en compte). `_rassembler_lectures` combine chaque position
+    candidate, chaque lecture des coups (avec ou sans le coup précédent cité
+    juste avant la parenthèse, point 2) et, si besoin, un demi-coup
+    intermédiaire caché (point 3) : CHAQUE lecture valide ainsi obtenue est
+    comparée au qualificatif, et une incohérence n'est signalée QUE SI
+    TOUTES les lectures valides la contredisent — une seule lecture
+    cohérente avec le texte suffit à ne rien signaler. Si la suite ne se
+    joue d'aucune façon connue, rien n'est signalé non plus (comme avant
+    cette issue, prudence inchangée).
+
     Retourne une liste de dicts {"type": "echange_mal_qualifie", "gravite":
     str, "detail": str}."""
     if not candidats:
@@ -731,36 +914,29 @@ def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
             continue
         fenetre = _fenetre_qualificatif_echange(texte, suite)
 
-        board_avant = None
-        board_apres = None
-        for _label, board in candidats:
-            if _tenter_suite(suite["coups"], board) == "ok":
-                board_avant = board
-                board_apres = board.copy()
-                for coup in suite["coups"]:
-                    board_apres.push(board_apres.parse_san(coup))
-                break
-        if board_avant is None:
+        lectures = _rassembler_lectures(suite, candidats)
+        if not lectures:
             continue
-
-        delta = (
-            (_materiel_camp(board_apres, chess.WHITE) - _materiel_camp(board_apres, chess.BLACK))
-            - (_materiel_camp(board_avant, chess.WHITE) - _materiel_camp(board_avant, chess.BLACK))
-        )
-        gravite = "rouge" if abs(delta) >= SEUIL_ECHANGE_GRAVE_PTS else "orange"
+        deltas = [_delta_materiel(av, ap) for av, ap in lectures]
+        delta_pire = max(deltas, key=abs)
+        gravite = "rouge" if abs(delta_pire) >= SEUIL_ECHANGE_GRAVE_PTS else "orange"
+        resume_lectures = _resume_valeurs(deltas)
 
         for m in _QUALIF_EQUILIBRE_RE.finditer(fenetre):
-            if delta == 0 or _qualificatif_nie(fenetre, m.start()):
+            if _qualificatif_nie(fenetre, m.start()):
                 continue
-            camp_gagnant = "les Blancs" if delta > 0 else "les Noirs"
+            if any(d == 0 for d in deltas):
+                continue
+            camp_gagnant = "les Blancs" if delta_pire > 0 else "les Noirs"
             alertes.append({
                 "type": "echange_mal_qualifie",
                 "gravite": gravite,
                 "detail": (
                     f"\"{m.group(0)}\" accolé à la suite citée \"{suite['texte']}\" "
-                    "prétend un échange équilibré, alors que cette suite, rejouée "
-                    f"sur l'échiquier, donne un gain net de {abs(delta)} point(s) "
-                    f"pour {camp_gagnant}"
+                    "prétend un échange équilibré, alors qu'AUCUNE lecture valide de "
+                    f"cette suite, rejouée sur l'échiquier ({resume_lectures}), ne "
+                    f"donne un bilan nul — au pire, un gain net de {abs(delta_pire)} "
+                    f"point(s) pour {camp_gagnant}"
                 ),
             })
 
@@ -782,22 +958,26 @@ def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
                 couleur = _couleur_depuis_mot(camp_m.group(1))
                 if couleur is None:
                     continue
-                delta_pour_camp = delta if couleur == chess.WHITE else -delta
-                est_coherent = (delta_pour_camp > 0) if attendu_positif else (delta_pour_camp < 0)
-                if est_coherent:
+                deltas_pour_camp = [d if couleur == chess.WHITE else -d for d in deltas]
+                coherent_quelque_part = any(
+                    (dc > 0) if attendu_positif else (dc < 0) for dc in deltas_pour_camp
+                )
+                if coherent_quelque_part:
                     continue
                 camp_txt = "Blancs" if couleur == chess.WHITE else "Noirs"
-                resultat_reel = (
-                    "équilibré" if delta == 0 else
-                    f"favorable aux {'Blancs' if delta > 0 else 'Noirs'} ({abs(delta)} point(s) net)"
+                resultats_txt = ", ".join(
+                    "équilibré" if d == 0 else
+                    f"favorable aux {'Blancs' if d > 0 else 'Noirs'} ({abs(d)} point(s) net)"
+                    for d in sorted(set(deltas))
                 )
                 alertes.append({
                     "type": "echange_mal_qualifie",
                     "gravite": gravite,
                     "detail": (
                         f"\"{m.group(0)}\" (associé aux {camp_txt}) accolé à la suite "
-                        f"citée \"{suite['texte']}\" ne correspond pas au résultat "
-                        f"matériel réel de cette suite, rejouée sur l'échiquier : {resultat_reel}"
+                        f"citée \"{suite['texte']}\" ne correspond à AUCUNE lecture "
+                        f"valide de cette suite, rejouée sur l'échiquier ({resume_lectures} "
+                        f"— détail : {resultats_txt})"
                     ),
                 })
     return alertes
@@ -953,13 +1133,21 @@ def detecter_echange_type_incoherent(texte: str, candidats: list) -> list:
 
     Même construction que detecter_echanges_mal_qualifies (fenêtre de
     proximité autour de la suite via _fenetre_qualificatif_echange, suite
-    rejouée via _tenter_suite) — ne duplique ni ne recalcule la légalité.
-    Différence volontaire sur le filtre \"douteuse\" : une suite citée ENTRE
-    PARENTHÈSES par simple concision (cas réel ci-dessus) n'est PAS ignorée
-    ici (seul suite[\"si_hypothetique\"] l'est, cf. _extraire_suites) — un
-    filet de sécurité reste la tentative de rejeu elle-même (board_avant
-    reste None, donc ignoré, si la suite ne se joue depuis aucune position
-    candidate).
+    rejouée via _rassembler_lectures) — ne duplique ni ne recalcule la
+    légalité. Différence volontaire sur le filtre \"douteuse\" : une suite
+    citée ENTRE PARENTHÈSES par simple concision (cas réel ci-dessus) n'est
+    PAS ignorée ici (seul suite[\"si_hypothetique\"] l'est, cf.
+    _extraire_suites) — un filet de sécurité reste la tentative de rejeu
+    elle-même ([] lectures, donc ignoré, si la suite ne se joue d'aucune
+    façon connue).
+
+    Lectures multiples (issue #97, point 3, même principe que
+    detecter_echanges_mal_qualifies) : une incohérence n'est signalée que si
+    TOUTES les lectures valides de la suite (cf. _rassembler_lectures —
+    positions candidates, avec ou sans le coup précédent cité, avec ou sans
+    demi-coup caché) montrent qu'au moins un camp ne perd aucune pièce de ce
+    type ; une seule lecture où CHAQUE camp perd bien une pièce de ce type
+    suffit à ne rien signaler.
 
     Retourne une liste de dicts {"type": "echange_type_incoherent",
     "gravite": "orange"/"rouge" (même seuil SEUIL_ECHANGE_GRAVE_PTS que
@@ -975,51 +1163,46 @@ def detecter_echange_type_incoherent(texte: str, candidats: list) -> list:
         if not matches:
             continue
 
-        board_avant = None
-        board_apres = None
-        for _label, board in candidats:
-            if _tenter_suite(suite["coups"], board) == "ok":
-                board_avant = board
-                board_apres = board.copy()
-                for coup in suite["coups"]:
-                    board_apres.push(board_apres.parse_san(coup))
-                break
-        if board_avant is None:
+        lectures = _rassembler_lectures(suite, candidats)
+        if not lectures:
             continue
+        deltas = [_delta_materiel(av, ap) for av, ap in lectures]
+        delta_pire = max(deltas, key=abs)
+        gravite = "rouge" if abs(delta_pire) >= SEUIL_ECHANGE_GRAVE_PTS else "orange"
+        resume_lectures = _resume_valeurs(deltas)
 
         for m in matches:
             if _qualificatif_nie(fenetre, m.start()):
                 continue
             piece_type = _NOM_PIECE_TYPE[m.group(1).lower()]
-            perte_blancs = (
-                len(board_avant.pieces(piece_type, chess.WHITE))
-                - len(board_apres.pieces(piece_type, chess.WHITE))
-            )
-            perte_noirs = (
-                len(board_avant.pieces(piece_type, chess.BLACK))
-                - len(board_apres.pieces(piece_type, chess.BLACK))
-            )
-            if perte_blancs >= 1 and perte_noirs >= 1:
+            pertes_par_lecture = []
+            for board_avant, board_apres in lectures:
+                perte_blancs = (
+                    len(board_avant.pieces(piece_type, chess.WHITE))
+                    - len(board_apres.pieces(piece_type, chess.WHITE))
+                )
+                perte_noirs = (
+                    len(board_avant.pieces(piece_type, chess.BLACK))
+                    - len(board_apres.pieces(piece_type, chess.BLACK))
+                )
+                pertes_par_lecture.append((perte_blancs, perte_noirs))
+            if any(pb >= 1 and pn >= 1 for pb, pn in pertes_par_lecture):
                 continue
             nom = _NOM_PIECE_AFFICHAGE[piece_type]
+            perte_blancs, perte_noirs = pertes_par_lecture[0]
             camps_sans_perte = []
             if perte_blancs < 1:
                 camps_sans_perte.append("les Blancs")
             if perte_noirs < 1:
                 camps_sans_perte.append("les Noirs")
-            delta = (
-                (_materiel_camp(board_apres, chess.WHITE) - _materiel_camp(board_apres, chess.BLACK))
-                - (_materiel_camp(board_avant, chess.WHITE) - _materiel_camp(board_avant, chess.BLACK))
-            )
-            gravite = "rouge" if abs(delta) >= SEUIL_ECHANGE_GRAVE_PTS else "orange"
             alertes.append({
                 "type": "echange_type_incoherent",
                 "gravite": gravite,
                 "detail": (
                     f"\"{m.group(0)}\" accolé à la suite citée \"{suite['texte']}\" "
-                    f"prétend que chaque camp perd un(e) {nom}, alors que "
-                    f"{' et '.join(camps_sans_perte)} n'en perd(ent) aucun(e) dans "
-                    "cette suite, rejouée sur l'échiquier"
+                    f"prétend que chaque camp perd un(e) {nom}, alors que, dans "
+                    f"TOUTES les lectures valides de cette suite ({resume_lectures}), "
+                    f"{' et '.join(camps_sans_perte)} n'en perd(ent) aucun(e)"
                 ),
             })
     return alertes
@@ -1072,6 +1255,13 @@ def detecter_bilan_materiel_annonce(texte: str, candidats: list) -> list:
     exclut une suite, jamais suite[\"entre_parentheses\"]) — ne duplique ni
     ne recalcule la légalité des coups.
 
+    Lectures multiples (issue #97, point 3, même principe que
+    detecter_echanges_mal_qualifies) : ce contrôle porte sur le bilan
+    ABSOLU de la position d'arrivée, pas sur un delta — une incohérence
+    n'est signalée que si TOUTES les lectures valides de la suite (cf.
+    _rassembler_lectures) donnent un écart d'au moins SEUIL_BILAN_MATERIEL_PTS ;
+    une seule lecture quasi équilibrée suffit à ne rien signaler.
+
     Retourne une liste de dicts {"type": "bilan_materiel_incoherent",
     "gravite": "orange"/"rouge" (gravité plus forte au-delà de
     SEUIL_BILAN_MATERIEL_GRAVE_PTS), "detail": str}."""
@@ -1086,25 +1276,19 @@ def detecter_bilan_materiel_annonce(texte: str, candidats: list) -> list:
         if not matches:
             continue
 
-        board_avant = None
-        board_apres = None
-        for _label, board in candidats:
-            if _tenter_suite(suite["coups"], board) == "ok":
-                board_avant = board
-                board_apres = board.copy()
-                for coup in suite["coups"]:
-                    board_apres.push(board_apres.parse_san(coup))
-                break
-        if board_avant is None:
+        lectures = _rassembler_lectures(suite, candidats)
+        if not lectures:
             continue
-
-        mat_blancs = _materiel_camp(board_apres, chess.WHITE)
-        mat_noirs = _materiel_camp(board_apres, chess.BLACK)
-        ecart = mat_blancs - mat_noirs
-        if abs(ecart) < SEUIL_BILAN_MATERIEL_PTS:
+        ecarts = [
+            _materiel_camp(ap, chess.WHITE) - _materiel_camp(ap, chess.BLACK)
+            for _av, ap in lectures
+        ]
+        if any(abs(e) < SEUIL_BILAN_MATERIEL_PTS for e in ecarts):
             continue
-        camp_en_avance = "les Blancs" if ecart > 0 else "les Noirs"
-        gravite = "rouge" if abs(ecart) >= SEUIL_BILAN_MATERIEL_GRAVE_PTS else "orange"
+        ecart_pire = max(ecarts, key=abs)
+        camp_en_avance = "les Blancs" if ecart_pire > 0 else "les Noirs"
+        gravite = "rouge" if abs(ecart_pire) >= SEUIL_BILAN_MATERIEL_GRAVE_PTS else "orange"
+        resume_lectures = _resume_valeurs(ecarts)
         for m in matches:
             if _qualificatif_nie(fenetre, m.start()):
                 continue
@@ -1113,10 +1297,11 @@ def detecter_bilan_materiel_annonce(texte: str, candidats: list) -> list:
                 "gravite": gravite,
                 "detail": (
                     f"\"{m.group(0)}\" accolé à la suite citée \"{suite['texte']}\" "
-                    "annonce un bilan matériel équilibré, alors que la position "
-                    "après cette suite, rejouée sur l'échiquier, donne "
-                    f"{mat_blancs} points aux Blancs contre {mat_noirs} aux Noirs "
-                    f"(écart de {abs(ecart)} point(s) en faveur de {camp_en_avance})"
+                    "annonce un bilan matériel équilibré, alors que TOUTES les "
+                    f"lectures valides de cette suite, rejouée sur l'échiquier "
+                    f"({resume_lectures}), donnent un écart d'au moins "
+                    f"{SEUIL_BILAN_MATERIEL_PTS} point(s) — au pire, en faveur de "
+                    f"{camp_en_avance} ({abs(ecart_pire)} point(s))"
                 ),
             })
     return alertes
@@ -1181,16 +1366,23 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "par une notation ambiguë/invalide/entre parenthèses/hypothétique "
         "(\"si...\") (limite : une ligne qui ne part d'aucun de ces points "
         "reste hors de portée, faux négatif assumé)",
-        "cohérence matérielle des échanges cités (issue #91) : une suite "
-        "d'au moins deux captures citées, qualifiée \"équilibré(e)\" ou "
-        "\"favorable\"/\"défavorable\" (ce dernier couple seulement si un "
-        "camp Blancs/Noirs est explicitement mentionné à proximité), est "
-        "rejouée sur l'échiquier et son résultat matériel réel est comparé "
-        "au qualificatif employé (limite : les verbes \"gagne\"/\"perd\", "
-        "trop généraux en français pour être associés avec confiance à la "
-        "suite citée, ne sont volontairement PAS vérifiés — ni un "
-        "qualificatif sans camp explicite pour \"favorable\"/\"défavorable\" "
-        "— faux négatifs assumés, cf. coach_reliability.py)",
+        "cohérence matérielle des échanges cités (issue #91, étendu par "
+        "l'issue #97) : une suite d'au moins deux captures citées, "
+        "qualifiée \"équilibré(e)\" ou \"favorable\"/\"défavorable\" (ce "
+        "dernier couple seulement si un camp Blancs/Noirs est explicitement "
+        "mentionné à proximité), est rejouée sur l'échiquier — un coup noté "
+        "avec un \"x\" doit être une vraie prise (en passant comprise), "
+        "sinon il est rejeté pour cette lecture (issue #97, point 1) — et "
+        "TOUTES les lectures valides de la suite (positions candidates, "
+        "avec ou sans le coup cité juste avant une parenthèse, avec ou sans "
+        "demi-coup caché, issue #97, points 2 et 3) sont comparées au "
+        "qualificatif employé : une incohérence n'est signalée que si "
+        "AUCUNE lecture valide n'est cohérente avec le texte (limite : les "
+        "verbes \"gagne\"/\"perd\", trop généraux en français pour être "
+        "associés avec confiance à la suite citée, ne sont volontairement "
+        "PAS vérifiés — ni un qualificatif sans camp explicite pour "
+        "\"favorable\"/\"défavorable\" — faux négatifs assumés, cf. "
+        "coach_reliability.py)",
         "clouage annoncé (issue #92) : une pièce citée \"<type> [<couleur>] "
         "en/sur <case>\" dite clouée (mot de la famille \"clou...\" dans la "
         "même phrase) est comparée à python-chess (Board.is_pinned) sur la "
