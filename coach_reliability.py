@@ -54,7 +54,25 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
     vaut ne rien signaler qu'un faux positif. Une incohérence détectée ici
     porte une gravité ("orange"/"rouge" selon l'écart matériel réel,
     SEUIL_ECHANGE_GRAVE_PTS) — c'est la seule famille d'alerte qui n'entraîne
-    pas systématiquement une pastille rouge.
+    pas systématiquement une pastille rouge ;
+  - trois contrôles supplémentaires (issue #92, tâche 3, même cas réel
+    corrigé une première fois par l'issue #91 mais toujours en défaut sur
+    trois formulations précises) : detecter_clouage_errone (une pièce dite
+    "clouée" alors que python-chess ne la trouve clouée dans aucune position
+    connue), detecter_echange_type_incoherent ("échange de dames"/"de
+    tours"/"de fous"/"de cavaliers" accolé à une suite citée qui ne retire
+    PAS une pièce de ce type à chacun des deux camps) et
+    detecter_bilan_materiel_annonce ("équilibre matériel"/"matériel égal"/
+    "égalité matérielle" à propos du résultat d'une suite citée, contredit
+    par le bilan matériel réel après cette suite). Les deux derniers
+    réutilisent la même extraction de suites et le même rejeu que
+    detecter_echanges_mal_qualifies (jamais dupliqués), mais tolèrent une
+    suite citée ENTRE PARENTHÈSES par simple concision (suite["entre_
+    parentheses"]) — seule une suite introduite par "si" (suite["si_
+    hypothetique"]) reste exclue, cf. _extraire_suites : le cas réel motivant
+    ces deux contrôles citait justement sa suite entre parenthèses
+    ("un échange de dames (Qxe8 Qxe8)"), ce que l'ancien filtre "douteuse"
+    (issue #90) aurait exclu à tort.
 """
 
 import logging
@@ -357,10 +375,13 @@ def _extraire_suites(texte: str) -> list:
         avant = texte[max(0, s["debut"] - 20):s["debut"]]
         apres = texte[s["fin"]:s["fin"] + 20]
         douteuse, raison = False, None
+        entre_parentheses, si_hypothetique = False, False
         if "(" in avant and avant.rfind("(") > avant.rfind(")") and ")" in apres:
             douteuse, raison = True, "coup cité entre parenthèses (remarque hypothétique)"
+            entre_parentheses = True
         elif _SI_HYPOTHETIQUE_RE.search(avant):
             douteuse, raison = True, "coup introduit par \"si\" (hypothèse non confirmée)"
+            si_hypothetique = True
         resultat.append({
             "coups": s["coups"],
             "texte": texte[s["debut"]:s["fin"]],
@@ -368,6 +389,19 @@ def _extraire_suites(texte: str) -> list:
             "fin": s["fin"],
             "douteuse": douteuse,
             "raison_doute": raison,
+            # Distinction fine (issue #92, tâches 3a/3c) : une suite citée
+            # ENTRE PARENTHÈSES par simple concision ("il force un échange de
+            # dames (Qxe8 Qxe8)", cas réel ayant motivé l'issue) n'est pas une
+            # hypothèse non confirmée comme "si Dxd5..." — detecter_suites_
+            # illegales et detecter_echanges_mal_qualifies continuent de
+            # l'ignorer comme avant (champ "douteuse" inchangé, aucune
+            # régression), mais les contrôles ajoutés par l'issue #92
+            # (detecter_echange_type_incoherent, detecter_bilan_materiel_
+            # annonce) s'appuient sur ce champ plus fin pour rester tolérants
+            # au style "entre parenthèses" tout en continuant à ignorer une
+            # vraie hypothèse "si...".
+            "entre_parentheses": entre_parentheses,
+            "si_hypothetique": si_hypothetique,
         })
     return resultat
 
@@ -720,6 +754,325 @@ def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
     return alertes
 
 
+# ── Pièces clouées, « échange de X » et bilan matériel annoncé (issue #92,
+# tâche 3) ───────────────────────────────────────────────────────────────
+# Constats ayant motivé ces trois ajouts (même cas réel que l'en-tête de
+# module, suite au correctif de l'issue #91) : une réponse courte et au
+# verdict juste a quand même affirmé "Re8 : il force un échange de dames
+# (Qxe8 Qxe8)" alors que cette suite perd une TOUR contre une DAME (pas un
+# échange de dames : un seul camp y perd sa dame), "ta dame en a8 reste
+# clouée face à la dame adverse en d7" alors qu'aucune pièce blanche n'est
+# clouée dans cette position (vérifié avec python-chess), et "après
+# l'échange, tu récupères l'équilibre matériel" alors que les Blancs
+# terminent en avance de 2 points (14 contre 12) après la suite citée.
+# Aucun des contrôles existants (pièces inexistantes, coups illégaux,
+# qualificatif d'échange précis "équilibré"/"favorable"/"défavorable" collé
+# à une suite) ne couvre ces trois formulations.
+
+_CLOUAGE_RE = re.compile(r"\bclou\w*\b", re.IGNORECASE)
+# Fenêtres volontairement asymétriques et bornées par la phrase en cours
+# (avant ET après, contrairement à _fenetre_qualificatif_echange qui ne
+# coupe qu'après) : un mot de clouage peut précéder ("la dame clouée en a8",
+# non capté par _CASE_PIECE_RE lui-même, cf. limite ci-dessous) ou suivre
+# ("ta dame en a8 reste clouée...", cas réel) la citation pièce+case.
+_FENETRE_CLOUAGE_AVANT = 60
+_FENETRE_CLOUAGE_APRES = 100
+
+
+def _fenetre_clouage(texte: str, debut: int, fin: int) -> tuple:
+    """Même esprit que _fenetre_qualificatif_echange, mais bornée des DEUX
+    côtés par la première fin de phrase rencontrée (jamais au-delà), pour
+    éviter d'associer un mot de clouage à une phrase sans rapport. Retourne
+    (fenetre, offset_debut) — offset_debut sert à retrouver la position
+    ABSOLUE d'un match trouvé dans la fenêtre (utile pour _qualificatif_nie,
+    qui attend une position dans le texte complet)."""
+    avant_debut = max(0, debut - _FENETRE_CLOUAGE_AVANT)
+    morceau_avant = texte[avant_debut:debut]
+    derniere_frontiere = None
+    for mm in re.finditer(r"[.\n]", morceau_avant):
+        derniere_frontiere = mm.end()
+    if derniere_frontiere is not None:
+        avant_debut += derniere_frontiere
+    apres_fin = min(len(texte), fin + _FENETRE_CLOUAGE_APRES)
+    morceau_apres = texte[fin:apres_fin]
+    m_fin_phrase = re.search(r"[.\n]", morceau_apres)
+    if m_fin_phrase:
+        apres_fin = fin + m_fin_phrase.start()
+    return texte[avant_debut:apres_fin], avant_debut
+
+
+def detecter_clouage_errone(texte: str, boards_reference: list, candidats: list) -> list:
+    """Détecte une pièce citée \"<type> [<couleur>] en/sur <case>\" (issue
+    #92, tâche 3b) dite CLOUÉE dans le texte (mot de la famille \"clou...\"
+    dans la même phrase, avant ou après) alors qu'elle n'est clouée dans
+    AUCUNE des positions disponibles (position de départ, position actuelle,
+    ni aucune étape des lignes/suites citées déjà construites pour les
+    contrôles ci-dessus — même tolérance que detecter_case_piece_incoherente
+    : clouée dans AU MOINS UNE position connue n'est jamais signalée).
+
+    Identification volontairement prudente (\"signaler seulement si la
+    pièce est identifiable sans ambiguïté\", issue #92) : la couleur n'a PAS
+    besoin d'être explicite dans le texte (\"ta dame en a8\", cas réel) — la
+    case suffit à identifier sans ambiguïté la pièce réellement présente
+    dans `boards_reference` (position de départ/actuelle) ; si aucune des
+    positions de référence n'a une pièce du type cité sur cette case (ou si
+    une couleur explicite contredit la pièce réellement présente), la
+    mention n'est tout simplement pas contrôlée (faux négatif assumé,
+    c'est le rôle de detecter_case_piece_incoherente de signaler une case
+    fausse, jamais celui de ce contrôle-ci). Un roi n'est jamais contrôlé
+    (il ne peut pas être \"cloué\" au sens des échecs). Une mention niée
+    (\"pas clouée\") ou hypothétique (\"si... était clouée\") n'est jamais
+    signalée non plus (même prudence que les contrôles d'échange ci-dessus).
+
+    Limite assumée : une tournure où le mot de clouage ne figure pas dans la
+    même phrase que la citation pièce+case (au-delà de
+    _FENETRE_CLOUAGE_AVANT/_APRES, ou séparée par une fin de phrase) échappe
+    à ce contrôle, comme pour tout contrôle fondé sur une fenêtre de
+    proximité dans ce module.
+
+    Retourne une liste de dicts {"type": "clouage_errone", "detail": str}
+    (pas de champ "gravite" — fait géométrique vérifié avec certitude par
+    python-chess, traité comme les autres contrôles déjà existants qui n'en
+    portent pas, cf. evaluer_fiabilite : gravité "rouge" par défaut)."""
+    if not boards_reference:
+        return []
+    alertes = []
+    tous_boards = list(boards_reference) + [b for _, b in candidats]
+    for m in _CASE_PIECE_RE.finditer(texte):
+        piece_type = _NOM_PIECE_TYPE[m.group(1).lower()]
+        if piece_type == chess.KING:
+            continue
+        case = chess.parse_square(m.group(3).lower())
+        couleur_citee = _couleur_depuis_mot(m.group(2)) if m.group(2) else None
+
+        fenetre, offset = _fenetre_clouage(texte, m.start(), m.end())
+        clouage_m = _CLOUAGE_RE.search(fenetre)
+        if not clouage_m:
+            continue
+        position_absolue = offset + clouage_m.start()
+        if _qualificatif_nie(texte, position_absolue):
+            continue
+        if _SI_HYPOTHETIQUE_RE.search(texte[max(0, m.start() - 30):m.start()]):
+            continue
+
+        couleur_resolue = None
+        for b in boards_reference:
+            p = b.piece_at(case)
+            if p is not None and p.piece_type == piece_type and (
+                couleur_citee is None or p.color == couleur_citee
+            ):
+                couleur_resolue = p.color
+                break
+        if couleur_resolue is None:
+            continue
+
+        clouee_quelque_part = any(
+            (p := b.piece_at(case)) is not None and p.piece_type == piece_type
+            and p.color == couleur_resolue and b.is_pinned(couleur_resolue, case)
+            for b in tous_boards
+        )
+        if clouee_quelque_part:
+            continue
+        camp_txt = "blanc" if couleur_resolue == chess.WHITE else "noir"
+        nom = _NOM_PIECE_AFFICHAGE[piece_type]
+        alertes.append({
+            "type": "clouage_errone",
+            "detail": (
+                f"\"{nom} {camp_txt} en {m.group(3)}\" dite clouée, alors que "
+                "cette pièce n'est clouée dans aucune des positions "
+                "disponibles (position de départ, position actuelle, lignes "
+                "citées) d'après python-chess"
+            ),
+        })
+    return alertes
+
+
+_ECHANGE_DE_TYPE_RE = re.compile(
+    r"\b[ée]chang\w*\s+(?:de|des)\s+(dames?|tours?|fous?|cavaliers?)\b",
+    re.IGNORECASE,
+)
+
+
+def detecter_echange_type_incoherent(texte: str, candidats: list) -> list:
+    """Détecte \"échange de dames\"/\"de tours\"/\"de fous\"/\"de cavaliers\"
+    (issue #92, tâche 3a) accolé à une suite d'au moins deux coups cités,
+    quand cette suite, rejouée sur l'échiquier, ne retire PAS une pièce de
+    ce type précis à CHACUN des deux camps — cas réel ayant motivé cette
+    tâche : \"il force un échange de dames (Qxe8 Qxe8)\" sur une suite qui
+    prend une tour aux Blancs et une dame aux Noirs (un seul camp perd sa
+    dame, ce n'est pas un \"échange de dames\").
+
+    Même construction que detecter_echanges_mal_qualifies (fenêtre de
+    proximité autour de la suite via _fenetre_qualificatif_echange, suite
+    rejouée via _tenter_suite) — ne duplique ni ne recalcule la légalité.
+    Différence volontaire sur le filtre \"douteuse\" : une suite citée ENTRE
+    PARENTHÈSES par simple concision (cas réel ci-dessus) n'est PAS ignorée
+    ici (seul suite[\"si_hypothetique\"] l'est, cf. _extraire_suites) — un
+    filet de sécurité reste la tentative de rejeu elle-même (board_avant
+    reste None, donc ignoré, si la suite ne se joue depuis aucune position
+    candidate).
+
+    Retourne une liste de dicts {"type": "echange_type_incoherent",
+    "gravite": "orange"/"rouge" (même seuil SEUIL_ECHANGE_GRAVE_PTS que
+    detecter_echanges_mal_qualifies), "detail": str}."""
+    if not candidats:
+        return []
+    alertes = []
+    for suite in _extraire_suites(texte):
+        if suite["si_hypothetique"] or len(suite["coups"]) < 2:
+            continue
+        fenetre = _fenetre_qualificatif_echange(texte, suite)
+        matches = list(_ECHANGE_DE_TYPE_RE.finditer(fenetre))
+        if not matches:
+            continue
+
+        board_avant = None
+        board_apres = None
+        for _label, board in candidats:
+            if _tenter_suite(suite["coups"], board) == "ok":
+                board_avant = board
+                board_apres = board.copy()
+                for coup in suite["coups"]:
+                    board_apres.push(board_apres.parse_san(coup))
+                break
+        if board_avant is None:
+            continue
+
+        for m in matches:
+            if _qualificatif_nie(fenetre, m.start()):
+                continue
+            piece_type = _NOM_PIECE_TYPE[m.group(1).lower()]
+            perte_blancs = (
+                len(board_avant.pieces(piece_type, chess.WHITE))
+                - len(board_apres.pieces(piece_type, chess.WHITE))
+            )
+            perte_noirs = (
+                len(board_avant.pieces(piece_type, chess.BLACK))
+                - len(board_apres.pieces(piece_type, chess.BLACK))
+            )
+            if perte_blancs >= 1 and perte_noirs >= 1:
+                continue
+            nom = _NOM_PIECE_AFFICHAGE[piece_type]
+            camps_sans_perte = []
+            if perte_blancs < 1:
+                camps_sans_perte.append("les Blancs")
+            if perte_noirs < 1:
+                camps_sans_perte.append("les Noirs")
+            delta = (
+                (_materiel_camp(board_apres, chess.WHITE) - _materiel_camp(board_apres, chess.BLACK))
+                - (_materiel_camp(board_avant, chess.WHITE) - _materiel_camp(board_avant, chess.BLACK))
+            )
+            gravite = "rouge" if abs(delta) >= SEUIL_ECHANGE_GRAVE_PTS else "orange"
+            alertes.append({
+                "type": "echange_type_incoherent",
+                "gravite": gravite,
+                "detail": (
+                    f"\"{m.group(0)}\" accolé à la suite citée \"{suite['texte']}\" "
+                    f"prétend que chaque camp perd un(e) {nom}, alors que "
+                    f"{' et '.join(camps_sans_perte)} n'en perd(ent) aucun(e) dans "
+                    "cette suite, rejouée sur l'échiquier"
+                ),
+            })
+    return alertes
+
+
+_BILAN_MATERIEL_RE = re.compile(
+    r"\b([ée]quilibre\s+mat[ée]riel|mat[ée]riel\s+(?:reste\s+|redevient\s+)?[ée]gal|"
+    r"[ée]galit[ée]\s+mat[ée]rielle)\b",
+    re.IGNORECASE,
+)
+
+# Seuils (en points classiques) du contrôle "bilan matériel annoncé" (issue
+# #92, tâche 3c), réglables en CE SEUL endroit — même esprit que
+# SEUIL_ECHANGE_GRAVE_PTS ci-dessus, mais une échelle distincte : ce contrôle
+# porte sur le bilan ABSOLU après la suite (pas sur le delta qu'elle
+# provoque), une notion différente de detecter_echanges_mal_qualifies.
+SEUIL_BILAN_MATERIEL_PTS = 2
+SEUIL_BILAN_MATERIEL_GRAVE_PTS = 4
+
+# Fenêtre volontairement plus large que _FENETRE_APRES_ECHANGE (une annonce
+# de bilan matériel suit souvent la suite citée dans une phrase SÉPARÉE, cas
+# réel : "...perd une tour. Mais après l'échange, tu récupères l'équilibre
+# matériel.") — coupée au prochain saut de paragraphe plutôt qu'à la
+# première fin de phrase, pour couvrir cette deuxième phrase.
+_FENETRE_APRES_BILAN = 250
+
+
+def _fenetre_bilan_materiel(texte: str, suite: dict) -> str:
+    debut = max(0, suite["debut"] - _FENETRE_AVANT_ECHANGE)
+    fin = min(len(texte), suite["fin"] + _FENETRE_APRES_BILAN)
+    morceau_apres = texte[suite["fin"]:fin]
+    m_paragraphe = re.search(r"\n\s*\n", morceau_apres)
+    if m_paragraphe:
+        fin = suite["fin"] + m_paragraphe.start()
+    return texte[debut:fin]
+
+
+def detecter_bilan_materiel_annonce(texte: str, candidats: list) -> list:
+    """Détecte \"équilibre matériel\"/\"matériel égal\"/\"égalité "
+    matérielle\" (issue #92, tâche 3c) à propos du résultat d'une suite
+    d'au moins deux coups cités, quand le bilan matériel RÉEL après cette
+    suite (pas le delta qu'elle provoque, le total absolu de chaque camp)
+    s'écarte de SEUIL_BILAN_MATERIEL_PTS ou plus — cas réel ayant motivé
+    cette tâche : \"après l'échange, tu récupères l'équilibre matériel\"
+    alors que la position après la suite citée donne 14 points aux Blancs
+    contre 12 aux Noirs (écart de 2).
+
+    Même construction et même tolérance \"entre parenthèses\" que
+    detecter_echange_type_incoherent ci-dessus (seul suite[\"si_hypothetique\"]
+    exclut une suite, jamais suite[\"entre_parentheses\"]) — ne duplique ni
+    ne recalcule la légalité des coups.
+
+    Retourne une liste de dicts {"type": "bilan_materiel_incoherent",
+    "gravite": "orange"/"rouge" (gravité plus forte au-delà de
+    SEUIL_BILAN_MATERIEL_GRAVE_PTS), "detail": str}."""
+    if not candidats:
+        return []
+    alertes = []
+    for suite in _extraire_suites(texte):
+        if suite["si_hypothetique"] or len(suite["coups"]) < 2:
+            continue
+        fenetre = _fenetre_bilan_materiel(texte, suite)
+        matches = list(_BILAN_MATERIEL_RE.finditer(fenetre))
+        if not matches:
+            continue
+
+        board_avant = None
+        board_apres = None
+        for _label, board in candidats:
+            if _tenter_suite(suite["coups"], board) == "ok":
+                board_avant = board
+                board_apres = board.copy()
+                for coup in suite["coups"]:
+                    board_apres.push(board_apres.parse_san(coup))
+                break
+        if board_avant is None:
+            continue
+
+        mat_blancs = _materiel_camp(board_apres, chess.WHITE)
+        mat_noirs = _materiel_camp(board_apres, chess.BLACK)
+        ecart = mat_blancs - mat_noirs
+        if abs(ecart) < SEUIL_BILAN_MATERIEL_PTS:
+            continue
+        camp_en_avance = "les Blancs" if ecart > 0 else "les Noirs"
+        gravite = "rouge" if abs(ecart) >= SEUIL_BILAN_MATERIEL_GRAVE_PTS else "orange"
+        for m in matches:
+            if _qualificatif_nie(fenetre, m.start()):
+                continue
+            alertes.append({
+                "type": "bilan_materiel_incoherent",
+                "gravite": gravite,
+                "detail": (
+                    f"\"{m.group(0)}\" accolé à la suite citée \"{suite['texte']}\" "
+                    "annonce un bilan matériel équilibré, alors que la position "
+                    "après cette suite, rejouée sur l'échiquier, donne "
+                    f"{mat_blancs} points aux Blancs contre {mat_noirs} aux Noirs "
+                    f"(écart de {abs(ecart)} point(s) en faveur de {camp_en_avance})"
+                ),
+            })
+    return alertes
+
+
 def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str = "",
                        analyse_indisponible: bool = False, verdict_partiel: bool = False,
                        coup_propose: str = "", coup_reel: str = "", meilleur_coup: str = "",
@@ -789,6 +1142,30 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "suite citée, ne sont volontairement PAS vérifiés — ni un "
         "qualificatif sans camp explicite pour \"favorable\"/\"défavorable\" "
         "— faux négatifs assumés, cf. coach_reliability.py)",
+        "clouage annoncé (issue #92) : une pièce citée \"<type> [<couleur>] "
+        "en/sur <case>\" dite clouée (mot de la famille \"clou...\" dans la "
+        "même phrase) est comparée à python-chess (Board.is_pinned) sur la "
+        "position de départ, la position actuelle et chaque étape des "
+        "lignes/suites citées — signalée seulement si elle n'est clouée "
+        "nulle part (limite : la couleur n'a pas besoin d'être explicite, "
+        "la case suffit à l'identifier sans ambiguïté via les positions de "
+        "référence ; une pièce non identifiable ainsi, ou un mot de clouage "
+        "hors de la même phrase, n'est jamais contrôlée)",
+        "« échange de X » cité (issue #92) : une suite d'au moins deux "
+        "coups cités qualifiée \"échange de dames\"/\"de tours\"/\"de "
+        "fous\"/\"de cavaliers\" est rejouée sur l'échiquier et comparée au "
+        "nombre de pièces de ce type précis réellement perdues par CHAQUE "
+        "camp (limite : ne couvre que la forme \"échange de <type>\", pas "
+        "une tournure équivalente comme \"ils échangent leurs dames\")",
+        "bilan matériel annoncé (issue #92) : \"équilibre matériel\"/"
+        "\"matériel égal\"/\"égalité matérielle\" à propos du résultat "
+        "d'une suite citée est comparé au bilan matériel RÉEL (total "
+        "absolu de chaque camp, pas le delta provoqué) après cette suite, "
+        "rejouée sur l'échiquier — signalé si l'écart atteint "
+        "SEUIL_BILAN_MATERIEL_PTS (2 points), gravité plus forte au-delà "
+        "de SEUIL_BILAN_MATERIEL_GRAVE_PTS (4 points), réglables en ce "
+        "seul endroit (limite : seules ces trois formulations précises "
+        "sont reconnues)",
     ]
 
     boards_reference = []
@@ -819,6 +1196,9 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
     )
     alertes += detecter_suites_illegales(texte, candidats_suites)
     alertes += detecter_echanges_mal_qualifies(texte, candidats_suites)
+    alertes += detecter_clouage_errone(texte, boards_reference, candidats_suites)
+    alertes += detecter_echange_type_incoherent(texte, candidats_suites)
+    alertes += detecter_bilan_materiel_annonce(texte, candidats_suites)
 
     if alertes:
         premiere = alertes[0]["detail"]

@@ -837,6 +837,57 @@ def _liste_pieces(board: "chess.Board", est_blanc: bool) -> str:
     return ", ".join(pieces) if pieces else "aucune pièce restante"
 
 
+def _pieces_clouees_camp(board: "chess.Board", est_blanc: bool) -> list[str]:
+    couleur = chess.WHITE if est_blanc else chess.BLACK
+    clouees = []
+    for square, piece in sorted(board.piece_map().items()):
+        if (
+            piece.color == couleur
+            and piece.piece_type != chess.KING
+            and board.is_pinned(couleur, square)
+        ):
+            clouees.append(f"{_NOM_PIECE_MAJ[piece.piece_type]} {chess.square_name(square)}")
+    return clouees
+
+
+def describe_pieces_clouees(fen: str, camp_alain: str = "") -> str:
+    """API publique (issue #92, tâche 2) : liste, pour chaque camp, les
+    pièces clouées dans la position `fen` (case et pièce), ou "aucune pièce
+    clouée" — calcul déterministe avec python-chess (Board.is_pinned), jamais
+    une estimation ou une lecture géométrique du coach. Constat ayant motivé
+    cet ajout (cas réel, journal du coach du 2026-10-02, cf.
+    coach_reliability.py) : le coach a affirmé qu'une dame restait "clouée
+    face à la dame adverse" alors qu'aucune pièce blanche n'était clouée dans
+    cette position.
+
+    Un roi n'est jamais listé comme "cloué" (il ne peut pas l'être au sens
+    des échecs : c'est lui qui impose le clouage aux autres pièces).
+
+    Retourne "Pièces clouées dans cette position : Blancs (...) : ...\\nNoirs
+    (...) : ..." (même présentation que describe_pieces_lists), ou "" si fen
+    est vide ou illisible."""
+    fen = (fen or "").strip()
+    if not fen:
+        return ""
+    try:
+        board = chess.Board(fen)
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] describe_pieces_clouees a échoué : {e}")
+        return ""
+    label_blancs = camp_label(True, camp_alain)
+    label_noirs = camp_label(False, camp_alain)
+    clouees_blancs = _pieces_clouees_camp(board, True)
+    clouees_noirs = _pieces_clouees_camp(board, False)
+    texte_blancs = ", ".join(clouees_blancs) if clouees_blancs else "aucune pièce clouée"
+    texte_noirs = ", ".join(clouees_noirs) if clouees_noirs else "aucune pièce clouée"
+    return (
+        "Pièces clouées dans cette position (issue #92, calcul déterministe "
+        "python-chess) :\n"
+        f"  {label_blancs} : {texte_blancs}\n"
+        f"  {label_noirs} : {texte_noirs}"
+    )
+
+
 def describe_pieces_lists(fen: str, camp_alain: str = "") -> str:
     """API publique (issue #80, point 3) : liste des pièces de chaque camp
     par case, pour une position FEN isolée — même présentation que le bloc

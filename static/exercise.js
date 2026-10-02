@@ -94,6 +94,10 @@ let exerciseJustReprised   = false;
 let exercisePiecesDepartTexte    = null;
 let exercisePiecesActuellesTexte = null;
 let exerciseMenaceAdverseTexte   = null;
+// Pièces clouées de chaque camp (issue #92, tâche 2) — même raison que les
+// champs ci-dessus : sans lui, une question de suivi posée dans le chat
+// libre perdrait cette donnée dès le tour suivant.
+let exercisePiecesCloueesTexte   = null;
 let exerciseIdeesCoupProposeTexte  = null;
 let exerciseIdeesCoupReelTexte     = null;
 let exerciseIdeesMeilleurCoupTexte = null;
@@ -775,6 +779,7 @@ function exerciseChatContextExtra() {
     // même raison que les champs ci-dessus.
     pieces_depart_texte: exercisePiecesDepartTexte || "",
     pieces_actuelles_texte: exercisePiecesActuellesTexte || "",
+    pieces_clouees_texte: exercisePiecesCloueesTexte || "",
     menace_adverse_texte: exerciseMenaceAdverseTexte || "",
     idees_coup_propose_texte: exerciseIdeesCoupProposeTexte || "",
     idees_coup_reel_texte: exerciseIdeesCoupReelTexte || "",
@@ -1119,6 +1124,7 @@ if (typeof socket !== "undefined") {
     // libre, comme les champs ci-dessus.
     exercisePiecesDepartTexte    = (data && data.pieces_depart_texte) || null;
     exercisePiecesActuellesTexte = (data && data.pieces_actuelles_texte) || null;
+    exercisePiecesCloueesTexte   = (data && data.pieces_clouees_texte) || null;
     exerciseMenaceAdverseTexte   = (data && data.menace_adverse_texte) || null;
     exerciseIdeesCoupProposeTexte  = (data && data.idees_coup_propose_texte) || null;
     exerciseIdeesCoupReelTexte     = (data && data.idees_coup_reel_texte) || null;

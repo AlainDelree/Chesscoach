@@ -1815,6 +1815,12 @@ def on_exercise_answer(data):
     # conversation (coup_propose/coup_reel/meilleur_coup partent tous de
     # cette même position).
     materiel_resume_texte = game_facts.describe_material_summary(fen_avant, camp_alain)
+    # Pièces clouées de chaque camp (issue #92, tâche 2) — même référence
+    # stable que materiel_resume_texte ci-dessus (position de DÉPART de
+    # l'exercice). Calcul déterministe python-chess : constat réel ayant
+    # motivé cet ajout, le coach a affirmé qu'une dame restait "clouée" alors
+    # qu'aucune pièce blanche n'était clouée dans cette position.
+    pieces_clouees_texte = game_facts.describe_pieces_clouees(fen_avant, camp_alain)
 
     # Idées détectées pour chacun des trois coups comparés (issue #80, point
     # 5) : décomposition classique de l'évaluation Stockfish avant/après
@@ -1939,6 +1945,7 @@ def on_exercise_answer(data):
         "pieces_depart_texte": pieces_depart_texte,
         "pieces_actuelles_texte": pieces_actuelles_texte,
         "materiel_resume_texte": materiel_resume_texte,
+        "pieces_clouees_texte": pieces_clouees_texte,
         "menace_adverse_texte": menace_adverse_texte,
         "coup_propose": coup_propose_san,
         "coup_propose_description_mecanique": coup_propose_description_mecanique,
@@ -2047,6 +2054,7 @@ def on_exercise_answer(data):
             "pieces_depart_texte": pieces_depart_texte,
             "pieces_actuelles_texte": pieces_actuelles_texte,
             "materiel_resume_texte": materiel_resume_texte,
+            "pieces_clouees_texte": pieces_clouees_texte,
             "menace_adverse_texte": menace_adverse_texte,
             "idees_coup_propose_texte": idees_coup_propose_texte,
             "idees_coup_reel_texte": idees_coup_reel_texte,
@@ -2180,6 +2188,10 @@ def _on_exercise_answer_lichess(uci: str) -> None:
     # Résumé du matériel par type de pièce (issue #87, point 1) — même
     # raison que la source "mes erreurs" ci-dessus.
     materiel_resume_texte = game_facts.describe_material_summary(fen_avant, camp_alain)
+    # Pièces clouées de chaque camp (issue #92, tâche 2) — même calcul que la
+    # source "mes erreurs"/"position précise" ci-dessus (describe_pieces_
+    # clouees est mode-agnostique), sur la position de DÉPART du problème.
+    pieces_clouees_texte = game_facts.describe_pieces_clouees(fen_avant, camp_alain)
     idees_coup_propose_texte = game_facts.format_idees_coup(
         "le coup proposé",
         _calculer_idees_coup(fen_avant, coup_propose_san, camp_alain, menace_adverse_data),
@@ -2187,6 +2199,34 @@ def _on_exercise_answer_lichess(uci: str) -> None:
     idees_meilleur_coup_texte = game_facts.format_idees_coup(
         "la solution du problème",
         _calculer_idees_coup(fen_avant, meilleur_coup, camp_alain, menace_adverse_data),
+    )
+
+    # Réponse adverse alternative (issue #91, point 1 ; issue #92, tâche 1 —
+    # parité des sources) : même calcul que la source "mes erreurs"/"position
+    # précise" (on_exercise_answer ci-dessus) — jusqu'ici absent de cette
+    # source "Problèmes Lichess", alors que _build_context_text (llm_coach.py)
+    # sait déjà l'exploiter pour les deux autres sources. Sans ce champ, le
+    # coach ne pouvait pas savoir qu'une réponse adverse à un problème Lichess
+    # est forcée et pouvait en inventer une fausse raison (même risque que le
+    # cas réel ayant motivé l'issue #91, constaté ici sur une autre source).
+    reponse_adverse_coup_propose_texte = (
+        game_facts.build_reponse_adverse_obligee_texte(
+            "le coup proposé", fen_apres, _calculer_reponses_adverses(fen_apres), camp_alain,
+        ) if coup_propose_san and fen_apres != fen_avant else ""
+    )
+    fen_apres_meilleur_coup = ""
+    if meilleur_coup:
+        try:
+            board_meilleur = chess.Board(fen_avant)
+            board_meilleur.push_san(meilleur_coup)
+            fen_apres_meilleur_coup = board_meilleur.fen()
+        except Exception:
+            pass
+    reponse_adverse_meilleur_coup_texte = (
+        game_facts.build_reponse_adverse_obligee_texte(
+            "le meilleur coup", fen_apres_meilleur_coup,
+            _calculer_reponses_adverses(fen_apres_meilleur_coup), camp_alain,
+        ) if fen_apres_meilleur_coup else ""
     )
 
     pv_coup_propose_detail = game_facts.format_pv_with_balance(
@@ -2218,6 +2258,7 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         "pieces_depart_texte": pieces_depart_texte,
         "pieces_actuelles_texte": pieces_actuelles_texte,
         "materiel_resume_texte": materiel_resume_texte,
+        "pieces_clouees_texte": pieces_clouees_texte,
         "menace_adverse_texte": menace_adverse_texte,
         "coup_propose": coup_propose_san,
         "coup_propose_description_mecanique": coup_propose_description_mecanique,
@@ -2229,6 +2270,10 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         "pv_meilleur_coup": pv_meilleur_coup,
         "pv_coup_propose_detail": pv_coup_propose_detail,
         "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
+        # Réponses adverses alternatives (issue #91 ; issue #92, parité des
+        # sources) : cf. commentaire au point de calcul ci-dessus.
+        "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
+        "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
         "eval_alain_cp": eval_alain_cp,
         "eval_alain_mat": eval_alain_mat,
         # Verdict reformulé en "bon"/"erreur" simple (issue #78) plutôt que la
@@ -2295,9 +2340,12 @@ def _on_exercise_answer_lichess(uci: str) -> None:
             "pieces_depart_texte": pieces_depart_texte,
             "pieces_actuelles_texte": pieces_actuelles_texte,
             "materiel_resume_texte": materiel_resume_texte,
+            "pieces_clouees_texte": pieces_clouees_texte,
             "menace_adverse_texte": menace_adverse_texte,
             "idees_coup_propose_texte": idees_coup_propose_texte,
             "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
+            "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
+            "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
             # Pour la ligne d'état et le libellé "Solution du problème" dans
             # le tableau "Lignes du coach" côté client (issue #78,
             # exercise.js) — categorie_libelle/rating déjà connus du client

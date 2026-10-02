@@ -346,6 +346,52 @@ _MATERIEL_ADDENDUM = (
     "réellement, d'après le détail coup par coup fourni) sans déformer son "
     "résultat réel : un coup qui gagne la dame adverse pour une tour n'est "
     "jamais un \"échange de tours\", c'est un gain de dame."
+    "\n\n"
+    "Qualifier le résultat d'une ligne par son solde réel, jamais une "
+    "impression (issue #92, tâche 4i) : quand le contexte fournit le solde "
+    "matériel cumulé d'une ligne (\"solde matériel cumulé pour Alain\") ou "
+    "le résultat matériel réel d'une suite de coups cités, ne parle "
+    "d'\"équilibre\", de \"matériel égal\" ou d'\"égalité\" que si ce solde "
+    "est proche de zéro (une petite fraction de pion, jamais 2 points ou "
+    "plus dans un sens). Un solde de 2 points ou plus en faveur d'un camp "
+    "n'est JAMAIS un équilibre, même si le camp qui recule garde "
+    "l'initiative ou des compensations positionnelles : dis alors "
+    "explicitement quel camp est en avance et de combien, d'après ce solde."
+    "\n\n"
+    "Décrire une suite de captures par ce qu'elle donne et prend (issue "
+    "#92, tâche 4ii) : pour une suite d'au moins deux captures citées, "
+    "décris toujours CE QUI est réellement pris par chaque camp d'après le "
+    "détail coup par coup fourni (par exemple \"la dame noire prend ta "
+    "tour, ta dame prend la dame noire : tu gagnes une dame pour une "
+    "tour\"), plutôt qu'une étiquette générique. Ne dis \"échange de "
+    "dames\" (ni \"échange de tours\"/\"de fous\"/\"de cavaliers\") que si "
+    "CHAQUE camp perd effectivement une pièce de ce type précis dans cette "
+    "suite d'après les données fournies — jamais quand un seul camp perd "
+    "une dame et l'autre perd une pièce d'un type différent (ce n'est alors "
+    "PAS un \"échange de dames\", c'est un gain net de dame contre cette "
+    "autre pièce)."
+    "\n\n"
+    "Ne jamais minimiser une perte de matériel montrée par le solde (issue "
+    "#92, tâche 4iv) : si le solde matériel cumulé ou le résultat réel "
+    "d'une suite citée montre une perte nette pour un camp, ne la qualifie "
+    "jamais de \"rien de décisif\", \"pas grand-chose\" ou équivalent — "
+    "nomme explicitement ce qui est perdu et pour quel camp."
+)
+
+# Complément conditionné à la présence du bloc "Pièces clouées..." dans le
+# contexte (issue #92, tâche 4iii) — indépendant de _MATERIEL_ADDENDUM
+# ci-dessus (même philosophie que _GAME_FACTS_ADDENDUM : ajouté dès que la
+# donnée correspondante est transmise, pas seulement en mode exercice).
+_CLOUAGE_ADDENDUM = (
+    "Pièces clouées (issue #92, tâche 4iii) : le contexte fournit un bloc "
+    "\"Pièces clouées dans cette position\" qui liste, pour chaque camp, "
+    "les pièces réellement clouées (calcul déterministe python-chess) — ou "
+    "dit explicitement \"aucune pièce clouée\" pour ce camp. Ne dis JAMAIS "
+    "qu'une pièce est clouée si elle n'apparaît pas dans cette liste pour "
+    "son camp, même si elle te semble clouée à l'œil et même pour justifier "
+    "un coup qui autrement te semblerait difficile à expliquer : si le bloc "
+    "indique \"aucune pièce clouée\" pour ce camp, aucune de ses pièces "
+    "n'est clouée dans cette position, point final."
 )
 
 # Complément de system prompt pour l'explication à la demande d'un coup
@@ -1163,6 +1209,14 @@ def _build_context_text(context) -> str:
     # au garde-fou de _MATERIEL_ADDENDUM contre un "échange" ou une "prise"
     # visant un type de pièce absent du camp concerné.
     materiel_resume_texte = (context.get("materiel_resume_texte") or "").strip()
+    # Pièces clouées de chaque camp (issue #92, tâche 2), déjà calculées
+    # mécaniquement par app.py/game_facts (describe_pieces_clouees,
+    # python-chess Board.is_pinned) — complète le résumé matériel ci-dessus
+    # par un fait géométrique que le coach ne doit jamais déduire lui-même :
+    # cas réel ayant motivé cet ajout, le coach a affirmé qu'une dame restait
+    # "clouée face à la dame adverse" alors qu'aucune pièce blanche n'était
+    # clouée dans cette position.
+    pieces_clouees_texte = (context.get("pieces_clouees_texte") or "").strip()
     # Menace adverse (issue #80, point 1), déjà calculée et décrite
     # mécaniquement par app.py/game_facts (EngineManager.get_threats +
     # describe_menace_adverse) : si Alain passait son tour, les meilleurs
@@ -1396,6 +1450,8 @@ def _build_context_text(context) -> str:
         )
     if materiel_resume_texte:
         lines.append(materiel_resume_texte)
+    if pieces_clouees_texte:
+        lines.append(pieces_clouees_texte)
     if menace_adverse_texte:
         lines.append(menace_adverse_texte)
     if move:
@@ -2129,6 +2185,11 @@ def get_coach_response(messages, context, coach_memory, config):
         # le contexte fournit un résumé du matériel par type de pièce — pas
         # seulement en mode exercice, cf. _build_context_text.
         prompt_sys = f"{prompt_sys}\n\n{_MATERIEL_ADDENDUM}"
+    if (context or {}).get("pieces_clouees_texte"):
+        # Indépendant des branches ci-dessus (issue #92, tâche 4iii) : s'ajoute
+        # dès que le contexte fournit la liste des pièces clouées — pas
+        # seulement en mode exercice, cf. _build_context_text.
+        prompt_sys = f"{prompt_sys}\n\n{_CLOUAGE_ADDENDUM}"
 
     memory_text = _build_memory_text(coach_memory)
     if memory_text:
