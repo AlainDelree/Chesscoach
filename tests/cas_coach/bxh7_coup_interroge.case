@@ -21,6 +21,13 @@ faits_attendus:
   texte_contient: la position de départ de l'exercice : Blancs
   texte_contient: évaluation Stockfish : blunder
   texte_contient: après le coup proposé par Alain : la trajectoire d3-h7 est bloquée par Pion noir en g6
+  # Non-régression (issue #99, tâche 1, cas réel ayant motivé la
+  # généralisation du "coup précédent cité" à toute suite, pas seulement
+  # entre parenthèses) : cette réponse citait "Nxh7 Nxh7 Kxh7" (3 coups)
+  # injouable directement depuis toutes les positions candidates — "Bxh7+"
+  # est cité juste avant, dans la même phrase, ce qui rend la suite jouable
+  # une fois ce coup précédent inséré. Ne doit déclencher aucune alerte.
+  reponse_simulee_verte: Bxh7+ fonctionne dans la position de départ, mais plus après g6 ... Dans la position de départ, Bxh7+ était jouable mais mauvais pour les Blancs : après Nxh7 Nxh7 Kxh7, c'est toi qui sors gagnant de l'échange.
 
 motifs_interdits:
   je ne vois pas cette idée|je ne vois pas cette ligne|je n'ai pas cette idée|je n'ai pas de donnée sur ce coup|pas d'information sur ce coup

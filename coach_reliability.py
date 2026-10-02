@@ -113,6 +113,31 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
     ou si la même affirmation se répète dans le texte — heuristique
     volontairement approximative, documentée en détail au-dessus de
     detecter_attaque_defense_incoherente.
+  - deux correctifs supplémentaires contre des faux positifs réels (issue
+    #99, série de 20 appels après la fusion des issues #94 à #98) :
+    (1) une suite de PLUSIEURS coups citée qui échoue telle quelle (contrôle
+    des coups illégaux, et contrôles de qualificatif via _rassembler_
+    lectures) essaie désormais aussi, avant de renoncer, un coup précédent
+    CITÉ dans les 250 caractères qui précèdent la suite (même phrase ou
+    phrase précédente, cf. _coup_precedent_cite) comme coup caché à insérer
+    devant — pas seulement pour une suite entre parenthèses (issue #97,
+    limité à ce seul cas) — puis, à défaut, un demi-coup caché quelconque
+    (déjà fait pour un coup isolé depuis l'issue #94, généralisé ici à
+    toute longueur de suite) ; cas réel ayant motivé ce point : "Bxh7+ ...
+    Dans la position de départ, Bxh7+ était jouable mais mauvais pour les
+    Blancs : après Nxh7 Nxh7 Kxh7, c'est toi qui sors gagnant de l'échange"
+    signalait "Nxh7 Nxh7 Kxh7" comme suite illégale, alors que "Bxh7+" est
+    cité juste avant dans la même phrase ; (2) detecter_echange_type_
+    incoherent reconnaît désormais, en plus de "échange de <type>" (chaque
+    camp perd une pièce de CE type), la tournure "<type1> contre <type2>"
+    avec deux types DIFFÉRENTS ("échange de cavalier contre fou", "du
+    cavalier contre le fou", "cavalier contre fou") — vérifiée de façon
+    ASYMÉTRIQUE (un camp perd le type1, l'autre perd le type2, dans un sens
+    OU dans l'autre) plutôt qu'avec l'ancienne règle symétrique, qui
+    signalait à tort "un échange de cavalier contre fou" (suite réelle :
+    Bxc6+ Qxc6, le cavalier noir pris par le fou blanc) en exigeant que
+    chaque camp perde un CAVALIER. Les deux types cités identiques ("fou
+    contre fou") retombent sur l'ancienne règle symétrique, inchangée.
 """
 
 import logging
@@ -377,29 +402,40 @@ _SEPARATEUR_SUITE_RE = re.compile(r"^(?:[\s,]|\d+\.{1,3}|[!?])*$")
 # ("si Dxd5, les Blancs gagnent...") — jamais vérifiée (point 2, prudence).
 _SI_HYPOTHETIQUE_RE = re.compile(r"\bsi\b\s*$", re.IGNORECASE)
 
-# Fenêtre de recherche du "coup précédent cité" devant une parenthèse (issue
-# #97, point 2) — bornée par la première fin de phrase rencontrée en
-# remontant, pour ne jamais aller chercher un coup d'une proposition sans
-# rapport.
-_FENETRE_COUP_PRECEDENT = 80
+# Fenêtre de recherche du "coup précédent cité" (issue #97, point 2, élargie
+# par l'issue #99, tâche 1) — bornée à la phrase qui précède la position de
+# recherche ET, si besoin, à la phrase ENCORE avant ("même phrase ou phrase
+# précédente", cf. _coup_precedent_cite), jamais au-delà. Élargie de 80 à
+# 250 caractères par l'issue #99 : le cas réel l'ayant motivée ("Bxh7+ ...
+# Dans la position de départ, Bxh7+ était jouable mais mauvais pour les
+# Blancs : après Nxh7 Nxh7 Kxh7...") citait le coup précédent plus loin que
+# l'ancienne fenêtre de 80 caractères ne le permettait.
+_FENETRE_COUP_PRECEDENT = 250
 
 
-def _coup_precedent_cite(texte: str, position_parenthese: int) -> str:
-    """Cherche, juste avant la parenthèse ouvrante à `position_parenthese`
-    (position ABSOLUE dans `texte`), le DERNIER coup cité en notation SAN
-    dans la même proposition (issue #97, point 2) — ex. "les Noirs peuvent
-    jouer Bh6 pour échanger les fous (Bxh6 Qxh6)" retrouve "Bh6" comme coup
-    précédent de la suite entre parenthèses "Bxh6 Qxh6". Borné par la
-    première fin de phrase rencontrée en remontant (jamais au-delà) et par
-    _FENETRE_COUP_PRECEDENT caractères. Retourne "" si aucun coup cité n'est
-    trouvé dans cette fenêtre."""
-    debut = max(0, position_parenthese - _FENETRE_COUP_PRECEDENT)
-    morceau = texte[debut:position_parenthese]
-    derniere_frontiere = None
-    for mm in re.finditer(r"[.\n!?]", morceau):
-        derniere_frontiere = mm.end()
-    if derniere_frontiere is not None:
-        morceau = morceau[derniere_frontiere:]
+def _coup_precedent_cite(texte: str, position: int) -> str:
+    """Cherche, juste avant `position` (position ABSOLUE dans `texte` — la
+    parenthèse ouvrante d'une suite entre parenthèses, issue #97, point 2,
+    OU le début d'une suite quelconque de plusieurs coups, issue #99, tâche
+    1), le DERNIER coup cité en notation SAN dans la même phrase ou dans la
+    phrase qui la précède immédiatement — ex. "les Noirs peuvent jouer Bh6
+    pour échanger les fous (Bxh6 Qxh6)" retrouve "Bh6" comme coup précédent
+    de la suite entre parenthèses "Bxh6 Qxh6" ; "Bxh7+ ... Dans la position
+    de départ, Bxh7+ était jouable mais mauvais pour les Blancs : après
+    Nxh7 Nxh7 Kxh7" retrouve "Bxh7+" comme coup précédent de la suite
+    "Nxh7 Nxh7 Kxh7" (issue #99).
+
+    Borné par _FENETRE_COUP_PRECEDENT caractères et, à l'intérieur de cette
+    fenêtre, par AU PLUS une fin de phrase franchie en remontant (la phrase
+    qui contient `position`, et celle qui la précède directement — jamais
+    plus loin, pour ne jamais aller chercher un coup d'une proposition sans
+    rapport). Retourne "" si aucun coup cité n'est trouvé dans cette
+    fenêtre."""
+    debut = max(0, position - _FENETRE_COUP_PRECEDENT)
+    morceau = texte[debut:position]
+    frontieres = [mm.end() for mm in re.finditer(r"[.\n!?]", morceau)]
+    if len(frontieres) >= 2:
+        morceau = morceau[frontieres[-2]:]
     candidats = [
         m.group(1) for m in _SAN_RE.finditer(morceau)
         if not _CASE_SEULE_RE.match(m.group(1))
@@ -421,12 +457,17 @@ def _extraire_suites(texte: str) -> list:
     bool, "raison_doute": str|None, "coup_precedent": str} — "douteuse"
     signale un coup cité entre parenthèses ou introduit par "si" (hypothèse,
     point 2) : une telle suite n'est jamais vérifiée, ni comme légale ni
-    comme illégale. "coup_precedent" (issue #97, point 2) : pour une suite
-    entre parenthèses seulement, le dernier coup cité juste avant la
-    parenthèse ouvrante dans la même proposition (cf. _coup_precedent_cite),
-    "" si aucun — sert de lecture candidate SUPPLÉMENTAIRE (coup_precedent +
-    coups de la suite) aux contrôles ci-dessous, en plus de la lecture
-    isolée de la parenthèse elle-même, jamais à la place."""
+    comme illégale. "coup_precedent" (issue #97, point 2, généralisé par
+    l'issue #99, tâche 1) : pour une suite entre parenthèses, le dernier
+    coup cité juste avant la parenthèse ouvrante (même phrase ou phrase
+    précédente, cf. _coup_precedent_cite) ; pour toute AUTRE suite d'AU
+    MOINS DEUX coups (pas pour un coup isolé, qui a déjà son propre filet de
+    sécurité — demi-coup caché quelconque, cf. detecter_suites_illegales),
+    le dernier coup cité juste avant le DÉBUT de la suite elle-même, dans la
+    même fenêtre de recherche — "" si aucun dans les deux cas. Sert de
+    lecture candidate SUPPLÉMENTAIRE (coup_precedent + coups de la suite)
+    aux contrôles ci-dessous, en plus de la lecture isolée de la suite
+    elle-même, jamais à la place."""
     candidats = [
         m for m in _SAN_RE.finditer(texte)
         if not _CASE_SEULE_RE.match(m.group(1))
@@ -460,6 +501,16 @@ def _extraire_suites(texte: str) -> list:
         elif _SI_HYPOTHETIQUE_RE.search(avant):
             douteuse, raison = True, "coup introduit par \"si\" (hypothèse non confirmée)"
             si_hypothetique = True
+        # Suite (pas entre parenthèses, pas hypothétique) d'au moins deux
+        # coups : même filet de sécurité "coup précédent cité" que pour une
+        # suite entre parenthèses (issue #99, tâche 1), cherché cette fois
+        # juste avant le DÉBUT de la suite elle-même — cas réel ayant motivé
+        # cette généralisation : "Bxh7+ ... Dans la position de départ,
+        # Bxh7+ était jouable mais mauvais pour les Blancs : après Nxh7
+        # Nxh7 Kxh7" ("Nxh7 Nxh7 Kxh7" injouable seule, "Bxh7+" cité juste
+        # avant, hors de toute parenthèse).
+        if not coup_precedent and not si_hypothetique and len(s["coups"]) >= 2:
+            coup_precedent = _coup_precedent_cite(texte, s["debut"])
         resultat.append({
             "coups": s["coups"],
             "texte": texte[s["debut"]:s["fin"]],
@@ -618,33 +669,21 @@ def _construire_candidats(fen_reference: str, fen_reference2: str = "",
     return candidats
 
 
-def _legal_apres_demi_coup_cache(coup: str, board: "chess.Board") -> bool:
-    """Essaie `coup` (un seul coup SAN) depuis `board`, après chacun des
-    demi-coups légaux de `board`, un seul à la fois (issue #94, point 4) —
-    jamais `board` lui-même modifié. Sert de filet de sécurité pour un coup
-    cité ISOLÉMENT (sans suite rattachée) qui décrit en réalité une reprise :
+def _lectures_demi_coup_cache(coups: list, board: "chess.Board") -> list:
+    """Essaie `coups` (un coup isolé ou une suite entière, dans l'ordre)
+    depuis `board`, après chacun des demi-coups légaux de `board`, un seul à
+    la fois (issue #94, point 4, généralisé de "un seul coup" à "une suite
+    entière" par l'issue #97, point 3) — jamais `board` lui-même modifié.
+    Retourne TOUTES les positions d'arrivée ainsi obtenues (pas seulement un
+    booléen : nécessaire pour calculer le bilan matériel de chaque lecture
+    découverte, cf. _rassembler_lectures). Sert de filet de sécurité pour un
+    coup (ou une suite) qui décrit en réalité une reprise non écrite :
     constat réel ayant motivé cet ajout, "si la dame prend en h4, gxh4
     reprend" cite "gxh4" seul, sans jamais écrire "Qxh4" — ce coup n'est
     légal sur aucune position candidate SANS la prise de dame intermédiaire,
     mais le devient dès qu'on y insère N'IMPORTE QUEL demi-coup caché (ici,
     la prise de dame réelle fait partie des coups légaux essayés). Retourne
-    False dès que `board` n'a aucun coup légal (position terminale)."""
-    for coup_cache in board.legal_moves:
-        board_intermediaire = board.copy()
-        board_intermediaire.push(coup_cache)
-        if _tenter_suite([coup], board_intermediaire) == "ok":
-            return True
-    return False
-
-
-def _lectures_demi_coup_cache(coups: list, board: "chess.Board") -> list:
-    """Variante de `_legal_apres_demi_coup_cache` qui accepte une suite
-    entière (pas seulement un coup isolé) et retourne TOUTES les positions
-    d'arrivée obtenues en insérant, un seul à la fois, chacun des demi-coups
-    légaux de `board` avant d'essayer `coups` (issue #97, point 3) — au lieu
-    d'un simple booléen, nécessaire ici pour calculer le bilan matériel de
-    chaque lecture ainsi découverte. Retourne une liste de tuples
-    (board_avant: chess.Board, board_apres: chess.Board)."""
+    une liste de tuples (board_avant: chess.Board, board_apres: chess.Board)."""
     resultats = []
     for coup_cache in board.legal_moves:
         board_intermediaire = board.copy()
@@ -657,12 +696,12 @@ def _lectures_demi_coup_cache(coups: list, board: "chess.Board") -> list:
 
 def _rassembler_lectures(suite: dict, candidats: list) -> list:
     """Rassemble TOUTES les lectures valides d'une suite citée (issue #97,
-    point 3) : combine chaque position candidate (`candidats`), chaque
-    lecture des coups (_variantes_coups — avec ou sans le coup précédent
-    cité, point 2) et, quand la lecture directe échoue, chaque demi-coup
-    intermédiaire caché possible (_lectures_demi_coup_cache, même principe
-    que _legal_apres_demi_coup_cache mais généralisé à une suite entière).
-    Une lecture qui mène à la MÊME position d'arrivée qu'une lecture déjà
+    point 3 ; coup précédent généralisé par l'issue #99, tâche 1) : combine
+    chaque position candidate (`candidats`), chaque lecture des coups
+    (_variantes_coups — avec ou sans le coup précédent cité) et, quand la
+    lecture directe échoue, chaque demi-coup intermédiaire caché possible
+    (_lectures_demi_coup_cache). Une lecture qui mène à la MÊME position
+    d'arrivée qu'une lecture déjà
     retenue (même FEN) n'est comptée qu'une seule fois — atteinte par deux
     chemins différents, ce n'est pas une lecture supplémentaire.
 
@@ -711,27 +750,38 @@ def _delta_materiel(board_avant: "chess.Board", board_apres: "chess.Board") -> i
 def detecter_suites_illegales(texte: str, candidats: list) -> list:
     """Détecte une suite de coups cités à la suite les uns des autres
     (issue #90, point 1) qu'AUCUNE des positions candidates ne permet de
-    jouer jusqu'au bout, même en autorisant pour un coup ISOLÉ (une seule
-    suite d'un seul coup) un demi-coup intermédiaire caché quelconque avant
-    de l'essayer (issue #94, point 4 — cf. _legal_apres_demi_coup_cache).
-    Tolérant par construction : une suite jouable depuis au moins une
-    position candidate n'est jamais signalée — une ligne hypothétique citée
-    en prose peut tout à fait partir d'un point de départ différent de ceux
-    fournis (cf. limites en en-tête de module). Prudent (point 2) : une
-    suite dont l'échec ne s'explique, sur CHAQUE position candidate essayée,
-    que par une ambiguïté ou une notation invalide n'est jamais signalée non
-    plus, de même qu'une suite citée entre parenthèses ou introduite par
-    "si" (jamais vérifiée du tout) — mieux vaut un faux négatif qu'une
-    pastille rouge et une relance pour rien.
+    jouer jusqu'au bout, même en autorisant, directement devant la suite,
+    un coup précédent CITÉ à proximité (issue #97, point 2 ; généralisé de
+    "suite entre parenthèses seulement" à toute suite par l'issue #99,
+    tâche 1) ou, à défaut, un demi-coup intermédiaire caché quelconque
+    (issue #94, point 4, généralisé de "un coup isolé" à "une suite de
+    n'importe quelle longueur" par l'issue #97, point 3, puis #99, tâche 1
+    — cf. _rassembler_lectures, qui combine les deux). Tolérant par
+    construction : une suite jouable depuis au moins une position
+    candidate, par au moins une de ces lectures, n'est jamais signalée —
+    une ligne hypothétique citée en prose peut tout à fait partir d'un
+    point de départ différent de ceux fournis (cf. limites en en-tête de
+    module). Prudent (point 2) : une suite dont l'échec ne s'explique, sur
+    CHAQUE position candidate essayée, que par une ambiguïté ou une
+    notation invalide n'est jamais signalée non plus, de même qu'une suite
+    citée entre parenthèses ou introduite par "si" (jamais vérifiée du
+    tout) — mieux vaut un faux négatif qu'une pastille rouge et une relance
+    pour rien.
 
     Constat ayant motivé le demi-coup caché (issue #94) : "si la dame prend
     en h4, gxh4 reprend" cite "gxh4" seul, en décrivant par des mots la prise
     précédente plutôt que de l'écrire ("Qxh4") — ce coup est pourtant bel et
     bien légal, une fois cette prise jouée. Sans ce filet, un coup isolé mais
     plausible (rattaché par le texte à un coup non cité) déclenchait à tort
-    une alerte rouge et une relance automatique inutile. Un coup réellement
-    illégal (pièce absente, prise géométriquement impossible...) continue
-    d'être signalé : aucun demi-coup cache ne le rend légal nulle part.
+    une alerte rouge et une relance automatique inutile. Constat ayant
+    motivé le coup précédent CITÉ généralisé à toute suite (issue #99) :
+    "Bxh7+ ... Dans la position de départ, Bxh7+ était jouable mais mauvais
+    pour les Blancs : après Nxh7 Nxh7 Kxh7, c'est toi qui sors gagnant de
+    l'échange" signalait "Nxh7 Nxh7 Kxh7" comme suite illégale, alors que
+    "Bxh7+" est cité juste avant dans la même phrase et rend cette suite
+    jouable. Un coup réellement illégal (pièce absente, prise
+    géométriquement impossible...) continue d'être signalé : aucune de ces
+    lectures supplémentaires ne le rend légal nulle part.
 
     Retourne une liste de dicts {"type": "coup_illegal", "detail": str,
     "coups_cites": list, "positions_essayees": list} — "positions_essayees"
@@ -757,11 +807,8 @@ def detecter_suites_illegales(texte: str, candidats: list) -> list:
                 break
             if statut in ("ambigu", "invalide"):
                 doute = True
-        if not reussie and not doute and len(suite["coups"]) == 1:
-            reussie = any(
-                _legal_apres_demi_coup_cache(suite["coups"][0], board)
-                for _label, board in candidats
-            )
+        if not reussie and not doute:
+            reussie = bool(_rassembler_lectures(suite, candidats))
         if reussie or doute:
             continue
         labels_essayes = [label for label, _ in candidats]
@@ -1131,37 +1178,91 @@ def detecter_clouage_errone(texte: str, boards_reference: list, candidats: list)
     return alertes
 
 
+_TYPE_PIECE_ALT = r"dames?|tours?|fous?|cavaliers?"
+
+# "échange de dames"/"de tours"/"de fous"/"de cavaliers" (issue #92, tâche
+# 3a ; "du" ajouté par l'issue #99, tâche 1, pour couvrir aussi "du
+# cavalier") — exige le mot "échange" lui-même, SAUF si suivi de "contre
+# <type>" (forme asymétrique ci-dessous, jamais les deux lectures à la fois
+# sur le même "échange de <type> contre <type2>", cf. lookahead négatif).
 _ECHANGE_DE_TYPE_RE = re.compile(
-    r"\b[ée]chang\w*\s+(?:de|des)\s+(dames?|tours?|fous?|cavaliers?)\b",
+    rf"\b[ée]chang\w*\s+(?:de|des|du)\s+({_TYPE_PIECE_ALT})(?!\s+contre\b)\b",
+    re.IGNORECASE,
+)
+
+# Forme asymétrique "<type1> contre <type2>" (issue #99, tâche 2) — trois
+# tournures couvertes par un seul motif, préfixe facultatif : "échange de
+# cavalier contre fou", "du cavalier contre le fou", "cavalier contre fou"
+# (bare). Le mot "contre" entre deux noms de pièces est lui-même le signal
+# d'un échange — "échange" n'est donc pas obligatoire ici, contrairement à
+# _ECHANGE_DE_TYPE_RE ci-dessus (qui, sans "contre" à proximité, resterait
+# trop permissif si le mot "échange" n'était plus requis).
+_ECHANGE_TYPE_CONTRE_RE = re.compile(
+    rf"\b(?:de|du|des)?\s*({_TYPE_PIECE_ALT})\s+contre\s+"
+    rf"(?:un\s+|une\s+|le\s+|la\s+|les\s+)?({_TYPE_PIECE_ALT})\b",
     re.IGNORECASE,
 )
 
 
+def _pertes_par_type(piece_type: int, lectures: list) -> list:
+    """Pour chaque lecture (board_avant, board_apres) de `lectures`, le
+    nombre de pièces de `piece_type` perdues par les Blancs puis par les
+    Noirs — utilisé par detecter_echange_type_incoherent (forme symétrique
+    ET asymétrique)."""
+    resultat = []
+    for board_avant, board_apres in lectures:
+        perte_blancs = (
+            len(board_avant.pieces(piece_type, chess.WHITE))
+            - len(board_apres.pieces(piece_type, chess.WHITE))
+        )
+        perte_noirs = (
+            len(board_avant.pieces(piece_type, chess.BLACK))
+            - len(board_apres.pieces(piece_type, chess.BLACK))
+        )
+        resultat.append((perte_blancs, perte_noirs))
+    return resultat
+
+
 def detecter_echange_type_incoherent(texte: str, candidats: list) -> list:
-    """Détecte \"échange de dames\"/\"de tours\"/\"de fous\"/\"de cavaliers\"
-    (issue #92, tâche 3a) accolé à une suite d'au moins deux coups cités,
-    quand cette suite, rejouée sur l'échiquier, ne retire PAS une pièce de
-    ce type précis à CHACUN des deux camps — cas réel ayant motivé cette
-    tâche : \"il force un échange de dames (Qxe8 Qxe8)\" sur une suite qui
-    prend une tour aux Blancs et une dame aux Noirs (un seul camp perd sa
-    dame, ce n'est pas un \"échange de dames\").
+    """Détecte deux tournures (issue #92, tâche 3a, étendue par l'issue #99,
+    tâche 2) accolées à une suite d'au moins deux coups cités, contredites
+    par TOUTES les lectures valides de cette suite, rejouée sur l'échiquier :
+
+    1. \"échange de dames\"/\"de tours\"/\"de fous\"/\"de cavaliers\"
+       (forme SYMÉTRIQUE, sans \"contre\") — quand la suite ne retire PAS
+       une pièce de ce type précis à CHACUN des deux camps. Cas réel ayant
+       motivé cette forme : \"il force un échange de dames (Qxe8 Qxe8)\"
+       sur une suite qui prend une tour aux Blancs et une dame aux Noirs
+       (un seul camp perd sa dame, ce n'est pas un \"échange de dames\").
+    2. \"échange de <type1> contre <type2>\" / \"du <type1> contre le
+       <type2>\" / \"<type1> contre <type2>\" (forme ASYMÉTRIQUE, issue
+       #99, tâche 2, deux types DIFFÉRENTS nommés) — quand AUCUNE lecture
+       valide ne montre qu'un camp perd une pièce de type1 tandis que
+       l'AUTRE perd une pièce de type2 (les deux sens acceptés : \"le
+       cavalier noir contre le fou blanc\", ou l'inverse). Cas réel ayant
+       motivé cette forme : \"la ligne se poursuit avec Bxc6+ Qxc6, un
+       échange de cavalier contre fou\" était signalé à tort par l'ANCIENNE
+       règle symétrique (qui exigeait que CHAQUE camp perde un cavalier),
+       alors que c'est le cavalier NOIR qui est échangé contre le fou
+       BLANC — une lecture tout à fait cohérente, jamais signalée par la
+       forme asymétrique. Si les deux types cités sont identiques (\"un
+       échange de cavalier contre cavalier\"), la forme 1 (symétrique)
+       s'applique à la place — un \"X contre X\" affirme bien que chaque
+       camp perd un X.
 
     Même construction que detecter_echanges_mal_qualifies (fenêtre de
     proximité autour de la suite via _fenetre_qualificatif_echange, suite
     rejouée via _rassembler_lectures) — ne duplique ni ne recalcule la
     légalité. Différence volontaire sur le filtre \"douteuse\" : une suite
-    citée ENTRE PARENTHÈSES par simple concision (cas réel ci-dessus) n'est
-    PAS ignorée ici (seul suite[\"si_hypothetique\"] l'est, cf.
-    _extraire_suites) — un filet de sécurité reste la tentative de rejeu
-    elle-même ([] lectures, donc ignoré, si la suite ne se joue d'aucune
-    façon connue).
+    citée ENTRE PARENTHÈSES par simple concision n'est PAS ignorée ici
+    (seul suite[\"si_hypothetique\"] l'est, cf. _extraire_suites) — un
+    filet de sécurité reste la tentative de rejeu elle-même ([] lectures,
+    donc ignoré, si la suite ne se joue d'aucune façon connue).
 
-    Lectures multiples (issue #97, point 3, même principe que
-    detecter_echanges_mal_qualifies) : une incohérence n'est signalée que si
-    TOUTES les lectures valides de la suite (cf. _rassembler_lectures —
-    positions candidates, avec ou sans le coup précédent cité, avec ou sans
-    demi-coup caché) montrent qu'au moins un camp ne perd aucune pièce de ce
-    type ; une seule lecture où CHAQUE camp perd bien une pièce de ce type
+    Lectures multiples (issue #97, point 3, généralisées par l'issue #99,
+    tâche 1 — cf. _rassembler_lectures) : une incohérence n'est signalée
+    que si TOUTES les lectures valides de la suite la contredisent ; une
+    seule lecture cohérente (symétrique ou asymétrique selon la forme)
     suffit à ne rien signaler.
 
     Retourne une liste de dicts {"type": "echange_type_incoherent",
@@ -1174,8 +1275,9 @@ def detecter_echange_type_incoherent(texte: str, candidats: list) -> list:
         if suite["si_hypothetique"] or len(suite["coups"]) < 2:
             continue
         fenetre = _fenetre_qualificatif_echange(texte, suite)
-        matches = list(_ECHANGE_DE_TYPE_RE.finditer(fenetre))
-        if not matches:
+        matches_simple = list(_ECHANGE_DE_TYPE_RE.finditer(fenetre))
+        matches_contre = list(_ECHANGE_TYPE_CONTRE_RE.finditer(fenetre))
+        if not matches_simple and not matches_contre:
             continue
 
         lectures = _rassembler_lectures(suite, candidats)
@@ -1186,31 +1288,18 @@ def detecter_echange_type_incoherent(texte: str, candidats: list) -> list:
         gravite = "rouge" if abs(delta_pire) >= SEUIL_ECHANGE_GRAVE_PTS else "orange"
         resume_lectures = _resume_valeurs(deltas)
 
-        for m in matches:
-            if _qualificatif_nie(fenetre, m.start()):
-                continue
-            piece_type = _NOM_PIECE_TYPE[m.group(1).lower()]
-            pertes_par_lecture = []
-            for board_avant, board_apres in lectures:
-                perte_blancs = (
-                    len(board_avant.pieces(piece_type, chess.WHITE))
-                    - len(board_apres.pieces(piece_type, chess.WHITE))
-                )
-                perte_noirs = (
-                    len(board_avant.pieces(piece_type, chess.BLACK))
-                    - len(board_apres.pieces(piece_type, chess.BLACK))
-                )
-                pertes_par_lecture.append((perte_blancs, perte_noirs))
-            if any(pb >= 1 and pn >= 1 for pb, pn in pertes_par_lecture):
-                continue
+        def _alerte_symetrique(m, piece_type) -> dict:
+            pertes = _pertes_par_type(piece_type, lectures)
+            if any(pb >= 1 and pn >= 1 for pb, pn in pertes):
+                return None
             nom = _NOM_PIECE_AFFICHAGE[piece_type]
-            perte_blancs, perte_noirs = pertes_par_lecture[0]
+            perte_blancs, perte_noirs = pertes[0]
             camps_sans_perte = []
             if perte_blancs < 1:
                 camps_sans_perte.append("les Blancs")
             if perte_noirs < 1:
                 camps_sans_perte.append("les Noirs")
-            alertes.append({
+            return {
                 "type": "echange_type_incoherent",
                 "gravite": gravite,
                 "detail": (
@@ -1218,6 +1307,45 @@ def detecter_echange_type_incoherent(texte: str, candidats: list) -> list:
                     f"prétend que chaque camp perd un(e) {nom}, alors que, dans "
                     f"TOUTES les lectures valides de cette suite ({resume_lectures}), "
                     f"{' et '.join(camps_sans_perte)} n'en perd(ent) aucun(e)"
+                ),
+            }
+
+        for m in matches_simple:
+            if _qualificatif_nie(fenetre, m.start()):
+                continue
+            piece_type = _NOM_PIECE_TYPE[m.group(1).lower()]
+            alerte = _alerte_symetrique(m, piece_type)
+            if alerte is not None:
+                alertes.append(alerte)
+
+        for m in matches_contre:
+            if _qualificatif_nie(fenetre, m.start()):
+                continue
+            type_a = _NOM_PIECE_TYPE[m.group(1).lower()]
+            type_b = _NOM_PIECE_TYPE[m.group(2).lower()]
+            if type_a == type_b:
+                alerte = _alerte_symetrique(m, type_a)
+                if alerte is not None:
+                    alertes.append(alerte)
+                continue
+            pertes_a = _pertes_par_type(type_a, lectures)
+            pertes_b = _pertes_par_type(type_b, lectures)
+            coherent_quelque_part = any(
+                (pa[0] >= 1 and pb[1] >= 1) or (pa[1] >= 1 and pb[0] >= 1)
+                for pa, pb in zip(pertes_a, pertes_b)
+            )
+            if coherent_quelque_part:
+                continue
+            nom_a, nom_b = _NOM_PIECE_AFFICHAGE[type_a], _NOM_PIECE_AFFICHAGE[type_b]
+            alertes.append({
+                "type": "echange_type_incoherent",
+                "gravite": gravite,
+                "detail": (
+                    f"\"{m.group(0)}\" accolé à la suite citée \"{suite['texte']}\" "
+                    f"prétend un échange {nom_a} contre {nom_b}, alors que, dans "
+                    f"TOUTES les lectures valides de cette suite ({resume_lectures}), "
+                    f"aucun camp ne perd un(e) {nom_a} pendant que l'autre perd un(e) "
+                    f"{nom_b} (dans un sens ou dans l'autre)"
                 ),
             })
     return alertes
@@ -1746,12 +1874,18 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "la case suffit à l'identifier sans ambiguïté via les positions de "
         "référence ; une pièce non identifiable ainsi, ou un mot de clouage "
         "hors de la même phrase, n'est jamais contrôlée)",
-        "« échange de X » cité (issue #92) : une suite d'au moins deux "
-        "coups cités qualifiée \"échange de dames\"/\"de tours\"/\"de "
-        "fous\"/\"de cavaliers\" est rejouée sur l'échiquier et comparée au "
+        "« échange de X » / « X contre Y » cité (issue #92, étendu par "
+        "l'issue #99) : une suite d'au moins deux coups cités, qualifiée "
+        "\"échange de dames\"/\"de tours\"/\"de fous\"/\"de cavaliers\" "
+        "(sans \"contre\"), est rejouée sur l'échiquier et comparée au "
         "nombre de pièces de ce type précis réellement perdues par CHAQUE "
-        "camp (limite : ne couvre que la forme \"échange de <type>\", pas "
-        "une tournure équivalente comme \"ils échangent leurs dames\")",
+        "camp ; qualifiée \"échange de <type1> contre <type2>\"/\"du "
+        "<type1> contre le <type2>\"/\"<type1> contre <type2>\" avec deux "
+        "types DIFFÉRENTS, elle est comparée de façon ASYMÉTRIQUE (un camp "
+        "perd le type1, l'autre perd le type2, dans un sens ou dans "
+        "l'autre) — deux types identiques retombent sur la règle symétrique "
+        "(limite : ne couvre que ces formes précises, pas une tournure "
+        "équivalente comme \"ils échangent leurs dames\")",
         "bilan matériel annoncé (issue #92) : \"équilibre matériel\"/"
         "\"matériel égal\"/\"égalité matérielle\" à propos du résultat "
         "d'une suite citée est comparé au bilan matériel RÉEL (total "

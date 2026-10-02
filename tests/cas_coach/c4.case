@@ -1,6 +1,6 @@
 # Cas de non-régression — voir tests/cas_coach/README.md pour le format.
 id: c4_bxc6_bxc6_reste_verte
-description: Non-régression de l'issue #90 — la suite « Bxc6+ bxc6 » (le fou blanc de b5 prend le cavalier de c6 avec échec, le pion b7 reprend) ne doit plus être signalée comme une suite illégale, ni l'échange qualifié « équilibré » (fou=3 contre cavalier=3) comme une incohérence
+description: Non-régression de l'issue #90 — la suite « Bxc6+ bxc6 » (le fou blanc de b5 prend le cavalier de c6 avec échec, le pion b7 reprend) ne doit plus être signalée comme une suite illégale, ni l'échange qualifié « équilibré » (fou=3 contre cavalier=3) comme une incohérence. Étendu par l'issue #99 : « Bxc6+ Qxc6 » (reprise par la dame plutôt que le pion) qualifié « échange de cavalier contre fou » (forme asymétrique, deux types différents) ne doit plus être signalé à tort par l'ancienne règle symétrique (qui exigeait que CHAQUE camp perde un cavalier).
 source: mes_erreurs — position ayant réellement déclenché le faux positif corrigé par l'issue #90
 fen: r1b1kbnr/pp3ppp/1qn1p3/1Bpp4/3PP3/2PQ1P2/PP4PP/RNB1K1NR b KQkq - 4 6
 camp_alain: noirs
@@ -9,6 +9,18 @@ meilleur_coup: Nf6
 
 faits_attendus:
   reponse_simulee_verte: Si tu joues Nf6, les Blancs peuvent répondre Bxc6+ bxc6, un échange équilibré entre le fou et le cavalier.
+  # Issue #99, tâche 2/3b — cas réel : « échange de cavalier contre fou »
+  # (le cavalier noir est échangé contre le fou blanc, deux types
+  # différents) ne doit déclencher aucune alerte.
+  reponse_simulee_verte: Si tu joues Nf6, la ligne se poursuit avec Bxc6+ Qxc6, un échange de cavalier contre fou qui laisse la position équilibrée matériellement.
+  # Variante fausse (issue #99, tâche 3b) : « cavalier contre cavalier »
+  # prétend que les Blancs perdent aussi un cavalier (ils perdent un fou) —
+  # doit rester signalée (règle symétrique, deux types identiques).
+  reponse_simulee_signalee: Si tu joues Nf6, la ligne se poursuit avec Bxc6+ Qxc6, un échange de cavalier contre cavalier qui laisse la position équilibrée matériellement.
+  # Variante fausse (issue #99, tâche 3b) : « fou contre fou » prétend que
+  # les Noirs perdent aussi un fou (ils perdent un cavalier) — doit rester
+  # signalée (règle symétrique, deux types identiques).
+  reponse_simulee_signalee: Si tu joues Nf6, la ligne se poursuit avec Bxc6+ Qxc6, un échange de fou contre fou qui laisse la position équilibrée matériellement.
 
 motifs_interdits:
   illégal

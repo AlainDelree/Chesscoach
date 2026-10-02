@@ -225,7 +225,12 @@ le commentaire) et `pastille_attendue`, puis à supprimer le commentaire.
   « équilibré » alors que les Blancs sont en avance (issue #91).
 - `c4_bxc6_bxc6_reste_verte` — non-régression de l'issue #90 : la suite
   « Bxc6+ bxc6 » ne doit plus être signalée comme une suite de coups
-  illégale.
+  illégale. Étendu par l'issue #99 : « Bxc6+ Qxc6, un échange de cavalier
+  contre fou » (le cavalier noir échangé contre le fou blanc, deux types
+  différents) ne doit plus être signalé à tort par l'ancienne règle
+  symétrique — et les variantes fausses « cavalier contre cavalier »/« fou
+  contre fou » (qui prétendent que les DEUX camps perdent le même type)
+  doivent rester signalées.
 - `h4_menace_gxh3_defensif` — h4 pare une menace réelle sur h3 et ne doit
   pas être présenté comme un plan offensif (issue #80). Étendu par l'issue
   #94 : motif attendu avec alternatives (`défensif|pare la menace|sécurité
@@ -246,7 +251,11 @@ le commentaire) et `pastille_attendue`, puis à supprimer le commentaire.
   cette idée, alors que Bxh7+ existe et est mauvais dans la position de
   départ mais devient impossible après le coup proposé g6 (diagonale
   d3-h7 bloquée par le pion, issue #96). Premier cas à utiliser le champ
-  `question` ci-dessus.
+  `question` ci-dessus. Étendu par l'issue #99 : une réponse citant "Bxh7+"
+  dans une phrase, puis la suite "Nxh7 Nxh7 Kxh7" (injouable seule) plus
+  loin dans le texte sans parenthèses, ne doit déclencher aucune alerte —
+  le coup précédent cité ("Bxh7+") doit être retrouvé et inséré devant la
+  suite, même hors parenthèses.
 
 Deux cas supplémentaires, tirés de `parties_test_coach.pgn` (parties sans
 erreur connue, pour avoir aussi des cas de référence « tout va bien »),
