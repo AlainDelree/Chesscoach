@@ -588,6 +588,28 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "ou par la tactique. Quand le coup proposé diffère du meilleur coup "
         "et que les deux ont leurs propres idées détectées, compare-les "
         "explicitement."
+        "\n\n"
+        "Coup interrogé par Alain (issue #96) : quand le contexte fournit un "
+        "bloc \"Coup(s) précis interrogé(s) par Alain...\", c'est qu'Alain a "
+        "mentionné un coup précis dans sa question (par exemple \"et Bxh7+ "
+        "?\"), déjà testé mécaniquement par le serveur, position par "
+        "position (position de départ de l'exercice, après le coup proposé, "
+        "après le coup réellement joué, après le meilleur coup, après les "
+        "lignes déjà calculées) : pour chaque position citée, ce bloc dit "
+        "explicitement si ce coup y est légal (avec son évaluation "
+        "Stockfish) ou illégal (avec la raison mécanique précise — ligne "
+        "bloquée, pièce absente ou ayant changé de case...). Base ta "
+        "réponse UNIQUEMENT sur ce que ce bloc dit explicitement pour "
+        "chaque position citée, sans ajouter AUCUN fait supplémentaire sur "
+        "ce coup. Si une position donnée le rend illégal, dis-le "
+        "explicitement (par exemple quelle pièce bloque la trajectoire) "
+        "plutôt que de rester évasif ; si une position donnée le rend "
+        "légal mais mauvais, dis-le aussi clairement, avec la raison "
+        "fournie. Ne réponds \"je ne vois pas cette idée\" ou une formule "
+        "équivalente QUE si ce bloc est ABSENT du contexte alors que la "
+        "question porte clairement sur un coup précis — jamais quand il "
+        "est présent, même si son verdict est \"mauvais\" ou \"illégal "
+        "partout\"."
     )
 )
 
@@ -1243,6 +1265,16 @@ def _build_context_text(context) -> str:
     idees_coup_propose_texte = (context.get("idees_coup_propose_texte") or "").strip()
     idees_coup_reel_texte = (context.get("idees_coup_reel_texte") or "").strip()
     idees_meilleur_coup_texte = (context.get("idees_meilleur_coup_texte") or "").strip()
+    # Coup précis interrogé par Alain dans sa question actuelle du chat
+    # libre pendant l'exercice (ex. "et Bxh7+ ?", issue #96), déjà calculé
+    # mécaniquement par app.py/game_facts (_enrich_context_with_coup_
+    # interroge + game_facts.build_coups_interroges_texte) : légalité ET
+    # évaluation Stockfish de ce coup sur chaque position pertinente de cet
+    # exercice — cas réel ayant motivé cet ajout, le coach n'avait jusque-là
+    # aucune donnée sur un tel coup et a répondu qu'il ne voyait pas cette
+    # idée, sans jamais pouvoir dire si elle est bonne, mauvaise, ou même
+    # jouable (voir la consigne dédiée de _EXERCISE_SYSTEM_ADDENDUM).
+    coup_interroge_texte = (context.get("coup_interroge_texte") or "").strip()
     # Mode "Exercice" (issue #7) : comparaison coup proposé / coup réellement
     # joué / meilleur coup Stockfish, plutôt qu'un chat libre sur une partie.
     coup_propose  = (context.get("coup_propose") or "").strip()
@@ -1525,6 +1557,13 @@ def _build_context_text(context) -> str:
             lines.append(reponse_adverse_meilleur_coup_texte)
         if idees_meilleur_coup_texte:
             lines.append(idees_meilleur_coup_texte)
+    if coup_interroge_texte:
+        lines.append(
+            "Coup(s) précis interrogé(s) par Alain dans sa question actuelle "
+            "(issue #96), légalité et évaluation Stockfish déjà calculées "
+            "position par position — ta SEULE source pour en parler, voir la "
+            f"consigne dédiée : {coup_interroge_texte}"
+        )
     if rating_probleme is not None:
         lines.append(
             f"Ce problème est tiré de la base ouverte de problèmes Lichess "

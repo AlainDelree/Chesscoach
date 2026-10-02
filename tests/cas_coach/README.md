@@ -59,6 +59,15 @@ camp_alain: blancs ou noirs
 coup_propose: le coup à tester (SAN, ex. Re3)
 meilleur_coup: le meilleur coup attendu (SAN, ex. Re8)
 
+question: question de suivi simulée (issue #96, optionnel) — ex. "et Bxh7+
+  ?". Remplace le message initial habituel ("Commente le coup que je
+  propose...") par cette question, et enrichit le contexte avec
+  "coup_interroge_texte" (légalité/évaluation Stockfish du ou des coups
+  détectés dans cette question, sur chaque position pertinente de
+  l'exercice — même calcul que app.py on_coach_ask/
+  _enrich_context_with_coup_interroge). Sans ce champ, le cas simule le
+  message initial comme avant (comportement inchangé).
+
 faits_attendus:
   une ligne par fait — par défaut une sous-chaîne cherchée (insensible à
   la casse et aux accents) dans le texte de contexte RÉELLEMENT envoyé au
@@ -209,6 +218,13 @@ le commentaire) et `pastille_attendue`, puis à supprimer le commentaire.
   toujours vert), qualifié à tort de « favorable aux Blancs » (signalé) et
   non-régression de « Qxh4 gxh4 » qualifié d'« équilibré » (toujours
   signalé).
+- `bxh7_coup_interroge` — coup interrogé par Alain dans le chat libre
+  pendant un exercice (« et Bxh7+ ? »), jamais proposé par lui-même : le
+  coach n'avait aucune donnée sur ce coup et répondait qu'il ne voyait pas
+  cette idée, alors que Bxh7+ existe et est mauvais dans la position de
+  départ mais devient impossible après le coup proposé g6 (diagonale
+  d3-h7 bloquée par le pion, issue #96). Premier cas à utiliser le champ
+  `question` ci-dessus.
 
 Deux cas supplémentaires, tirés de `parties_test_coach.pgn` (parties sans
 erreur connue, pour avoir aussi des cas de référence « tout va bien »),

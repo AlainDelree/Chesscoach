@@ -162,6 +162,7 @@ pas ces inventions, elles se contentaient de ne pas les couvrir :
 
 import io
 import logging
+import re
 
 import chess
 import chess.pgn
@@ -250,6 +251,19 @@ SEUIL_IDEE_PION = 0.3
 # entières, un solde "proche de zéro" ne peut en pratique être qu'exactement
 # nul pour une reprise immédiate unique — ce seuil reste à 0 par défaut.
 SEUIL_ECHANGE_EQUILIBRE_PTS = 0
+
+# Nombre maximal de coups distincts traités quand Alain en interroge un ou
+# plusieurs précisément dans sa question (ex. "et Bxh7+ ?", issue #96,
+# cf. detect_moves_in_text/build_coups_interroges_texte) — réglable en ce
+# seul endroit, avec MAX_CARACTERES_COUP_QUESTION ci-dessous pour la
+# longueur du texte produit par coup.
+MAX_COUPS_QUESTION = 3
+
+# Longueur maximale (en caractères) du texte produit pour UN coup interrogé
+# (issue #96) — au-delà, le texte est tronqué ("…") plutôt que de gonfler
+# indéfiniment le contexte envoyé au coach (ex. un coup légal sur de
+# nombreuses positions testées).
+MAX_CARACTERES_COUP_QUESTION = 700
 
 
 def _couleur_accordee(piece_type: int, est_blanc: bool) -> str:
@@ -620,6 +634,438 @@ def describe_pv_mechanically(fen_avant: str, pv_text: str, camp_alain: str = "",
     except Exception as e:
         logger.warning(f"[GAME_FACTS] describe_pv_mechanically a échoué : {e}")
         return []
+
+
+# --- Coup précis interrogé par Alain dans sa question (issue #96) --------
+#
+# Cas réel ayant motivé cette section (signalement d'Alain, 2 octobre 2026,
+# mode Exercice) : FEN r2q1rk1/pppbbppp/2n2n2/3p2N1/3P4/3BB3/PPP1QPPP/
+# RN2K2R b KQ - 11 9, question "et Bxh7+ ?" — le coach, sans AUCUNE donnée
+# sur ce coup, a répondu qu'il ne voyait pas cette idée et a laissé Alain
+# sans explication, alors que Bxh7+ existe pour les Blancs dans la position
+# de départ (mauvais : Nxh7 Nxh7 Kxh7, environ -3,6) mais devient impossible
+# après g6 ou Ne4 (diagonale d3-h7 bloquée) et reste légal mais sans effet
+# après Nb4. Les fonctions ci-dessous détectent un coup mentionné dans le
+# texte d'Alain (SAN ou case à case), testent sa légalité position par
+# position — y compris quand c'est le trait de l'AUTRE camp dans cette
+# position précise (ex. Bxh7+ est un coup blanc posé alors que les Noirs
+# ont le trait dans la position de départ de l'exercice) — et produisent,
+# pour chaque position, soit une description mécanique + l'évaluation
+# Stockfish (si légal), soit une phrase mécanique expliquant pourquoi il ne
+# l'est pas (ligne bloquée, pièce absente ou déplacée, case occupée...).
+# Jamais un appel Stockfish ici (cf. en-tête de module) : `evaluateur`,
+# injecté par l'appelant (app.py, seul détenteur de EngineManager), est un
+# callback optionnel (fen, chess.Move) -> dict compatible avec
+# app.py._evaluate_move_for_coach.
+
+_PIECE_LETTRE = {"K": chess.KING, "Q": chess.QUEEN, "R": chess.ROOK, "B": chess.BISHOP, "N": chess.KNIGHT}
+
+# Reconnaît soit une notation case à case explicite ("d3 vers h7",
+# "d3 -> h7" — groupe "case_depart"/"case_arrivee", convertie en UCI par
+# detect_moves_in_text), soit une notation SAN standard (castling, coup de
+# pièce avec capture/désambiguïsation/promotion/échec facultatifs, coup de
+# pion poussée ou prise) — groupe "san". L'alternative "case à case" est
+# listée en premier : sur "d3 -> h7", elle consomme tout le token et empêche
+# la branche SAN de ne matcher que "d3" puis "h7" séparément comme deux
+# coups de pion sans rapport (vérifié par les tests de non-régression).
+# Un simple tiret nu ("d3-h7") est volontairement EXCLU de cette liste de
+# séparateurs (issue #96, correctif après revue) : une phrase descriptive
+# française légitime emploie couramment cette même forme sans viser un coup
+# du tout (ex. "la diagonale d3-h7", "la chaîne de pions d4-d5") — seuls des
+# mots/symboles explicitement directionnels ("vers", "->", "à") sont
+# retenus comme notation case à case, par prudence. Même prudence pour
+# l'alternative "coup de pion poussée" (dernière du groupe "san") : EXCLUE
+# spécifiquement si adjacente à un tiret ("(?<!-)"/"(?!-)", issue #96,
+# correctif après revue) — sinon un simple tiret nu dans une phrase
+# descriptive ("la diagonale d3-h7", "la chaîne d4-d5") produirait deux
+# fausses détections séparées ("d3"+"h7"/"d4"+"d5") plutôt qu'aucune.
+_COUP_TOKEN_RE = re.compile(
+    r'(?<![A-Za-z0-9])(?:'
+    r'(?P<case_depart>[a-h][1-8])\s*(?:->|vers|à)\s*(?P<case_arrivee>[a-h][1-8])'
+    r'|(?P<san>O-O-O|O-O'
+    r'|[KQRBN][a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?'
+    r'|[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?'
+    r'|(?<!-)[a-h][1-8](?:=[QRBN])?[+#]?(?!-)'
+    r')'
+    r')(?![A-Za-z0-9])'
+)
+
+_SAN_LOOSE_RE = re.compile(
+    r'^(?P<piece>[KQRBN])?(?P<disamb_file>[a-h])?(?P<disamb_rank>[1-8])?'
+    r'(?P<capture>x)?(?P<dest>[a-h][1-8])(?:=(?P<promo>[QRBN]))?[+#]?$'
+)
+
+_UCI_LOOSE_RE = re.compile(r'^([a-h][1-8])([a-h][1-8])(?:=?[QRBN])?$')
+
+
+def detect_moves_in_text(text: str, max_coups: int = MAX_COUPS_QUESTION) -> list[str]:
+    """Détecte dans `text` un ou plusieurs coups en notation algébrique (SAN,
+    par exemple "Bxh7+", "Nf3", "O-O", "e4") ou décrits par case de départ et
+    d'arrivée (par exemple "d3 vers h7", "d3 -> h7" — PAS un simple tiret
+    nu, trop ambigu avec une mention descriptive comme "la diagonale
+    d3-h7", cf. _COUP_TOKEN_RE) — issue #96, étape 1. Volontairement
+    permissif sur la FORME (une notation syntaxiquement valide est détectée
+    même hors contexte, par exemple la simple mention d'une case comme "e4")
+    mais jamais sur le FOND : la légalité réelle n'est tranchée qu'ensuite,
+    position par position (resolve_coup_sur_position ci-dessous), qui répond
+    explicitement "notation ambiguë" plutôt que de deviner. Dédoublonné dans
+    l'ordre d'apparition, limité à `max_coups`. Retourne une liste vide si
+    `text` est vide ou si aucun token ne correspond — y compris une phrase
+    sans coup identifiable (prudence demandée par l'issue #96)."""
+    if not text:
+        return []
+    vus: list[str] = []
+    for m in _COUP_TOKEN_RE.finditer(text):
+        if m.group("case_depart") and m.group("case_arrivee"):
+            coup = m.group("case_depart") + m.group("case_arrivee")
+        else:
+            coup = m.group("san")
+        if not coup or coup in vus:
+            continue
+        vus.append(coup)
+        if len(vus) >= max_coups:
+            break
+    return vus
+
+
+def _trajectoire_bloquee(board: "chess.Board", origine: int, arrivee: int) -> list:
+    """Cases occupées entre `origine` et `arrivee`, alignées en colonne,
+    ligne ou diagonale (vide si non alignées ou adjacentes, cf.
+    chess.between) — sert à nommer la pièce qui bloque le trajet d'un coup
+    de pièce à trajectoire rectiligne (issue #96, cas Bxh7+ bloqué en g6)."""
+    return [sq for sq in chess.SquareSet(chess.between(origine, arrivee)) if board.piece_at(sq) is not None]
+
+
+def _raison_malgre_portee(board: "chess.Board", couleur, dest: int, dest_nom: str,
+                           coup_str: str, origine_nom: str) -> str:
+    """Pour une case d'arrivée géométriquement atteignable (blocages déjà
+    écartés par l'appelant) où `coup_str` reste pourtant illégal : seules
+    DEUX raisons chiragrammaticales restent possibles en échecs — la case
+    est occupée par une pièce du même camp (capture de sa propre pièce,
+    impossible), ou ce coup laisserait son propre roi en échec (clouage ou
+    échec déjà en cours) — jamais une supposition (issue #96, correctif
+    après revue : la version initiale disait "probablement un roi laissé
+    en échec" même quand une pièce amie occupait la case, une raison
+    pourtant certaine et différente)."""
+    cible = board.piece_at(dest)
+    if cible is not None and cible.color == couleur:
+        return (
+            f"{coup_str} reste illégal depuis {origine_nom} : {dest_nom} est occupée par une "
+            f"pièce du même camp"
+        )
+    return f"{coup_str} reste illégal depuis {origine_nom} : ce coup laisserait son roi en échec"
+
+
+def _explique_trajectoire(board: "chess.Board", piece_type: int, couleur, origine: int, dest: int,
+                           dest_nom: str, coup_str: str) -> str | None:
+    """Pour UNE case d'origine candidate (déjà filtrée par type de pièce,
+    couleur et désambiguïsation éventuelle), explique pourquoi `coup_str` ne
+    peut pas en partir — ligne/colonne/diagonale bloquée par une pièce
+    nommée, case d'arrivée occupée par une pièce amie, pion sans cible à
+    prendre, ou roi laissé en échec (cf. _raison_malgre_portee). Retourne
+    None si cette case d'origine n'est de toute façon pas candidate
+    géométriquement (hors de portée du tout, ignorant les autres pièces) —
+    l'appelant essaie alors la case candidate suivante."""
+    est_blanc = couleur == chess.WHITE
+    origine_nom = chess.square_name(origine)
+    if piece_type == chess.PAWN:
+        direction = 8 if est_blanc else -8
+        rang_depart = 1 if est_blanc else 6
+        diff_fichier = chess.square_file(dest) - chess.square_file(origine)
+        if diff_fichier != 0:
+            board_vide = chess.Board(None)
+            board_vide.set_piece_at(origine, chess.Piece(chess.PAWN, couleur))
+            if dest not in board_vide.attacks(origine):
+                return None
+            if board.piece_at(dest) is None and not board.is_en_passant(chess.Move(origine, dest)):
+                return f"aucune pièce adverse à prendre en {dest_nom} depuis {origine_nom}"
+            return _raison_malgre_portee(board, couleur, dest, dest_nom, coup_str, origine_nom)
+        if origine + direction == dest:
+            if board.piece_at(dest) is not None:
+                return f"le pion de {origine_nom} est bloqué : {dest_nom} est occupée"
+            return _raison_malgre_portee(board, couleur, dest, dest_nom, coup_str, origine_nom)
+        if origine + 2 * direction == dest and chess.square_rank(origine) == rang_depart:
+            inter = origine + direction
+            occupees = [s for s in (inter, dest) if board.piece_at(s) is not None]
+            if occupees:
+                piece_bloc = board.piece_at(occupees[0])
+                nom_bloc = (
+                    f"{_NOM_PIECE_MAJ[piece_bloc.piece_type]} "
+                    f"{_couleur_accordee(piece_bloc.piece_type, piece_bloc.color)}"
+                )
+                return (
+                    f"le pion de {origine_nom} est bloqué en route vers "
+                    f"{dest_nom} par {nom_bloc} en {chess.square_name(occupees[0])}"
+                )
+            return _raison_malgre_portee(board, couleur, dest, dest_nom, coup_str, origine_nom)
+        return None
+
+    board_vide = chess.Board(None)
+    board_vide.set_piece_at(origine, chess.Piece(piece_type, couleur))
+    if dest not in board_vide.attacks(origine):
+        return None
+    if dest in board.attacks(origine):
+        return _raison_malgre_portee(board, couleur, dest, dest_nom, coup_str, origine_nom)
+    bloc = _trajectoire_bloquee(board, origine, dest)
+    if bloc:
+        piece_bloc = board.piece_at(bloc[0])
+        nom_bloc = (
+            f"{_NOM_PIECE_MAJ[piece_bloc.piece_type]} "
+            f"{_couleur_accordee(piece_bloc.piece_type, piece_bloc.color)}"
+        )
+        return (
+            f"la trajectoire {chess.square_name(origine)}-{dest_nom} est bloquée par "
+            f"{nom_bloc} en {chess.square_name(bloc[0])}"
+        )
+    return None
+
+
+def _explique_coup_impossible(board: "chess.Board", coup_str: str, couleur) -> str:
+    """Explique en UNE phrase mécanique pourquoi `coup_str` (SAN ou case à
+    case "d3h7") n'est pas jouable sur `board` pour `couleur` — issue #96,
+    étape 2 : ligne bloquée, pièce absente ou ayant changé de case, case
+    occupée par une pièce amie, ou coup laissant le roi en échec. Chaque
+    clause provient d'un calcul géométrique explicite (chess.between,
+    pièces réellement présentes sur `board`) — jamais une supposition :
+    repli générique si la raison précise n'a pas pu être établie."""
+    coup_str = (coup_str or "").strip()
+    est_blanc = couleur == chess.WHITE
+
+    if coup_str in ("O-O", "O-O-O"):
+        # La notation SAN du roque n'indique pas le camp : on explique pour
+        # `couleur` (le trait réel ou forcé déjà essayé par
+        # resolve_coup_sur_position) ET pour l'autre camp si besoin, et on
+        # retient la première explication où le DROIT de roque existe
+        # encore — sinon la réponse pourrait, à tort, expliquer l'absence
+        # de droit d'un camp qui n'a jamais eu l'intention de roquer alors
+        # que l'autre a bien ce droit mais un trajet bloqué (cas réel :
+        # cavalier en b1 bloquant O-O-O pour les Blancs, alors que les
+        # Noirs n'ont simplement plus aucun droit de roque).
+        for c in (couleur, not couleur):
+            droit = (
+                board.has_kingside_castling_rights(c) if coup_str == "O-O"
+                else board.has_queenside_castling_rights(c)
+            )
+            if not droit:
+                continue
+            roi = board.king(c)
+            if roi is None:
+                continue
+            rang = chess.square_rank(roi)
+            fichiers_traverses = (5, 6) if coup_str == "O-O" else (1, 2, 3)
+            occupees = [
+                chess.square(f, rang) for f in fichiers_traverses
+                if board.piece_at(chess.square(f, rang)) is not None
+            ]
+            if occupees:
+                piece_bloc = board.piece_at(occupees[0])
+                nom_bloc = (
+                    f"{_NOM_PIECE_MAJ[piece_bloc.piece_type]} "
+                    f"{_couleur_accordee(piece_bloc.piece_type, piece_bloc.color)}"
+                )
+                return f"le roque {coup_str} est bloqué par {nom_bloc} en {chess.square_name(occupees[0])}"
+            return (
+                f"le roque {coup_str} n'est pas jouable dans cette position (case "
+                f"traversée attaquée, ou roi actuellement en échec)"
+            )
+        return f"le roque {coup_str} n'est plus possible : le droit de roque a été perdu"
+
+    m_uci = _UCI_LOOSE_RE.match(coup_str)
+    if m_uci:
+        origine = chess.parse_square(m_uci.group(1))
+        dest = chess.parse_square(m_uci.group(2))
+        piece = board.piece_at(origine)
+        if piece is None:
+            return (
+                f"aucune pièce en {m_uci.group(1)} sur cette position : elle a été capturée "
+                f"ou a changé de case"
+            )
+        if piece.color != couleur:
+            return f"la pièce en {m_uci.group(1)} appartient à l'autre camp sur cette position"
+        raison = _explique_trajectoire(board, piece.piece_type, couleur, origine, dest, m_uci.group(2), coup_str)
+        return raison or (
+            f"{coup_str} reste illégal sur cette position (roi probablement laissé en échec)"
+        )
+
+    m = _SAN_LOOSE_RE.match(coup_str)
+    if not m:
+        return "notation non reconnue sur cette position"
+
+    piece_type = _PIECE_LETTRE.get(m.group("piece"), chess.PAWN)
+    dest = chess.parse_square(m.group("dest"))
+    dest_nom = m.group("dest")
+    disamb_file = m.group("disamb_file")
+    disamb_rank = m.group("disamb_rank")
+    nom_piece = _NOM_PIECE_MAJ.get(piece_type, "pièce")
+    couleur_txt = _couleur_accordee(piece_type, est_blanc)
+
+    candidats = [
+        sq for sq in board.pieces(piece_type, couleur)
+        if (not disamb_file or chess.square_name(sq)[0] == disamb_file)
+        and (not disamb_rank or chess.square_name(sq)[1] == disamb_rank)
+    ]
+    if not candidats:
+        return (
+            f"aucun(e) {nom_piece} {couleur_txt} ne peut rejoindre {dest_nom} : cette pièce "
+            f"n'est plus sur l'échiquier ou a changé de case"
+        )
+    for origine in candidats:
+        raison = _explique_trajectoire(board, piece_type, couleur, origine, dest, dest_nom, coup_str)
+        if raison:
+            return raison
+    return f"aucun(e) {nom_piece} {couleur_txt} ne peut atteindre {dest_nom} depuis la position actuelle"
+
+
+def resolve_coup_sur_position(board: "chess.Board", coup_str: str) -> dict:
+    """Résout `coup_str` (SAN ou case à case "d3h7") sur `board`, en testant
+    le trait réel ET le trait inverse (issue #96) — une question porte
+    souvent sur un coup de l'AUTRE camp que celui qui a la main dans cette
+    position précise (cas réel : "et Bxh7+ ?" posée alors que les Noirs ont
+    le trait dans la position de départ de l'exercice — Bxh7+ est un coup
+    blanc). Retourne {"legal": bool, "move": chess.Move|None, "couleur":
+    chess.WHITE|chess.BLACK, "ambigu": bool, "raison_illegal": str} —
+    "couleur" est le camp qui joue réellement ce coup (nécessaire pour
+    décrire le coup mécaniquement avec le bon trait, cf. appelant), PEUT
+    différer de board.turn quand le trait a dû être forcé pour trouver une
+    interprétation légale. "ambigu"=True (par prudence, ni légal ni
+    illégal) signale une notation SAN réellement ambiguë sur cette position
+    précise (deux pièces candidates sans désambiguïsation) pour TOUTES les
+    couleurs testées : une ambiguïté pour une seule des deux couleurs ne
+    suffit pas à conclure "ambigu" si l'AUTRE couleur donne une
+    interprétation légale et non ambiguë (celle-ci est alors retenue —
+    corrigé après revue : la version initiale s'arrêtait à la première
+    AmbiguousMoveError rencontrée, y compris quand board.turn n'était pas
+    la couleur réellement visée par la question, perdant alors une
+    interprétation pourtant claire de l'autre côté)."""
+    ambigu_rencontre = False
+    for couleur in (board.turn, not board.turn):
+        b = board.copy()
+        b.turn = couleur
+        try:
+            move = b.parse_san(coup_str)
+            return {"legal": True, "move": move, "couleur": couleur, "ambigu": False, "raison_illegal": ""}
+        except chess.AmbiguousMoveError:
+            ambigu_rencontre = True
+            continue
+        except ValueError:
+            continue
+    if ambigu_rencontre:
+        return {"legal": False, "move": None, "couleur": board.turn, "ambigu": True, "raison_illegal": ""}
+    return {
+        "legal": False, "move": None, "couleur": board.turn, "ambigu": False,
+        "raison_illegal": _explique_coup_impossible(board, coup_str, board.turn),
+    }
+
+
+def _texte_evaluation_coup_interroge(evaluation: dict) -> str:
+    """Formate en une courte clause l'évaluation Stockfish d'un coup
+    interrogé (issue #96, étape 2) — qualité/perte par rapport au meilleur
+    coup et courte ligne principale, dans le même format que les autres
+    coups déjà commentés par le coach (describe_perte_cp_clause). Chaîne
+    vide si `evaluation` est vide ou si l'analyse a échoué (jamais un verdict
+    inventé — cf. `analyse_indisponible`)."""
+    if not evaluation or evaluation.get("analyse_indisponible"):
+        return ""
+    segs = []
+    qualite = evaluation.get("verdict_qualite")
+    if qualite:
+        delta_cp = evaluation.get("verdict_delta_cp")
+        segs.append(f"évaluation Stockfish : {qualite}{describe_perte_cp_clause(delta_cp)}")
+    pv = (evaluation.get("pv_coup_propose") or "").strip()
+    if pv:
+        segs.append("ligne calculée : " + " ".join(pv.split()[:4]))
+    if not segs:
+        return ""
+    return " — " + " ; ".join(segs)
+
+
+def build_coup_interroge_bloc(coup_str: str, positions: list, camp_alain: str = "",
+                               evaluateur=None,
+                               max_caracteres: int = MAX_CARACTERES_COUP_QUESTION) -> str:
+    """Construit le texte complet pour UN coup interrogé par Alain (issue
+    #96, étape 2) : pour chaque position pertinente de `positions` (liste de
+    tuples (label, fen), déjà dédoublonnée par l'appelant), teste la
+    légalité (resolve_coup_sur_position) et, si légal, décrit le coup
+    mécaniquement (_decrit_coup_mecanique, même fonction que pour coup_
+    propose/coup_reel/meilleur_coup) complété par l'évaluation Stockfish
+    (`evaluateur`, callback optionnel) ; si illégal, la raison mécanique en
+    une phrase. Les positions consécutives au même résultat sont regroupées
+    pour rester concis. Retourne une chaîne vide si `coup_str` s'avère
+    ambigu sur TOUTES les positions testées (prudence : aucune conclusion),
+    ou si aucune position n'a pu être lue."""
+    groupes: list[tuple[list[str], str]] = []
+    une_conclusion = False
+    for label, fen in positions:
+        try:
+            board = chess.Board(fen)
+        except Exception:
+            continue
+        resultat = resolve_coup_sur_position(board, coup_str)
+        if resultat["ambigu"]:
+            continue
+        une_conclusion = True
+        if resultat["legal"]:
+            # board_coup : trait forcé sur le camp qui joue RÉELLEMENT ce
+            # coup (resultat["couleur"], cf. resolve_coup_sur_position) —
+            # peut différer de board.turn quand la question porte sur un
+            # coup de l'autre camp dans cette position précise (cas Bxh7+,
+            # un coup blanc posé alors que les Noirs ont le trait) ; sans ce
+            # trait forcé, _decrit_coup_mecanique lirait le camp joueur sur
+            # board.turn et attribuerait le coup au mauvais camp.
+            board_coup = board.copy()
+            board_coup.turn = resultat["couleur"]
+            texte = _decrit_coup_mecanique(board_coup, resultat["move"], camp_alain)
+            if evaluateur:
+                try:
+                    # fen du trait forcé (board_coup), PAS `fen` tel que
+                    # transmis par l'appelant : Stockfish doit recevoir une
+                    # position où le trait correspond réellement au camp qui
+                    # joue ce coup, sinon l'appel moteur porte sur une
+                    # position incohérente (même raison que ci-dessus).
+                    evaluation = evaluateur(board_coup.fen(), resultat["move"])
+                except Exception as e:
+                    logger.warning(f"[GAME_FACTS] Évaluation du coup interrogé échouée : {e}")
+                    evaluation = None
+                texte += _texte_evaluation_coup_interroge(evaluation or {})
+        else:
+            texte = resultat["raison_illegal"] or "illégal sur cette position"
+        if groupes and groupes[-1][1] == texte:
+            groupes[-1][0].append(label)
+        else:
+            groupes.append(([label], texte))
+    if not une_conclusion or not groupes:
+        return ""
+    parts = [f"{' et '.join(labels)} : {texte}" for labels, texte in groupes]
+    corps = " ; ".join(parts)
+    if len(corps) > max_caracteres:
+        corps = corps[:max_caracteres].rstrip() + "…"
+    return f"{coup_str} — {corps}"
+
+
+def build_coups_interroges_texte(message_text: str, positions: list, camp_alain: str = "",
+                                   evaluateur=None,
+                                   max_coups: int = MAX_COUPS_QUESTION,
+                                   max_caracteres: int = MAX_CARACTERES_COUP_QUESTION) -> str:
+    """API publique (issue #96) : détecte dans `message_text` (la question
+    actuelle d'Alain) un ou plusieurs coups précis, et retourne le texte
+    complet à ajouter au contexte du coach (une ligne par coup détecté,
+    vide si aucun coup n'a été identifié ou si `positions` est vide). Chaque
+    coup est traité indépendamment par build_coup_interroge_bloc ci-dessus ;
+    `evaluateur`, si fourni, y est transmis tel quel. Best-effort : une
+    erreur sur un coup n'empêche jamais de traiter les autres."""
+    coups = detect_moves_in_text(message_text, max_coups=max_coups)
+    if not coups or not positions:
+        return ""
+    blocs = []
+    for coup in coups:
+        try:
+            bloc = build_coup_interroge_bloc(coup, positions, camp_alain, evaluateur, max_caracteres)
+        except Exception as e:
+            logger.warning(f"[GAME_FACTS] Traitement du coup interrogé '{coup}' échoué : {e}")
+            bloc = ""
+        if bloc:
+            blocs.append(bloc)
+    return "\n".join(blocs)
 
 
 def _materiel_alain(board: "chess.Board", camp_alain: str) -> int | None:
