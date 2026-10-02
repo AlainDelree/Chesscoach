@@ -1,0 +1,19 @@
+# Cas de non-régression — voir tests/cas_coach/README.md pour le format.
+id: h4_menace_gxh3_defensif
+description: h4 pare une menace adverse réelle sur h3 (...gxh3+ et ...Qxh3+, dame noire en h5) — a déjà été présenté à tort comme un plan offensif (« expansion à l'aile roi ») au lieu d'un coup défensif (issue #80)
+source: mes_erreurs — position réellement rejouée en exercice ChessCoach (voir le rapport de clôture de l'issue #80)
+fen: 1r1r2k1/4Qpbp/2Bp1n2/3Pp2q/2P1P1p1/2N3PP/PP3PK1/R1B2R2 w - - 0 23
+camp_alain: blancs
+coup_propose: h4
+meilleur_coup: h4
+
+faits_attendus:
+  menace_significative_contient: h3
+
+motifs_interdits:
+  expansion
+
+motifs_attendus:
+  défensif
+
+pastille_attendue: vert
