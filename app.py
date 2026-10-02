@@ -1346,6 +1346,117 @@ def _enrich_context_with_game_facts(context: dict):
     return enrichi, stockfish_line
 
 
+def _positions_pour_coup_interroge(context: dict) -> list:
+    """Liste ordonnée et dédoublonnée (label, fen) des positions pertinentes
+    de l'exercice en cours, pour tester la légalité d'un coup qu'Alain
+    interroge précisément dans sa question (issue #96) : position de DÉPART
+    de l'exercice, après le coup proposé, après le coup réellement joué à
+    l'époque, après le meilleur coup, et après les lignes principales déjà
+    calculées par Stockfish pour le coup proposé et pour le meilleur coup
+    (pv_coup_propose/pv_meilleur_coup, déjà transmises au coach par
+    ailleurs — jamais un nouvel appel moteur ici). Retourne une liste vide
+    si fen_depart_exercice est absente (hors mode exercice, ou exercice sans
+    position de départ transmise) : l'appelant n'a alors rien à tester.
+    Best-effort : un coup/une ligne illisible est simplement ignoré(e), ne
+    fait jamais échouer la construction des autres positions."""
+    fen_depart = (context.get("fen_depart_exercice") or "").strip()
+    if not fen_depart:
+        return []
+    positions = [("la position de départ de l'exercice", fen_depart)]
+    vues = {fen_depart}
+
+    def _ajoute(label: str, coup_san) -> None:
+        coup_san = (coup_san or "").strip()
+        if not coup_san:
+            return
+        try:
+            board = chess.Board(fen_depart)
+            board.push_san(coup_san)
+        except Exception:
+            return
+        fen = board.fen()
+        if fen in vues:
+            return
+        vues.add(fen)
+        positions.append((label, fen))
+
+    _ajoute("après le coup proposé par Alain", context.get("coup_propose"))
+    _ajoute("après le coup réellement joué dans la partie d'origine", context.get("coup_reel"))
+    _ajoute("après le meilleur coup", context.get("meilleur_coup"))
+
+    def _ajoute_ligne(label: str, pv_text) -> None:
+        pv_text = (pv_text or "").strip()
+        if not pv_text:
+            return
+        try:
+            board = chess.Board(fen_depart)
+            for san in pv_text.split():
+                board.push_san(san)
+        except Exception:
+            return
+        fen = board.fen()
+        if fen in vues:
+            return
+        vues.add(fen)
+        positions.append((label, fen))
+
+    _ajoute_ligne("après la ligne déjà calculée par Stockfish sur le coup proposé", context.get("pv_coup_propose"))
+    _ajoute_ligne("après la ligne déjà calculée par Stockfish sur le meilleur coup", context.get("pv_meilleur_coup"))
+
+    return positions
+
+
+def _enrich_context_with_coup_interroge(context: dict, messages: list) -> dict:
+    """Détecte un coup précis interrogé par Alain dans sa dernière question
+    du chat libre (ex. "et Bxh7+ ?", issue #96) et, s'il y en a, ajoute au
+    contexte transmis au coach un texte "coup_interroge_texte" avec la
+    légalité et l'évaluation Stockfish de ce coup sur chaque position
+    pertinente de l'exercice en cours (cf. _positions_pour_coup_interroge et
+    game_facts.build_coups_interroges_texte, qui fait tout le calcul réel —
+    cette fonction ne fait qu'assembler ses entrées : le dernier message
+    d'Alain et les positions de l'exercice).
+
+    Cas réel ayant motivé cette issue : Alain a demandé "et Bxh7+ ?" pendant
+    un exercice, le coach n'avait AUCUNE donnée sur ce coup (ni légalité, ni
+    évaluation) et a répondu qu'il ne voyait pas cette idée, sans jamais
+    pouvoir dire que Bxh7+ est mauvais dans la position de départ ou
+    impossible après g6/Ne4 (diagonale bloquée).
+
+    Limité au mode exercice (seul mode où fen_depart_exercice/coup_propose/
+    coup_reel/meilleur_coup/pv_coup_propose/pv_meilleur_coup sont transmis,
+    cf. static/exercise.js exerciseChatContextExtra) : hors exercice, aucune
+    position de référence n'est disponible pour tester un coup interrogé.
+    Best-effort (comme _enrich_context_with_game_facts ci-dessus) : une
+    erreur de calcul ne doit jamais faire échouer la réponse du coach, le
+    contexte est alors renvoyé inchangé."""
+    context = context or {}
+    if not context.get("mode_exercice"):
+        return context
+    dernier_message = ""
+    for m in reversed(messages or []):
+        if isinstance(m, dict) and m.get("role") == "user":
+            dernier_message = (m.get("content") or "").strip()
+            break
+    if not dernier_message:
+        return context
+    positions = _positions_pour_coup_interroge(context)
+    if not positions:
+        return context
+    try:
+        texte = game_facts.build_coups_interroges_texte(
+            dernier_message, positions, context.get("camp_alain", ""),
+            evaluateur=_evaluate_move_for_coach,
+        )
+    except Exception as e:
+        logger.warning(f"[COUP_INTERROGE] Construction du contexte échouée (issue #96) : {e}")
+        return context
+    if not texte:
+        return context
+    enrichi = dict(context)
+    enrichi["coup_interroge_texte"] = texte
+    return enrichi
+
+
 @socketio.on("coach_ask")
 def on_coach_ask(data):
     """Relaie un tour de conversation au coach LLM (llm_coach.py).
@@ -1353,9 +1464,15 @@ def on_coach_ask(data):
     Nom d'événement et clés de payload alignés sur ce qu'émet/attend
     static/board.js (coachSend() émet "coach_ask", et les listeners
     "coach_response"/"coach_error" lisent data.text / data.error).
+
+    Issue #96 : enrichit aussi le contexte avec le résultat d'un coup
+    précis qu'Alain interroge dans sa question (ex. "et Bxh7+ ?"), pendant
+    un exercice — cf. _enrich_context_with_coup_interroge, sans effet hors
+    mode exercice ou si aucun coup n'est identifié dans la question.
     """
     messages = data.get("messages", [])
     context, stockfish_line = _enrich_context_with_game_facts(data.get("context", {}))
+    context = _enrich_context_with_coup_interroge(context, messages)
     llm_config = {
         "llm_api_key": config.LLM_API_KEY,
         "llm_model": config.LLM_MODEL,

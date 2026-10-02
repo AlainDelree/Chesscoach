@@ -1,0 +1,29 @@
+# Issue #96 : Alain interroge un coup précis dans le chat libre pendant un
+# exercice ("et Bxh7+ ?"), sans jamais l'avoir proposé lui-même. Le coach ne
+# disposait jusque-là d'aucune donnée sur ce coup et a répondu qu'il ne
+# voyait pas cette idée, sans jamais pouvoir dire que Bxh7+ est un coup
+# blanc qui existe (mauvais : Nxh7 Nxh7 Kxh7, environ -3) dans la position
+# de départ, mais devient impossible après g6 (diagonale d3-h7 bloquée par
+# le pion). `question` (au lieu du message initial habituel) simule cette
+# question de suivi — cf. non_regression_coach.py construire_contexte.
+id: bxh7_coup_interroge
+description: coup interrogé (Bxh7+) jamais proposé par Alain — doit être décrit comme mauvais et/ou impossible selon la ligne, jamais "je ne vois pas cette idée" (issue #96)
+source: signalement du 2 octobre 2026 (mode Exercice, Scénario inconnu)
+fen: r2q1rk1/pppbbppp/2n2n2/3p2N1/3P4/3BB3/PPP1QPPP/RN2K2R b KQ - 11 9
+camp_alain: noirs
+coup_propose: g6
+meilleur_coup: Re8
+question: et Bxh7+ ?
+
+faits_attendus:
+  texte_contient: Coup(s) précis interrogé(s) par Alain
+  texte_contient: Bxh7+
+  texte_contient: la position de départ de l'exercice : Blancs
+  texte_contient: évaluation Stockfish : blunder
+  texte_contient: après le coup proposé par Alain : la trajectoire d3-h7 est bloquée par Pion noir en g6
+
+motifs_interdits:
+  je ne vois pas cette idée|je ne vois pas cette ligne|je n'ai pas cette idée|je n'ai pas de donnée sur ce coup|pas d'information sur ce coup
+
+motifs_attendus:
+  mauvais|une erreur|blunder|perd|perdrait|impossible|bloqué|bloquée|plus possible

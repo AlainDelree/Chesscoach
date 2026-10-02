@@ -69,6 +69,11 @@ NON_REGRESSION_LOG_PATH = RACINE / "data" / "logs" / "non_regression_coach_calls
 _SCALAR_FIELDS = (
     "id", "description", "source", "fen", "coup_propose", "camp_alain",
     "meilleur_coup", "pastille_attendue",
+    # question (issue #96, optionnel) : simule une question de suivi du chat
+    # libre pendant l'exercice portant sur un coup précis (ex. "et Bxh7+ ?"),
+    # au lieu du message initial "Commente le coup que je propose..." —
+    # cf. construire_contexte ci-dessous.
+    "question",
 )
 _BLOCK_FIELDS = ("faits_attendus", "motifs_interdits", "motifs_attendus")
 
@@ -211,6 +216,61 @@ def _vers_point_de_vue_alain(valeur, camp_alain: str):
     return -valeur if camp_alain == "noirs" else valeur
 
 
+def _positions_pour_coup_interroge(context: dict) -> list:
+    """Duplique délibérément app.py._positions_pour_coup_interroge (issue
+    #96, même raison que les autres fonctions de cette section : jamais sur
+    une instance de l'application en cours d'exécution) — construit la
+    liste (label, fen) des positions pertinentes de l'exercice simulé par
+    `context` (position de départ, après coup proposé/réel/meilleur, après
+    les lignes déjà calculées), pour tester un coup qu'une `question`
+    simulée interroge précisément (cf. construire_contexte)."""
+    fen_depart = (context.get("fen_depart_exercice") or "").strip()
+    if not fen_depart:
+        return []
+    positions = [("la position de départ de l'exercice", fen_depart)]
+    vues = {fen_depart}
+
+    def _ajoute(label: str, coup_san) -> None:
+        coup_san = (coup_san or "").strip()
+        if not coup_san:
+            return
+        try:
+            board = chess.Board(fen_depart)
+            board.push_san(coup_san)
+        except Exception:
+            return
+        fen = board.fen()
+        if fen in vues:
+            return
+        vues.add(fen)
+        positions.append((label, fen))
+
+    _ajoute("après le coup proposé par Alain", context.get("coup_propose"))
+    _ajoute("après le coup réellement joué dans la partie d'origine", context.get("coup_reel"))
+    _ajoute("après le meilleur coup", context.get("meilleur_coup"))
+
+    def _ajoute_ligne(label: str, pv_text) -> None:
+        pv_text = (pv_text or "").strip()
+        if not pv_text:
+            return
+        try:
+            board = chess.Board(fen_depart)
+            for san in pv_text.split():
+                board.push_san(san)
+        except Exception:
+            return
+        fen = board.fen()
+        if fen in vues:
+            return
+        vues.add(fen)
+        positions.append((label, fen))
+
+    _ajoute_ligne("après la ligne déjà calculée par Stockfish sur le coup proposé", context.get("pv_coup_propose"))
+    _ajoute_ligne("après la ligne déjà calculée par Stockfish sur le meilleur coup", context.get("pv_meilleur_coup"))
+
+    return positions
+
+
 def construire_contexte(engine_manager, cas: dict) -> tuple:
     """Reconstruit EXACTEMENT le contexte envoyé au coach par app.py
     on_exercise_answer pour une « Position précise » (pas de "coup réellement
@@ -221,7 +281,14 @@ def construire_contexte(engine_manager, cas: dict) -> tuple:
     Retourne (messages, context, extras) — extras contient les objets
     intermédiaires nécessaires aux vérifications de faits (board_avant,
     fen_avant, fen_apres, menace_adverse_data, candidats_suites, meilleur_coup
-    recalculé, texte_contexte_complet tel qu'injecté dans le system prompt)."""
+    recalculé, texte_contexte_complet tel qu'injecté dans le system prompt).
+
+    Si `cas["question"]` est renseignée (issue #96, optionnel) : `messages`
+    devient cette question (au lieu du message initial "Commente le coup que
+    je propose..."), et `context` est enrichi par "coup_interroge_texte" —
+    même calcul que app.py on_coach_ask/_enrich_context_with_coup_interroge,
+    pour simuler une question de suivi du chat libre portant sur un coup
+    précis (ex. "et Bxh7+ ?") pendant cet exercice."""
     fen_avant = cas["fen"]
     camp_alain = cas["camp_alain"]
     board_avant = chess.Board(fen_avant)
@@ -328,6 +395,24 @@ def construire_contexte(engine_manager, cas: dict) -> tuple:
         "mode_origine": "exercice",
         "analyse_indisponible": eval_result["analyse_indisponible"],
     }
+
+    # Question de suivi simulée sur un coup précis (issue #96, optionnelle) :
+    # remplace le message initial "Commente le coup que je propose..." par
+    # `question` elle-même (ex. "et Bxh7+ ?"), et enrichit le contexte avec
+    # le même calcul que app.py on_coach_ask/_enrich_context_with_coup_
+    # interroge — légalité et évaluation Stockfish du coup interrogé sur
+    # chaque position pertinente de cet exercice.
+    question = (cas.get("question") or "").strip()
+    if question:
+        positions = _positions_pour_coup_interroge(context)
+        coup_interroge_texte = game_facts.build_coups_interroges_texte(
+            question, positions, camp_alain,
+            evaluateur=lambda fen, move: _evaluer_coup_pour_coach(engine_manager, fen, move),
+        )
+        if coup_interroge_texte:
+            context["coup_interroge_texte"] = coup_interroge_texte
+        messages = [{"role": "user", "content": question}]
+
     texte_contexte_complet = llm_coach._build_context_text(context)
     extras = {
         "fen_avant": fen_avant,
