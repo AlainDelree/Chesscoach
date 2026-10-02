@@ -50,6 +50,15 @@ COACH_CALLS_LOG_PATH = DATA_DIR / "logs" / "coach_calls.log"
 # données ; pas de rotation à ce stade (même pattern que COACH_CALLS_LOG_PATH).
 ANALYSE_ERREURS_LOG_PATH = DATA_DIR / "logs" / "analyse_erreurs.log"
 
+# Signalements d'une réponse du coach (issue #89, bouton "Signaler" sous
+# chaque réponse) : horodatage, mode d'origine, identifiant de l'entrée
+# correspondante de COACH_CALLS_LOG_PATH quand elle est connue (champ "id",
+# cf. llm_coach._log_coach_call), FEN/coup/réponse signalée et commentaire
+# libre d'Alain — une ligne JSON par signalement. Sous DATA_DIR, donc
+# gitignoré comme le reste des données ; pas de rotation à ce stade (même
+# pattern que COACH_CALLS_LOG_PATH/ANALYSE_ERREURS_LOG_PATH).
+SIGNALEMENTS_LOG_PATH = DATA_DIR / "logs" / "signalements.log"
+
 # Log des pannes du moteur Stockfish lui-même (issue #79) : heure, opération
 # en cours, message d'erreur, code de sortie du processus et dernières
 # lignes de son flux d'erreur standard quand ils sont disponibles, nombre de

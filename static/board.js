@@ -980,6 +980,78 @@ document.addEventListener("click", (e) => {
   document.querySelectorAll(".coach-fiabilite-open").forEach((el) => el.classList.remove("coach-fiabilite-open"));
 });
 
+// ── Bouton "Signaler" sous chaque réponse du coach (issue #89) ─────────────
+// Un commentaire libre facultatif, enregistré côté serveur dans
+// data/logs/signalements.log (hors git, cf. app.py on_signalement_envoyer)
+// avec de quoi retrouver l'entrée de coach_calls.log correspondante
+// (meta.log_id, cf. llm_coach._log_coach_call). Confirmation ("Signalé") et
+// grisage du bouton IMMÉDIATS côté client, sans attendre d'accusé de
+// réception : une panne d'écriture éventuelle (dossier non inscriptible...)
+// reste ainsi toujours invisible pour Alain (best-effort, cf. app.py
+// _log_signalement) — jamais d'erreur affichée, conformément à l'issue #89.
+// `container` : élément DOM où ajouter le bouton (bulle du chat ici, ou bloc
+// de commentaire par coup de l'analyse de partie, cf. static/game_analysis.js,
+// qui réutilise cette même fonction).
+// `meta` : {mode_origine, fen, move, text, log_id} — champs absents/vides
+// tolérés (ex. message canné sans contexte réel, ou réponse jamais
+// journalisée) : le signalement est alors enregistré avec ce qui est
+// disponible à l'écran, cf. app.py on_signalement_envoyer et
+// lire_signalements.py (script de lecture, racine du projet).
+function _coachBuildSignalerUI(container, meta) {
+  meta = meta || {};
+  const wrap = document.createElement("div");
+  wrap.className = "coach-signaler-wrap";
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "coach-signaler-btn";
+  btn.textContent = "Signaler";
+
+  const form = document.createElement("div");
+  form.className = "coach-signaler-form";
+  form.style.display = "none";
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "coach-signaler-textarea";
+  textarea.rows = 2;
+  textarea.placeholder = "Commentaire (facultatif)...";
+
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.className = "coach-signaler-send-btn";
+  sendBtn.textContent = "Envoyer";
+
+  form.appendChild(textarea);
+  form.appendChild(sendBtn);
+
+  btn.addEventListener("click", () => {
+    form.style.display = form.style.display === "none" ? "flex" : "none";
+  });
+
+  sendBtn.addEventListener("click", () => {
+    if (typeof socket !== "undefined") {
+      socket.emit("signalement_envoyer", {
+        mode_origine: meta.mode_origine || "",
+        fen: meta.fen || "",
+        move: meta.move || "",
+        text: meta.text || "",
+        log_id: meta.log_id || null,
+        commentaire: textarea.value.trim(),
+      });
+    }
+    // Un signalement par message (issue #89) : le bouton grisé empêche tout
+    // doublon sur cette même réponse.
+    form.style.display = "none";
+    btn.textContent = "Signalé";
+    btn.disabled = true;
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(form);
+  container.appendChild(wrap);
+  return wrap;
+}
+
 // `allowPageScroll` (issue #67, défaut false) : à ne passer à true que pour
 // les réponses qu'Alain attend activement (réponse à une question tapée,
 // réponse à "Demander l'avis du coach") — pas pour les messages automatiques
@@ -993,7 +1065,11 @@ document.addEventListener("click", (e) => {
 // — ajoute la pastille de fiabilité après le texte, seulement pour les
 // réponses du coach qui en fournissent une (jamais pour un message
 // utilisateur ni une annonce automatique "je joue ...").
-function _coachRenderBubble(role, text, allowPageScroll, extraClass, fiabilite) {
+// `reportMeta` (issue #89, optionnel) : voir _coachBuildSignalerUI ci-dessus
+// — ajoute le bouton "Signaler" après le texte (et la pastille de fiabilité
+// éventuelle), pour toute réponse du coach, jamais pour un message
+// utilisateur.
+function _coachRenderBubble(role, text, allowPageScroll, extraClass, fiabilite, reportMeta) {
   const history = document.getElementById("coach-history");
   if (!history) return;
   const empty = document.getElementById("coach-empty");
@@ -1004,6 +1080,9 @@ function _coachRenderBubble(role, text, allowPageScroll, extraClass, fiabilite) 
   bubble.textContent = text;
   if (!isUser && fiabilite && fiabilite.couleur) {
     bubble.appendChild(_coachBuildFiabiliteBadge(fiabilite));
+  }
+  if (!isUser) {
+    _coachBuildSignalerUI(bubble, Object.assign({}, reportMeta || {}, { text: text }));
   }
   history.appendChild(bubble);
   // Message d'Alain : comportement inchangé, on descend tout en bas (voir
@@ -1131,7 +1210,9 @@ if (typeof socket !== "undefined") {
       _coachHistory.push({ role: "assistant", content: text });
       // Réponse à une question tapée par Alain : il l'attend, la page doit
       // défiler jusqu'à elle sur mobile (issue #67).
-      _coachRenderBubble("assistant", text, true, undefined, data && data.fiabilite);
+      _coachRenderBubble("assistant", text, true, undefined, data && data.fiabilite, data && {
+        mode_origine: data.mode_origine, fen: data.fen, move: data.move, log_id: data.log_id,
+      });
       // Alimente le tableau "Lignes du coach" du mode exercice (issue #58)
       // quand cette réponse arrive pendant un exercice actif — no-op pour
       // tout autre mode (fonction absente, ou exerciseActive faux).
@@ -1264,7 +1345,9 @@ if (typeof socket !== "undefined") {
     if (text) {
       // Réponse au bouton "Demander l'avis du coach" : Alain l'attend, la
       // page doit défiler jusqu'à elle sur mobile (issue #67).
-      _coachRenderBubble("assistant", text, true, undefined, data && data.fiabilite);
+      _coachRenderBubble("assistant", text, true, undefined, data && data.fiabilite, data && {
+        mode_origine: data.mode_origine, fen: data.fen, log_id: data.log_id,
+      });
       if (typeof exerciseOnCoachText === "function") exerciseOnCoachText(text);
       if (typeof gameCoachLinesOnCoachText === "function") gameCoachLinesOnCoachText(text);
     }

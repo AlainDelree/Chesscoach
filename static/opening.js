@@ -306,7 +306,7 @@ if (typeof socket !== "undefined") {
     updateOpeningStatus();
 
     const moves = (data.moves_ouverture || []).join(" ");
-    _coachRenderBubble("assistant", `Ouverture "${data.opening_name}" : ${moves}. À vous de jouer.`);
+    _coachRenderBubble("assistant", `Ouverture "${data.opening_name}" : ${moves}. À vous de jouer.`, false, undefined, null, { mode_origine: "ouverture" });
   });
 
   socket.on("opening_stockfish_move", (data) => {
@@ -344,7 +344,9 @@ if (typeof socket !== "undefined") {
       text += `\n\n(Coup le plus joué du livre : ${data.coup_livre_recommande})`;
     }
     if (text) {
-      _coachRenderBubble("assistant", text, false, undefined, data && data.fiabilite);
+      _coachRenderBubble("assistant", text, false, undefined, data && data.fiabilite, data && {
+        mode_origine: data.mode_origine, fen: data.fen, move: data.coup_propose, log_id: data.log_id,
+      });
       // Tableau "Lignes du coach" (issue #68) : alimenté aussi par le
       // commentaire automatique après chaque coup ("Commenter chaque coup"),
       // pas seulement par le chat libre/la demande ponctuelle (board.js).

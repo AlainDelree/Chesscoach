@@ -12,6 +12,8 @@ import ipaddress
 import json
 import logging
 import time
+import uuid
+from datetime import datetime
 from pathlib import Path
 
 import chess
@@ -506,6 +508,23 @@ def _log_analyse_erreur(mode: str, message: str) -> None:
         logger.error("Impossible d'écrire dans ANALYSE_ERREURS_LOG_PATH", exc_info=True)
 
 
+def _log_signalement(entry: dict) -> None:
+    """Enregistre un signalement du bouton "Signaler" (issue #89) dans
+    SIGNALEMENTS_LOG_PATH, une entrée JSON par ligne. Best-effort, comme
+    _log_analyse_erreur ci-dessus : une panne d'écriture (dossier non
+    inscriptible, etc.) ne doit jamais remonter d'erreur au client — le
+    bouton "Signaler" affiche sa confirmation ("Signalé") sans attendre le
+    résultat de cet appel (cf. static/board.js _coachBuildSignalerUI, qui
+    n'attend aucun accusé de réception de ce handler)."""
+    try:
+        path = config.SIGNALEMENTS_LOG_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        logger.error("Impossible d'écrire dans SIGNALEMENTS_LOG_PATH", exc_info=True)
+
+
 def _analyse_full_game(moves_uci: list, start_fen: str | None = None) -> list:
     """Analyse chaque demi-coup d'une partie une seule fois avec Stockfish, à
     DEPTH_ANALYSE_PARTIE (issue #41, bouton "Analyser cette partie" du mode
@@ -838,6 +857,10 @@ def on_analyse_choisir_coups_decisifs(data):
             "san": original.get("san"),
             "camp": _camp_label(original.get("color")),
             "coup_plein": original.get("coup_plein"),
+            # log_id (issue #89) : pour le bouton "Signaler" côté client
+            # (static/game_analysis.js) — fen/coup déjà connus du client via
+            # _gameAnalysisResults, pas besoin de les redupliquer ici.
+            "log_id": c.get("log_id"),
         })
 
     emit("analyse_choix_coach_response", {"choix": reponse})
@@ -920,7 +943,7 @@ def on_analyse_expliquer_coup(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -929,6 +952,11 @@ def on_analyse_expliquer_coup(data):
         emit("analyse_expliquer_coup_response", {
             "uci": move.get("uci"), "idx": move.get("idx"), "text": response,
             "fiabilite": fiabilite,
+            # log_id (issue #89) : identifiant de l'entrée coach_calls.log
+            # correspondante, pour le bouton "Signaler" côté client (static/
+            # game_analysis.js) — fen/coup déjà connus du client (m.fen_avant/
+            # m.san), pas besoin de les redupliquer ici.
+            "log_id": log_id,
         })
 
 
@@ -1049,13 +1077,20 @@ def on_coach_comment_on_demand(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
         emit("coach_on_demand_error", {"error": error})
     else:
-        emit("coach_on_demand_response", {"text": response, "meilleur_coup": meilleur_coup_san, "fiabilite": fiabilite})
+        emit("coach_on_demand_response", {
+            "text": response, "meilleur_coup": meilleur_coup_san, "fiabilite": fiabilite,
+            # fen/mode_origine/log_id (issue #89) : repris tels quels pour le
+            # bouton "Signaler" côté client (static/board.js) — pas de
+            # "move" distinct ici, ce bouton commente la position courante,
+            # pas un coup précis.
+            "fen": fen, "mode_origine": mode_origine, "log_id": log_id,
+        })
 
 
 # Profondeur et budget de la vérification Stockfish ciblée du chat coach
@@ -1298,7 +1333,7 @@ def on_coach_ask(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -1309,7 +1344,14 @@ def on_coach_ask(data):
         # — omis du payload si aucune vérification n'a abouti, plutôt que
         # transmis à None (cf. gameCoachLinesOnStockfishLine, qui vérifie de
         # toute façon sa présence).
-        payload = {"text": response, "fiabilite": fiabilite}
+        payload = {
+            "text": response, "fiabilite": fiabilite,
+            # fen/move/mode_origine/log_id (issue #89) : repris du contexte
+            # transmis par le client (coachBuildContext(), static/board.js)
+            # pour le bouton "Signaler" — jamais recalculés ici.
+            "fen": context.get("fen"), "move": context.get("move"),
+            "mode_origine": context.get("mode_origine"), "log_id": log_id,
+        }
         if stockfish_line:
             payload["stockfish_line"] = stockfish_line
         emit("coach_response", payload)
@@ -1880,7 +1922,7 @@ def on_exercise_answer(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -1892,6 +1934,11 @@ def on_exercise_answer(data):
             # contrôles déjà calculés par get_coach_response — affichée par
             # le client telle quelle, jamais recalculée côté UI.
             "fiabilite": fiabilite,
+            # fen/mode_origine/log_id (issue #89) : pour le bouton
+            # "Signaler" côté client (static/exercise.js) — fen_avant, la
+            # position de DÉPART de l'exercice (pas fen_apres, moins utile à
+            # une vérification Stockfish du coup proposé).
+            "fen": fen_avant, "mode_origine": "exercice", "log_id": log_id,
             "coup_propose": coup_propose_san,
             "coup_reel": coup_reel,
             "meilleur_coup": meilleur_coup,
@@ -2150,7 +2197,7 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -2159,6 +2206,9 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         emit("exercise_comment", {
             "text": response,
             "fiabilite": fiabilite,
+            # fen/mode_origine/log_id (issue #89) : voir le commentaire
+            # équivalent de on_exercise_answer ci-dessus.
+            "fen": fen_avant, "mode_origine": "exercice_lichess", "log_id": log_id,
             "coup_propose": coup_propose_san,
             "coup_reel": "",
             "meilleur_coup": meilleur_coup,
@@ -2336,7 +2386,7 @@ def on_pedagogic_move(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -2347,6 +2397,9 @@ def on_pedagogic_move(data):
             "fiabilite": fiabilite,
             "coup_propose": coup_alain_san,
             "meilleur_coup": meilleur_coup_san,
+            # fen/mode_origine/log_id (issue #89) : pour le bouton
+            # "Signaler" côté client (static/pedagogic.js).
+            "fen": fen_avant, "mode_origine": "pedagogique", "log_id": log_id,
         })
 
 
@@ -2634,7 +2687,7 @@ def on_opening_move(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -2648,6 +2701,9 @@ def on_opening_move(data):
             "popularite_pct": popularite_pct,
             "coup_livre_recommande": coup_livre_top_san,
             "meilleur_coup": meilleur_coup_san,
+            # fen/mode_origine/log_id (issue #89) : pour le bouton
+            # "Signaler" côté client (static/opening.js).
+            "fen": fen_avant, "mode_origine": "ouverture", "log_id": log_id,
         })
 
 
@@ -3113,7 +3169,7 @@ def on_finale_move(data):
         "usage_path": config.USAGE_TOKENS_PATH,
     }
 
-    response, error, fiabilite = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
@@ -3124,7 +3180,45 @@ def on_finale_move(data):
             "fiabilite": fiabilite,
             "coup_propose": coup_alain_san,
             "meilleur_coup": meilleur_coup_san,
+            # fen/mode_origine/log_id (issue #89) : pour le bouton
+            # "Signaler" côté client (static/finales.js).
+            "fen": fen_avant, "mode_origine": "finales", "log_id": log_id,
         })
+
+
+@socketio.on("signalement_envoyer")
+def on_signalement_envoyer(data):
+    """Bouton "Signaler" sous une réponse du coach (issue #89, tous modes :
+    exercices, parties pédagogique/ouverture/finales, chat libre et
+    analyse de partie) : enregistre le signalement dans
+    SIGNALEMENTS_LOG_PATH (hors git), avec le commentaire libre d'Alain et
+    de quoi retrouver l'entrée de COACH_CALLS_LOG_PATH correspondante
+    (log_id, cf. llm_coach._log_coach_call) quand elle est connue.
+
+    Mode-agnostique et best-effort à dessein : le client (static/board.js
+    _coachBuildSignalerUI, static/game_analysis.js) transmet tout ce qu'il a
+    déjà affiché à l'écran (mode_origine/fen/move/text/log_id), sans second
+    aller-retour pour les reconstruire ici, et affiche sa confirmation
+    ("Signalé") sans attendre de réponse de ce handler — une panne
+    d'écriture (_log_signalement, dossier non inscriptible...) ne doit
+    jamais remonter d'erreur ni gêner le coach, cf. issue #89 point 2. Si le
+    log_id transmis ne correspond à aucune entrée du journal (réponse non
+    journalisée, ex. message canné "Finale chargée"), le signalement est
+    tout de même enregistré avec ce qui est disponible à l'écran (cf.
+    lire_signalements.py, qui gère déjà ce cas à la lecture)."""
+    data = data or {}
+    entry = {
+        "id": uuid.uuid4().hex[:12],
+        "horodatage": datetime.now().isoformat(),
+        "mode_origine": (data.get("mode_origine") or "").strip(),
+        "log_id": data.get("log_id") or None,
+        "fen": (data.get("fen") or "").strip(),
+        "move": (data.get("move") or "").strip(),
+        "reponse": data.get("text") or "",
+        "commentaire": (data.get("commentaire") or "").strip(),
+        "traite": False,
+    }
+    _log_signalement(entry)
 
 
 if __name__ == "__main__":

@@ -412,6 +412,75 @@
   .coach-fiabilite-wrap:hover .coach-fiabilite-detail { display: block; }
 }
 
+/* Bouton "Signaler" sous chaque réponse du coach (issue #89) : terracotta
+   (--cc-accent, réservé au cliquable, cf. en-tête de ce fichier), discret
+   (texte souligné, pas un gros bouton plein) pour ne pas réduire la
+   lisibilité de la réponse au-dessus. max-width: 100% + box-sizing +
+   word-break sur le textarea (comme .coach-fiabilite-detail ci-dessus)
+   pour ne jamais déborder du viewport à 390px/360px. */
+.coach-signaler-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 6px;
+  max-width: 100%;
+}
+.coach-signaler-btn {
+  background: none;
+  border: none;
+  padding: 2px 0;
+  margin: 0;
+  min-height: 0;
+  color: var(--cc-accent);
+  font-family: var(--cc-font-body);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.coach-signaler-btn:hover { color: var(--cc-accent-hover); }
+.coach-signaler-btn:disabled {
+  color: var(--cc-text-muted);
+  text-decoration: none;
+  cursor: default;
+}
+.coach-signaler-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 260px;
+}
+.coach-signaler-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  border-radius: var(--cc-radius-sm);
+  border: 1px solid var(--cc-accent);
+  padding: 6px 8px;
+  background: var(--cc-bg);
+  color: var(--cc-text);
+  font-family: var(--cc-font-body);
+  font-size: 0.78rem;
+  resize: vertical;
+}
+.coach-signaler-send-btn {
+  align-self: flex-start;
+  margin: 0;
+  min-height: 0;
+  padding: 4px 14px;
+  border: none;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-accent);
+  color: var(--cc-bg);
+  font-family: var(--cc-font-body);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.coach-signaler-send-btn:hover { background: var(--cc-accent-hover); }
+
 /* Séparateur discret entre deux parties/exercices dans le chat (issue #64) —
    les anciens échanges restent visibles à l'écran, seulement démarqués de la
    partie/exercice courant(e) plutôt qu'effacés (coachClear() garde son effet

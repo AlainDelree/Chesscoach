@@ -86,6 +86,11 @@ let _gameAnalysisResults = [];
 let _coachChoixParIdx = {};
 // idx -> explication obtenue à la demande via "Expliquer ce coup" (point 2).
 let _coachExplicationsParIdx = {};
+// idx -> log_id de l'entrée coach_calls.log correspondante (issue #89,
+// bouton "Signaler" sous chaque commentaire de coup) — alimenté par les deux
+// mêmes réponses que les deux maps ci-dessus (analyse_choix_coach_response/
+// analyse_expliquer_coup_response), None si l'écriture du journal a échoué.
+let _coachLogIdParIdx = {};
 // idx en cours de chargement (bouton "Expliquer ce coup" cliqué, réponse pas
 // encore arrivée) — évite les doubles clics sur le même coup.
 let _coachExplicationEnCours = {};
@@ -227,6 +232,7 @@ function analyserPartieCourante() {
   _coachChoixParIdx = {};
   _coachExplicationsParIdx = {};
   _coachExplicationEnCours = {};
+  _coachLogIdParIdx = {};
 
   if (enPlace) _appliquerEntetesPgn(_gameAnalysisPgnForActiveMode());
 
@@ -346,6 +352,15 @@ function renderGameAnalysisReport() {
       p.style.margin = "3px 0 0";
       p.textContent = `Coach : ${explication}`;
       li.appendChild(p);
+      // Bouton "Signaler" (issue #89, un par commentaire de coup) — même
+      // fonction que le chat coach (static/board.js), ce bloc n'étant pas
+      // une bulle _coachRenderBubble : fen/coup déjà connus de ce rapport
+      // mécanique (m.fen_avant/m.san), log_id alimenté par les deux
+      // réponses du coach ci-dessous (_coachLogIdParIdx).
+      _coachBuildSignalerUI(li, {
+        mode_origine: "analyse_partie", fen: m.fen_avant, move: m.san,
+        text: explication, log_id: _coachLogIdParIdx[m._idx],
+      });
     } else {
       const btn = document.createElement("button");
       const enCours = !!_coachExplicationEnCours[m._idx];
@@ -654,7 +669,10 @@ if (typeof socket !== "undefined") {
     const coachStatus = document.getElementById("game-analysis-coach-status");
     const choix = (data && data.choix) || [];
     _coachChoixParIdx = {};
-    choix.forEach((c) => { _coachChoixParIdx[c.idx] = c.explication; });
+    choix.forEach((c) => {
+      _coachChoixParIdx[c.idx] = c.explication;
+      _coachLogIdParIdx[c.idx] = c.log_id;
+    });
     if (coachStatus) {
       coachStatus.textContent = choix.length
         ? `Le coach a mis en avant ${choix.length} coup(s) décisif(s) (voir ci-dessous).`
@@ -680,6 +698,7 @@ if (typeof socket !== "undefined") {
     if (idx === undefined || idx === null) return;
     delete _coachExplicationEnCours[idx];
     _coachExplicationsParIdx[idx] = data.text;
+    _coachLogIdParIdx[idx] = data.log_id;
     renderGameAnalysisReport();
   });
 

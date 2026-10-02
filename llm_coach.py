@@ -26,6 +26,7 @@ import json
 import logging
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -773,13 +774,16 @@ def get_move_explanations(flagged_moves, camp_alain, config):
       config        : dict avec au moins "llm_api_key" et, optionnellement,
                       "llm_model" (même convention que get_opening_moves)
 
-    Retourne (liste de {"id", "explication"}, erreur) — un seul des deux
-    est non vide/None. La liste retournée est filtrée pour ne contenir QUE
-    des id présents dans flagged_moves (garde-fou appliqué ici, pas
-    seulement dans le system prompt : jamais d'invention au-delà des coups
-    listés, même si le modèle en proposait un autre). Erreurs possibles :
-    "no_api_key", "aucun_coup_flague", "reponse_invalide", ou le message de
-    l'exception réseau.
+    Retourne (liste de {"id", "explication", "log_id"}, erreur) — un seul
+    des deux est non vide/None. La liste retournée est filtrée pour ne
+    contenir QUE des id présents dans flagged_moves (garde-fou appliqué ici,
+    pas seulement dans le system prompt : jamais d'invention au-delà des
+    coups listés, même si le modèle en proposait un autre). "log_id" (issue
+    #89) : identifiant de l'entrée écrite dans coach_calls.log pour ce coup
+    précis (cf. _log_coach_call), None si l'écriture a échoué — sert au
+    bouton "Signaler" côté interface. Erreurs possibles : "no_api_key",
+    "aucun_coup_flague", "reponse_invalide", ou le message de l'exception
+    réseau.
     """
     api_key = (config or {}).get("llm_api_key", "")
     if not api_key:
@@ -902,8 +906,12 @@ def get_move_explanations(flagged_moves, camp_alain, config):
             "verdict_delta_cp": original.get("delta_cp"),
             "meilleur_coup": original.get("meilleur_coup"),
         }
-        _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, entry_context, prompt_user,
-                         "analyse_partie", model=model, reponse=c["explication"], usage=usage_appel)
+        # log_id (issue #89) : retourné au bouton "Signaler" côté interface
+        # via app.py (champ "log_id" de chaque choix) pour référencer sans
+        # ambiguïté cette entrée précise — même raison que pour
+        # get_coach_response ci-dessous.
+        c["log_id"] = _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, entry_context, prompt_user,
+                                       "analyse_partie", model=model, reponse=c["explication"], usage=usage_appel)
 
     return resultat, None
 
@@ -1554,7 +1562,7 @@ def _purge_vieux_logs_coach(log_path: Path, fichier_actif: Path) -> None:
 
 def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str,
                      model: str = None, reponse: str = None, erreur: str = None, usage: dict = None,
-                     fiabilite: dict = None, avertissement: str = None) -> None:
+                     fiabilite: dict = None, avertissement: str = None) -> str | None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -1598,14 +1606,24 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     : une seule phrase si une incohérence a été détectée dans la réponse
     AVANT relance, None sinon) — pour diagnostiquer un avertissement de
     fiabilité sans avoir à relire tout le détail de `fiabilite`.
+
+    Étendu par l'issue #89 : chaque entrée reçoit désormais un identifiant
+    unique (`id`, uuid4 abrégé), retourné par cette fonction (None si
+    aucune entrée n'a pu être écrite) — sert au bouton "Signaler" côté
+    interface à référencer sans ambiguïté l'entrée du journal correspondant
+    à une réponse signalée (cf. app.py on_signalement_envoyer), sans avoir à
+    rapprocher par FEN/coup (ambigu, un même coup pouvant se répéter dans
+    une partie, cf. get_move_explanations ci-dessus).
     """
     if not log_path:
-        return
+        return None
+    log_id = uuid.uuid4().hex[:12]
     try:
         log_path = Path(log_path)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         fichier_actif = _coach_log_fichier_actif(log_path)
         entry = {
+            "id": log_id,
             "horodatage": datetime.now().isoformat(),
             "mode_origine": mode_origine,
             "model": model,
@@ -1621,8 +1639,10 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
         with open(fichier_actif, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         _purge_vieux_logs_coach(log_path, fichier_actif)
+        return log_id
     except Exception as e:
         logger.warning(f"[LLM_COACH] Écriture du log coach_calls échouée : {e}")
+        return None
 
 
 def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path=None) -> str:
@@ -1936,12 +1956,18 @@ def get_coach_response(messages, context, coach_memory, config):
       config       : dict avec au moins "llm_api_key" (clé API Claude) et,
                      optionnellement, "llm_model"
 
-    Retourne (réponse, erreur) — un seul des deux est non vide/non None.
+    Retourne (réponse, erreur, fiabilite, log_id) — un seul de réponse/erreur
+    est non vide/non None. `log_id` (issue #89) est l'identifiant de
+    l'entrée écrite dans coach_calls.log pour cet appel (cf.
+    _log_coach_call), None si aucune entrée n'a pu être écrite (ex. chemin
+    de log absent, échec d'écriture, ou retour anticipé avant tout appel API
+    — "no_api_key"/"empty"/"pas_de_verdict_exercice") — sert au bouton
+    "Signaler" côté interface à référencer sans ambiguïté cette entrée.
     Pas de cache : conversation libre, contexte changeant à chaque tour.
     """
     api_key = (config or {}).get("llm_api_key", "")
     if not api_key:
-        return None, "no_api_key", None
+        return None, "no_api_key", None, None
 
     clean_messages = [
         {"role": m.get("role"), "content": (m.get("content") or "").strip()}
@@ -1949,7 +1975,7 @@ def get_coach_response(messages, context, coach_memory, config):
         if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
     ]
     if not clean_messages:
-        return None, "empty", None
+        return None, "empty", None, None
 
     # Issue #79, point 4b : refuse l'appel au modèle quand le contexte d'un
     # exercice ne contient aucun verdict Stockfish — AVANT tout appel API,
@@ -1965,7 +1991,7 @@ def get_coach_response(messages, context, coach_memory, config):
     # côté appel LLM, la panne moteur elle-même est déjà tracée dans
     # MOTEUR_ERREURS_LOG_PATH (cf. engine_stockfish.py).
     if (context or {}).get("mode_exercice") and not (context or {}).get("verdict_qualite"):
-        return None, "pas_de_verdict_exercice", None
+        return None, "pas_de_verdict_exercice", None, None
 
     model = (config or {}).get("llm_model", "")
     prompt_sys = _SYSTEM_PROMPT
@@ -2048,15 +2074,15 @@ def get_coach_response(messages, context, coach_memory, config):
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude : crédit épuisé : {e}")
         _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="credit_insuffisant")
-        return None, "credit_insuffisant", None
+        return None, "credit_insuffisant", None, None
     except ModeleIndisponibleError as e:
         logger.warning(f"[LLM_COACH] Appel Claude : modèle indisponible : {e}")
         _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="modele_indisponible")
-        return None, "modele_indisponible", None
+        return None, "modele_indisponible", None, None
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude échoué : {e}")
         _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur=str(e))
-        return None, str(e), None
+        return None, str(e), None, None
 
     response = (response or "").strip()
 
@@ -2142,8 +2168,8 @@ def get_coach_response(messages, context, coach_memory, config):
     # d'usage à travers toute la chaîne de retour juste pour le logging
     # (issue #54, champ d'usage ajouté à coach_calls.log).
     usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
-    _log_coach_call(
+    log_id = _log_coach_call(
         log_path, prompt_sys, context, clean_messages, mode_origine, model=model,
         reponse=response, usage=usage_appel, fiabilite=fiabilite, avertissement=avertissement,
     )
-    return response, None, fiabilite
+    return response, None, fiabilite, log_id

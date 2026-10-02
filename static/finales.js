@@ -470,7 +470,7 @@ if (typeof socket !== "undefined") {
     renderFinaleBoard(lastFrom, lastTo);
     updateFinaleStatus();
 
-    _coachRenderBubble("assistant", `Finale "${data.nom}" chargée. ${data.description || ""}`);
+    _coachRenderBubble("assistant", `Finale "${data.nom}" chargée. ${data.description || ""}`, false, undefined, null, { mode_origine: "finales" });
   });
 
   socket.on("finale_demo_started", (data) => {
@@ -509,7 +509,7 @@ if (typeof socket !== "undefined") {
     renderFinaleBoard();
     updateFinaleStatus();
 
-    _coachRenderBubble("assistant", `Démonstration "${data.nom}" chargée — Stockfish joue les deux camps, un demi-coup à la fois ("Coup suivant"). ${data.description || ""}`);
+    _coachRenderBubble("assistant", `Démonstration "${data.nom}" chargée — Stockfish joue les deux camps, un demi-coup à la fois ("Coup suivant"). ${data.description || ""}`, false, undefined, null, { mode_origine: "finales" });
   });
 
   socket.on("finale_stockfish_move", (data) => {
@@ -610,7 +610,9 @@ if (typeof socket !== "undefined") {
   socket.on("finale_comment", (data) => {
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
-      _coachRenderBubble("assistant", text, false, undefined, data && data.fiabilite);
+      _coachRenderBubble("assistant", text, false, undefined, data && data.fiabilite, data && {
+        mode_origine: data.mode_origine, fen: data.fen, move: data.coup_propose, log_id: data.log_id,
+      });
       // Tableau "Lignes du coach" (issue #68) : alimenté aussi par le
       // commentaire automatique après chaque coup ("Commenter chaque coup"),
       // pas seulement par le chat libre/la demande ponctuelle (board.js).
