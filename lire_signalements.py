@@ -68,7 +68,7 @@ def _tronquer(texte: str, n: int = 160) -> str:
     return texte if len(texte) <= n else texte[:n] + "..."
 
 
-def _afficher_resume(entree: dict) -> None:
+def _afficher_resume(entree: dict, index_journal: dict | None = None) -> None:
     traite = " [traité]" if entree.get("traite") else ""
     print("=" * 78)
     print(f"id={entree.get('id', '?')}  {entree.get('horodatage', '?')}  mode={entree.get('mode_origine') or '?'}{traite}")
@@ -79,24 +79,72 @@ def _afficher_resume(entree: dict) -> None:
     if entree.get("commentaire"):
         print(f"Commentaire d'Alain : {entree['commentaire']}")
     print(f"Réponse signalée : {_tronquer(entree.get('reponse'))}")
+    journal = _trouver_entree_journal(entree.get("log_id"), index_journal)
+    for ligne in _lignes_pastille(journal):
+        print(ligne)
 
 
-def _trouver_entree_journal(log_id) -> dict | None:
-    """Retrouve l'entrée de coach_calls.log correspondant à log_id (cf.
-    llm_coach._log_coach_call) — None si log_id est absent (signalement
-    d'une réponse jamais journalisée) ou introuvable (archive déjà purgée,
-    cf. llm_coach._purge_vieux_logs_coach)."""
-    if not log_id:
-        return None
+def _charger_index_journal() -> dict:
+    """Index {id: entrée} de tout coach_calls.log (toutes archives
+    comprises) — construit une seule fois par exécution du script (issue
+    #90, point 4) plutôt que rescanné à chaque signalement affiché, qui
+    peuvent être plusieurs sous --n."""
     log_path = Path(config.COACH_CALLS_LOG_PATH)
     log_dir = log_path.parent
     if not log_dir.exists():
-        return None
+        return {}
     fichiers = lire_journal_coach._fichiers_journal(log_dir, log_path.name)
-    for entree in lire_journal_coach._charger_entrees(fichiers):
-        if entree.get("id") == log_id:
-            return entree
-    return None
+    return {
+        entree["id"]: entree
+        for entree in lire_journal_coach._charger_entrees(fichiers)
+        if entree.get("id")
+    }
+
+
+def _trouver_entree_journal(log_id, index_journal: dict | None = None) -> dict | None:
+    """Retrouve l'entrée de coach_calls.log correspondant à log_id (cf.
+    llm_coach._log_coach_call) — None si log_id est absent (signalement
+    d'une réponse jamais journalisée) ou introuvable (archive déjà purgée,
+    cf. llm_coach._purge_vieux_logs_coach). `index_journal` : index déjà
+    chargé par _charger_index_journal, pour éviter de rescanner le disque à
+    chaque appel (repli sur un chargement à la volée si omis)."""
+    if not log_id:
+        return None
+    if index_journal is None:
+        index_journal = _charger_index_journal()
+    return index_journal.get(log_id)
+
+
+def _lignes_pastille(journal: dict | None) -> list:
+    """Lignes d'affichage de la pastille de fiabilité (couleur, raison,
+    avertissement) et des contrôles déclenchés, relus dans l'entrée du
+    journal du coach reliée par l'identifiant (issue #90, point 4) — une
+    seule ligne si cette entrée est introuvable, plutôt qu'un bloc vide ou
+    une exception."""
+    if journal is None:
+        return [
+            "Pastille de fiabilité : entrée du journal introuvable "
+            "(log_id absent du signalement, ou archive déjà purgée)."
+        ]
+    fiabilite = journal.get("fiabilite") or {}
+    lignes = [
+        f"Pastille de fiabilité : {fiabilite.get('couleur') or '?'} — "
+        f"{fiabilite.get('raison') or '(aucune raison enregistrée)'}"
+    ]
+    avertissement = journal.get("avertissement")
+    if avertissement:
+        lignes.append(f"Avertissement (avant relance éventuelle) : {avertissement}")
+    alertes = fiabilite.get("alertes") or []
+    if alertes:
+        lignes.append(f"Contrôles déclenchés ({len(alertes)}) :")
+        for a in alertes:
+            lignes.append(f"  - [{a.get('type', '?')}] {a.get('detail', '?')}")
+            positions = a.get("positions_essayees")
+            if positions:
+                lignes.append(f"    positions essayées : {', '.join(positions)}")
+    else:
+        lignes.append("Contrôles déclenchés : aucun.")
+    return lignes
 
 
 def _ligne_stockfish(fen: str) -> str | None:
@@ -148,6 +196,7 @@ def _texte_pret_a_coller(entree: dict) -> str:
         f"Réponse du coach : {entree.get('reponse') or ''}",
     ]
     journal = _trouver_entree_journal(entree.get("log_id"))
+    lignes += _lignes_pastille(journal)
     if journal:
         contexte = lire_journal_coach._contexte_allege(journal.get("context") or {})
         lignes.append(f"Contexte envoyé au coach : {json.dumps(contexte, ensure_ascii=False)}")
@@ -192,8 +241,9 @@ def main():
         return 0
 
     a_afficher = entrees[-args.n:] if args.n > 0 else entrees
+    index_journal = _charger_index_journal()
     for entree in a_afficher:
-        _afficher_resume(entree)
+        _afficher_resume(entree, index_journal)
     print("=" * 78)
     print(f"{len(entrees)} signalement(s) au total, {len(a_afficher)} affiché(s).")
     return 0

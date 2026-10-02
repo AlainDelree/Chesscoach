@@ -77,10 +77,17 @@ _NOMBRES_FR = {
 
 # Coup en notation SAN standard (issue #87, point 5 — "coup cité illégal") :
 # roque, ou [pièce]?[case départ partielle]?x?case arrivée[=promotion]?[+#]?.
-# Volontairement strict (ancré \b des deux côtés) pour limiter les faux
-# positifs sur un mot qui ressemblerait par hasard à un coup.
+# Volontairement strict en tête (\b) pour limiter les faux positifs sur un
+# mot qui ressemblerait par hasard à un coup. Frontière de FIN en négatif
+# `(?!\w)` plutôt que `\b` (issue #90) : un `\b` final échouerait sur un
+# coup se terminant par "+"/"#" suivi d'un espace — "+"/"#" et l'espace sont
+# tous deux des caractères NON-mot, donc `\b` n'y voit aucune frontière et
+# tronquait silencieusement "a8=Q+" en "a8=Q" (ensuite rejeté par
+# python-chess, qui exige la notation d'échec exacte) ; `(?!\w)` accepte
+# correctement tout caractère suivant non alphanumérique, y compris rien du
+# tout en fin de texte.
 _SAN_RE = re.compile(
-    r"\b(O-O-O|O-O|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?)\b"
+    r"\b(O-O-O|O-O|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?)(?!\w)"
 )
 # Case seule (ex. "e5"), pas un coup — exclue des candidats "coup cité" pour
 # ne pas confondre une simple mention de case avec un coup joué.
