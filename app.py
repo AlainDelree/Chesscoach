@@ -280,6 +280,12 @@ def index():
         # de disponibilité ci-dessus — évite un sélecteur activé puis
         # désactivé après coup au premier exercice tenté.
         lichess_puzzles_disponible=bool(lichess_puzzles_pool),
+        # Choix explicite de catégorie « Problèmes Lichess » (issue #83) :
+        # les 16 catégories triées par libellé français pour un affichage
+        # alphabétique prévisible dans le sélecteur desktop et la feuille
+        # mobile — "Automatique" (comportement d'origine) est ajoutée en
+        # dur en tête par le gabarit, pas ici.
+        lichess_categories_triees=sorted(lichess_puzzles.CATEGORIES.items(), key=lambda kv: kv[1]),
         eval_breakdown_disponible=eval_breakdown_disponible,
         eval_breakdown_message=_eval_breakdown_message(eval_breakdown_disponible, _version_affichee),
     )
@@ -1395,14 +1401,27 @@ def on_exercise_new(data=None):
     Issue #78 : data.source ("mes_erreurs", défaut, ou "lichess") choisit la
     source du pool — cf. _on_exercise_new_lichess ci-dessous pour la branche
     "Problèmes Lichess" (catégorie/niveau adaptatif, pool et historique
-    différents), qui retourne avant d'atteindre quoi que ce soit ci-dessous."""
+    différents), qui retourne avant d'atteindre quoi que ce soit ci-dessous.
+
+    Issue #83 : data.source == "position_precise" bascule vers
+    _on_exercise_new_position_precise (FEN collé par Alain, data.fen),
+    également terminal. data.categorie ("automatique", défaut, ou une des
+    16 clés de lichess_puzzles.CATEGORIES) choisit explicitement la
+    catégorie du prochain tirage « Problèmes Lichess » plutôt que la laisser
+    entièrement au tirage pondéré automatique — sans effet pour les deux
+    autres sources."""
     global _current_exercise, _dernier_sous_type_tire
 
     phase = ((data or {}).get("phase") or "toutes").strip()
     source = ((data or {}).get("source") or "mes_erreurs").strip()
 
     if source == "lichess":
-        _on_exercise_new_lichess(phase)
+        categorie = ((data or {}).get("categorie") or "automatique").strip()
+        _on_exercise_new_lichess(phase, categorie)
+        return
+
+    if source == "position_precise":
+        _on_exercise_new_position_precise((data or {}).get("fen") or "")
         return
 
     pool = erreurs_detectees
@@ -1437,7 +1456,7 @@ def on_exercise_new(data=None):
     })
 
 
-def _on_exercise_new_lichess(phase: str) -> None:
+def _on_exercise_new_lichess(phase: str, categorie_demandee: str = "automatique") -> None:
     """Tirage d'un problème dans la source « Problèmes Lichess » (issue #78)
     — cf. lichess_puzzles.tirer_probleme pour le détail (catégorie pondérée
     par niveau, fenêtre de note, variété réutilisée depuis
@@ -1445,7 +1464,15 @@ def _on_exercise_new_lichess(phase: str) -> None:
     guise de "FEN" d'historique). Séparée d'on_exercise_new ci-dessus
     uniquement pour la lisibilité : même contrat (émet exercise_position ou
     exercise_error), appelée depuis on_exercise_new quand data.source ==
-    "lichess"."""
+    "lichess".
+
+    Issue #83 : categorie_demandee ("automatique", défaut, ou une clé de
+    lichess_puzzles.CATEGORIES) impose la catégorie plutôt que de la laisser
+    au tirage pondéré automatique — une valeur non reconnue (future
+    catégorie, erreur de frappe côté client) retombe silencieusement sur
+    "automatique" plutôt que d'échouer le tirage. La tranche de note reste
+    toujours choisie automatiquement d'après le niveau d'Alain dans la
+    catégorie (imposée ou tirée)."""
     global _current_exercise, _dernier_sous_type_tire
 
     if not lichess_puzzles_pool:
@@ -1454,8 +1481,9 @@ def _on_exercise_new_lichess(phase: str) -> None:
 
     phase_theme = _PHASE_VERS_THEME_LICHESS.get(phase)
     historique = exercise_history.charger_historique(config.EXERCICE_HISTORIQUE_PATH)
-    entree, categorie = lichess_puzzles.tirer_probleme(
-        lichess_puzzles_pool, phase_theme, _lichess_niveaux, historique
+    categorie_forcee = categorie_demandee if categorie_demandee in lichess_puzzles.CATEGORIES else None
+    entree, categorie, avertissement = lichess_puzzles.tirer_probleme(
+        lichess_puzzles_pool, phase_theme, _lichess_niveaux, historique, categorie_forcee=categorie_forcee
     )
     if entree is None:
         emit("exercise_error", {"error": "aucune_erreur_disponible"})
@@ -1496,6 +1524,87 @@ def _on_exercise_new_lichess(phase: str) -> None:
         "rating": entree["rating"],
         "niveau": round(niveau),
         "themes": entree["themes"],
+        # Choix explicite de catégorie (issue #83) — "automatique" ou une
+        # des 16 clés CATEGORIES, distinct de "categorie" ci-dessus (la
+        # catégorie RÉELLEMENT tirée, toujours une clé précise même en
+        # automatique) : permet à "Exercice suivant" (startNextExercise,
+        # exercise.js) de relancer le même choix explicite plutôt que de
+        # retomber sur l'automatique dès le tirage suivant.
+        "categorie_demandee": categorie if categorie_forcee else "automatique",
+        # Avertissement en une phrase (issue #83, énoncé de la tâche : "si
+        # phase et catégorie sont incompatibles, prévenir plutôt que de ne
+        # rien proposer") si la phase demandée a dû être ignorée pour ce
+        # tirage faute de problème compatible avec elle ET la catégorie
+        # imposée — None (absent côté client) la plupart du temps.
+        "avertissement": avertissement,
+    })
+
+
+def _valider_fen_position_precise(fen: str):
+    """Valide un FEN saisi pour l'option « Position précise » (issue #83,
+    mode Exercice) : syntaxiquement lisible par python-chess, légal (mêmes
+    règles et mêmes messages que l'éditeur de position, cf.
+    _EDITOR_STATUS_MESSAGES) et camp au trait ni mat ni pat — un exercice
+    doit laisser au moins un coup à jouer. Retourne (board, None) si valide,
+    (None, message_erreur) sinon, message_erreur étant une phrase prête à
+    afficher telle quelle à Alain."""
+    fen = (fen or "").strip()
+    if not fen:
+        return None, "Collez un FEN avant de lancer l'exercice."
+    try:
+        board = chess.Board(fen)
+    except Exception:
+        return None, "FEN invalide : vérifiez le texte collé."
+
+    status = board.status()
+    if status != chess.STATUS_VALID:
+        problems = [msg for flag, msg in _EDITOR_STATUS_MESSAGES.items() if status & flag]
+        return None, " ".join(problems) if problems else "Position invalide."
+    if board.is_checkmate():
+        return None, "Cette position est déjà échec et mat : il n'y a aucun coup à jouer."
+    if board.is_stalemate():
+        return None, "Cette position est pat (aucun coup légal) : aucun exercice possible."
+    return board, None
+
+
+def _on_exercise_new_position_precise(fen: str) -> None:
+    """Exercice sur une « Position précise » collée par Alain (issue #83,
+    par exemple pour retester une réponse du coach sur une position connue)
+    plutôt que tirée du pool "mes erreurs" ou "Problèmes Lichess" — validée
+    par _valider_fen_position_precise ci-dessus avant d'être acceptée.
+
+    Volontairement SANS appel à exercise_history (enregistrer_proposition
+    ici, enregistrer_resultat dans on_exercise_answer) : une position collée
+    à la main ne doit fausser ni le niveau d'Alain ni l'historique des
+    erreurs, contrairement aux deux autres sources — cf. on_exercise_answer
+    pour le garde-fou côté verdict."""
+    global _current_exercise, _dernier_sous_type_tire
+
+    board, erreur = _valider_fen_position_precise(fen)
+    if erreur:
+        emit("exercise_error", {"error": "fen_invalide", "message": erreur})
+        return
+
+    camp_alain = "blancs" if board.turn == chess.WHITE else "noirs"
+    fen_normalisee = board.fen()
+    _current_exercise = {
+        "source": "position_precise",
+        "fen_avant": fen_normalisee,
+        "camp_alain": camp_alain,
+        "phase": "toutes",
+        "sous_type": None,
+    }
+    _dernier_sous_type_tire = None
+
+    emit("exercise_position", {
+        "fen": fen_normalisee,
+        "camp_alain": camp_alain,
+        "phase": "toutes",
+        "sous_type": None,
+        "deja_fait": False,
+        "nb_fois": 0,
+        "dernier_resultat": None,
+        "source": "position_precise",
     })
 
 
@@ -1516,6 +1625,15 @@ def on_exercise_answer(data):
         # _on_exercise_answer_lichess.
         _on_exercise_answer_lichess((data or {}).get("uci", ""))
         return
+
+    # Issue #83 : une « Position précise » collée par Alain ne doit fausser
+    # ni son niveau ni son historique des erreurs — seul ce drapeau change
+    # ci-dessous (garde-fou sur enregistrer_resultat) et le texte transmis au
+    # coach (pas de "partie d'origine" ni de "coup réellement joué" pour une
+    # position qui n'en a pas) ; le reste de l'analyse (menace adverse,
+    # idées, listes de pièces, verdict) est strictement le même calcul que
+    # pour la source "mes erreurs".
+    is_position_precise = _current_exercise.get("source") == "position_precise"
 
     uci = (data or {}).get("uci", "")
     fen_avant = _current_exercise["fen_avant"]
@@ -1569,7 +1687,7 @@ def on_exercise_answer(data):
     # reprise ("Reprendre mon coup") qui aboutit à un nouveau verdict réécrit
     # simplement le résultat le plus récent, sans republier de proposition
     # (déjà faite au tirage, cf. on_exercise_new).
-    if verdict_qualite is not None:
+    if verdict_qualite is not None and not is_position_precise:
         exercise_history.enregistrer_resultat(
             config.EXERCICE_HISTORIQUE_PATH, fen_avant, verdict_qualite == "bon"
         )
@@ -1659,16 +1777,34 @@ def on_exercise_answer(data):
         game_facts.describe_pv_with_balance(fen_avant, pv_meilleur_coup, camp_alain, max_plies=4),
     )
 
-    messages = [{
-        "role": "user",
-        "content": (
-            "Je m'entraîne sur une position tirée d'une de mes erreurs passées. "
-            "Commente le coup que je propose pour cette position : est-il bon "
-            "ou mauvais, et pourquoi ? Si le meilleur coup est différent, "
-            "explique-le aussi, en le comparant avec ce que j'avais réellement "
-            "joué dans la partie d'origine. Sois concis."
-        ),
-    }]
+    # Texte différent pour une « Position précise » (issue #83) : pas de
+    # "partie d'origine" ni de "coup réellement joué" pour une position
+    # collée à la main plutôt que tirée d'une de mes erreurs passées — le
+    # reste du contexte (coup_reel="" côté _current_exercise, cf. plus bas)
+    # fait déjà naturellement l'impasse sur cette comparaison.
+    if is_position_precise:
+        messages = [{
+            "role": "user",
+            "content": (
+                "Je m'entraîne sur une position précise que j'ai choisie "
+                "moi-même (pas une erreur de ma part, pas un problème "
+                "Lichess). Commente le coup que je propose pour cette "
+                "position : est-il bon ou mauvais, et pourquoi ? Si le "
+                "meilleur coup est différent, explique-le aussi. Sois "
+                "concis."
+            ),
+        }]
+    else:
+        messages = [{
+            "role": "user",
+            "content": (
+                "Je m'entraîne sur une position tirée d'une de mes erreurs passées. "
+                "Commente le coup que je propose pour cette position : est-il bon "
+                "ou mauvais, et pourquoi ? Si le meilleur coup est différent, "
+                "explique-le aussi, en le comparant avec ce que j'avais réellement "
+                "joué dans la partie d'origine. Sois concis."
+            ),
+        }]
     context = {
         # Position de DÉPART de l'exercice et position ACTUELLE (issue #73) :
         # distinguées et explicitement étiquetées (cf.

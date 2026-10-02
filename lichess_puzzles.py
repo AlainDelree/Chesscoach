@@ -232,36 +232,65 @@ def _filtrer_fenetre(candidats: list, niveau: float, fenetre: float) -> list:
     return [p for p in candidats if abs(p.get("rating", niveau) - niveau) <= fenetre]
 
 
-def tirer_probleme(pool: list, phase_theme: str | None, niveaux: dict, historique: dict):
-    """Tire un problème Lichess (issue #78), par ordre :
+def tirer_probleme(pool: list, phase_theme: str | None, niveaux: dict, historique: dict,
+                    categorie_forcee: str | None = None):
+    """Tire un problème Lichess (issue #78, choix explicite de catégorie
+    ajouté par l'issue #83), par ordre :
 
-    1. Catégories compatibles avec la phase demandée (thème de catégorie +
-       thème de phase tous deux présents sur le problème, cf.
-       categories_compatibles).
-    2. Tirage pondéré d'UNE catégorie parmi elles, favorisant les niveaux les
-       plus bas (cf. _poids_categorie).
-    3. Dans cette catégorie, fenêtre de note [niveau-FENETRE_NOTE,
+    1. Catégorie :
+       - Automatique (categorie_forcee=None, comportement d'origine) :
+         catégories compatibles avec la phase demandée (thème de catégorie +
+         thème de phase tous deux présents sur le problème, cf.
+         categories_compatibles), puis tirage pondéré d'UNE catégorie parmi
+         elles, favorisant les niveaux les plus bas (cf. _poids_categorie).
+       - Choisie (categorie_forcee = une clé de CATEGORIES, issue #83) :
+         cette catégorie est imposée. Si elle n'a aucun problème pour la
+         phase demandée, la phase est IGNORÉE pour ce tirage plutôt que
+         d'échouer — avertissement (une phrase) retourné pour affichage
+         plutôt qu'un tirage silencieusement différent de ce qui a été
+         demandé.
+    2. Dans cette catégorie, fenêtre de note [niveau-FENETRE_NOTE,
        niveau+FENETRE_NOTE], élargie progressivement si vide.
-    4. Dans cette fenêtre, exercise_history.choisir_exercice (réutilisé tel
+    3. Dans cette fenêtre, exercise_history.choisir_exercice (réutilisé tel
        quel : jamais proposé > dû pour révision > plus ancien de la
        catégorie épuisée) — la "FEN" qu'il utilise comme clé d'historique
        est ici l'identifiant "lichess:<PuzzleId>" (cf. entrée "fen_avant" du
        pool, posée par preparer_puzzles_lichess.py), pas une position.
 
-    Retourne (entree, categorie) ou (None, None) si aucune catégorie n'est
-    compatible avec la phase demandée (pool vide ou phase non couverte)."""
+    Retourne (entree, categorie, avertissement) ou (None, None, None) si
+    aucun problème n'est disponible pour la catégorie/phase demandée (pool
+    vide, phase non couverte en automatique, ou catégorie forcée totalement
+    absente du pool)."""
     import exercise_history  # import tardif : évite un cycle avec app.py au chargement
 
-    compatibles = categories_compatibles(pool, phase_theme)
-    if not compatibles:
-        return None, None
+    avertissement = None
 
-    categories_ok = list(compatibles.keys())
-    poids = [_poids_categorie(niveau_categorie(niveaux, c)) for c in categories_ok]
-    categorie = random.choices(categories_ok, weights=poids, k=1)[0]
+    if categorie_forcee:
+        candidats_categorie = [
+            p for p in pool if categorie_correspond(p.get("themes", []), categorie_forcee)
+        ]
+        if not candidats_categorie:
+            return None, None, None
+        categorie = categorie_forcee
+        if phase_theme is not None:
+            candidats_phase = [p for p in candidats_categorie if phase_theme in p.get("phases", [])]
+            if candidats_phase:
+                candidats_categorie = candidats_phase
+            else:
+                avertissement = (
+                    f"Aucun problème de catégorie « {CATEGORIES.get(categorie, categorie)} » "
+                    "pour cette phase de partie : la phase a été ignorée pour ce tirage."
+                )
+    else:
+        compatibles = categories_compatibles(pool, phase_theme)
+        if not compatibles:
+            return None, None, None
+        categories_ok = list(compatibles.keys())
+        poids = [_poids_categorie(niveau_categorie(niveaux, c)) for c in categories_ok]
+        categorie = random.choices(categories_ok, weights=poids, k=1)[0]
+        candidats_categorie = compatibles[categorie]
 
     niveau = niveau_categorie(niveaux, categorie)
-    candidats_categorie = compatibles[categorie]
     fenetre = FENETRE_NOTE
     fenetres_candidats = _filtrer_fenetre(candidats_categorie, niveau, fenetre)
     while not fenetres_candidats and fenetre < FENETRE_NOTE_MAX:
@@ -274,4 +303,4 @@ def tirer_probleme(pool: list, phase_theme: str | None, niveaux: dict, historiqu
         fenetres_candidats = candidats_categorie
 
     entree = exercise_history.choisir_exercice(fenetres_candidats, historique)
-    return entree, categorie
+    return entree, categorie, avertissement

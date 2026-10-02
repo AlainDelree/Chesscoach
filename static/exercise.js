@@ -105,16 +105,35 @@ let exerciseIdeesMeilleurCoupTexte = null;
 // Alain a changé le sélecteur entre-temps sans relancer de tirage.
 let exerciseCurrentPhase   = "toutes";
 
-// Source du dernier exercice tiré (issue #78 : "mes_erreurs" ou "lichess"),
-// même rôle qu'exerciseCurrentPhase ci-dessus — "Exercice suivant" relance
-// la même source que l'exercice en cours, pas forcément celle du sélecteur.
+// Source du dernier exercice tiré (issue #78 : "mes_erreurs", "lichess", ou
+// "position_precise" depuis l'issue #83), même rôle qu'exerciseCurrentPhase
+// ci-dessus — "Exercice suivant" relance la même source que l'exercice en
+// cours, pas forcément celle du sélecteur.
 let exerciseCurrentSource  = "mes_erreurs";
-// Détail du problème Lichess en cours (issue #78), affiché dans
-// #exercise-lichess-info — null pour la source "mes erreurs".
+// Détail du problème Lichess en cours (issue #78), affiché dans l'énoncé
+// (#exercise-statement-line, issue #83) — null pour les autres sources.
 let exerciseLichessCategorieLibelle = null;
 let exerciseLichessRating           = null;
 let exerciseLichessNiveau           = null;
 let exerciseLichessThemes           = null; // thèmes Lichess bruts, chaîne séparée par espaces
+// Choix explicite de catégorie Lichess du dernier tirage (issue #83) :
+// "automatique" (défaut) ou une des 16 clés de lichess_puzzles.CATEGORIES —
+// même rôle qu'exerciseCurrentPhase/exerciseCurrentSource, pour qu'"Exercice
+// suivant" relance la même catégorie explicite plutôt que de retomber sur
+// l'automatique. Distinct d'exerciseLichessCategorieLibelle ci-dessus (la
+// catégorie RÉELLEMENT tirée, toujours précise même en automatique).
+let exerciseCurrentCategorie = "automatique";
+// Avertissement en une phrase (issue #83) si la phase demandée a dû être
+// ignorée pour ce tirage faute de problème compatible avec elle ET la
+// catégorie imposée (cf. lichess_puzzles.tirer_probleme côté serveur) —
+// null la plupart du temps, affiché en fin d'énoncé sinon.
+let exerciseLichessAvertissement = null;
+// FEN de la « Position précise » en cours (issue #83, source
+// "position_precise") — mémorisé pour qu'"Exercice suivant" puisse relancer
+// EXACTEMENT la même position (pas de pool à tirer pour cette source) sans
+// dépendre du champ de saisie, qui peut avoir été vidé ou avoir changé
+// d'écran (desktop/mobile) entre-temps. null pour les deux autres sources.
+let exerciseCurrentFenPrecis = null;
 
 // Position juste après le coup proposé par Alain pour la tentative en cours
 // (issue #58) — second candidat de départ possible pour une ligne citée par
@@ -142,12 +161,101 @@ function exercisePhaseFiltre() {
   return sel ? sel.value : "toutes";
 }
 
-// Source choisie (issue #78) : "mes_erreurs" (défaut) ou "lichess" — même
-// rôle que exercisePhaseFiltre() ci-dessus, lit le <select> partagé par le
-// desktop et la feuille mobile (source de vérité commune).
+// Source choisie (issue #78, "position_precise" ajoutée par l'issue #83) :
+// "mes_erreurs" (défaut), "lichess" ou "position_precise" — même rôle que
+// exercisePhaseFiltre() ci-dessus, lit le <select> partagé par le desktop et
+// la feuille mobile (source de vérité commune).
 function exerciseSourceFiltre() {
   const sel = document.getElementById("exercise-source-select");
   return sel ? sel.value : "mes_erreurs";
+}
+
+// Catégorie choisie (issue #83) : "automatique" (défaut) ou une des 16 clés
+// de lichess_puzzles.CATEGORIES — même rôle qu'exercisePhaseFiltre()/
+// exerciseSourceFiltre() ci-dessus, sans effet pour les sources autres que
+// "lichess" (ignorée côté serveur, cf. app.py on_exercise_new).
+function exerciseCategorieFiltre() {
+  const sel = document.getElementById("exercise-categorie-select");
+  return sel ? sel.value : "automatique";
+}
+
+// ── Persistance du choix de catégorie par appareil (issue #83) ─────────────
+// localStorage (pas de synchronisation compte/serveur), même pattern que
+// GAME_BOARD_SIZE_STORAGE_KEY (mobile_game.js) — un GSM et un PC n'ont pas
+// forcément les mêmes axes de travail prioritaires.
+const EXERCISE_CATEGORIE_STORAGE_KEY = "chesscoach-exercise-categorie";
+
+function _exerciseCategorieLoad() {
+  try {
+    const stored = window.localStorage.getItem(EXERCISE_CATEGORIE_STORAGE_KEY);
+    if (stored) return stored;
+  } catch (e) {
+    // Stockage indisponible (navigation privée stricte, quota, etc.) :
+    // repli sur "automatique" pour cette session, sans empêcher le choix
+    // d'agir (_exerciseCategorieSave échoue silencieusement, même ci-dessous).
+  }
+  return "automatique";
+}
+
+function _exerciseCategorieSave(value) {
+  try {
+    window.localStorage.setItem(EXERCISE_CATEGORIE_STORAGE_KEY, value || "automatique");
+  } catch (e) {
+    // Pas de persistance, mais le choix reste appliqué pour la session en
+    // cours (déjà posé sur le <select> par l'appelant).
+  }
+}
+
+// ── Visibilité des contrôles dépendant de la source (issue #83) ────────────
+// Catégorie : visible seulement pour "lichess". Champ FEN : visible seulement
+// pour "position_precise". Appelée au chargement de la page, à chaque
+// changement du sélecteur de source (desktop) et à chaque choix de source
+// dans la feuille mobile (exerciseSourceSheetPick) ou ouverture de celle-ci.
+function _exerciseUpdateSourceDependentUI() {
+  const source = exerciseSourceFiltre();
+  const showCategorie = source === "lichess";
+  const showFen = source === "position_precise";
+
+  const catSel = document.getElementById("exercise-categorie-select");
+  if (catSel) catSel.style.display = showCategorie ? "" : "none";
+  const catLabel = document.getElementById("exercise-categorie-label");
+  if (catLabel) catLabel.style.display = showCategorie ? "block" : "none";
+  const catOpts = document.getElementById("exercise-categorie-options");
+  if (catOpts) catOpts.style.display = showCategorie ? "flex" : "none";
+
+  const fenRowDesktop = document.getElementById("exercise-fen-row-desktop");
+  if (fenRowDesktop) fenRowDesktop.style.display = showFen ? "flex" : "none";
+  const fenLabelMobile = document.getElementById("exercise-fen-label-mobile");
+  if (fenLabelMobile) fenLabelMobile.style.display = showFen ? "block" : "none";
+  const fenRowMobile = document.getElementById("exercise-fen-mobile-row");
+  if (fenRowMobile) fenRowMobile.style.display = showFen ? "block" : "none";
+  if (!showFen) _exerciseShowFenError("");
+}
+
+// ── Champ FEN de la « Position précise » (issue #83) ────────────────────────
+// Deux champs distincts, desktop et feuille mobile (comme les sélecteurs
+// phase/source/catégorie ci-dessus, mais un texte libre ne se prête pas au
+// même mécanisme "pilote un <select> caché" que des pastilles) — jamais
+// visibles tous les deux en même temps (media query <900px), on lit/affiche
+// donc simplement celui qui est actuellement visible.
+function _exerciseFenActiveInput() {
+  const mobile = document.getElementById("exercise-fen-input-mobile");
+  if (mobile && mobile.offsetParent !== null) return mobile;
+  return document.getElementById("exercise-fen-input-desktop");
+}
+
+function _exerciseFenInputValue() {
+  const el = _exerciseFenActiveInput();
+  return el ? el.value.trim() : "";
+}
+
+function _exerciseShowFenError(message) {
+  ["exercise-fen-error-desktop", "exercise-fen-error-mobile"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = message || "";
+    el.style.display = message ? "block" : "none";
+  });
 }
 
 // ── Feuille "Nouvel exercice" (mobile, issue #63) ───────────────────────────
@@ -166,8 +274,10 @@ function exercisePhaseSheetPick(phase) {
   });
 }
 
-// Pendant de exercisePhaseSheetPick ci-dessus pour la source (issue #78) —
-// pilote le même <select id="exercise-source-select"> que le desktop.
+// Pendant de exercisePhaseSheetPick ci-dessus pour la source (issue #78,
+// "position_precise" ajoutée par l'issue #83) — pilote le même
+// <select id="exercise-source-select"> que le desktop, et met à jour la
+// visibilité de la catégorie/du champ FEN pour la nouvelle source choisie.
 function exerciseSourceSheetPick(source) {
   const sel = document.getElementById("exercise-source-select");
   if (sel && !(source === "lichess" && sel.querySelector('option[value="lichess"]').disabled)) {
@@ -176,6 +286,19 @@ function exerciseSourceSheetPick(source) {
   document.querySelectorAll("#exercise-source-options .phase-pill").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.source === (sel ? sel.value : source));
   });
+  _exerciseUpdateSourceDependentUI();
+}
+
+// Pendant de exercisePhaseSheetPick/exerciseSourceSheetPick ci-dessus pour la
+// catégorie (issue #83) — pilote le même <select id="exercise-categorie-select">
+// que le desktop, et retient le choix pour cet appareil.
+function exerciseCategorieSheetPick(categorie) {
+  const sel = document.getElementById("exercise-categorie-select");
+  if (sel) sel.value = categorie;
+  document.querySelectorAll("#exercise-categorie-options .phase-pill").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.categorie === (sel ? sel.value : categorie));
+  });
+  _exerciseCategorieSave(sel ? sel.value : categorie);
 }
 
 function openExercisePhaseSheet() {
@@ -183,6 +306,8 @@ function openExercisePhaseSheet() {
   exercisePhaseSheetPick(sel ? sel.value : "toutes");
   const sourceSel = document.getElementById("exercise-source-select");
   exerciseSourceSheetPick(sourceSel ? sourceSel.value : "mes_erreurs");
+  const categorieSel = document.getElementById("exercise-categorie-select");
+  exerciseCategorieSheetPick(categorieSel ? categorieSel.value : _exerciseCategorieLoad());
   const sheet = document.getElementById("exercise-phase-sheet");
   const backdrop = document.getElementById("exercise-phase-sheet-backdrop");
   if (sheet) sheet.classList.add("open");
@@ -197,8 +322,13 @@ function closeExercisePhaseSheet() {
 }
 
 function launchExerciseFromSheet() {
-  closeExercisePhaseSheet();
-  startExercise();
+  // startExercise() retourne explicitement false quand il refuse de lancer
+  // l'exercice (issue #83 : FEN manquant pour la source "Position précise")
+  // — la feuille ne se referme alors PAS, pour qu'Alain voie l'erreur
+  // affichée dedans (#exercise-fen-error-mobile) plutôt que de la découvrir
+  // seulement une fois la feuille refermée.
+  const demarre = startExercise();
+  if (demarre !== false) closeExercisePhaseSheet();
 }
 
 function _exerciseResetTentative() {
@@ -265,12 +395,28 @@ function abandonExerciseGame() {
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
   _exerciseUpdateDejaFaitDisplay(null);
-  _exerciseUpdateLichessInfoDisplay();
+  _exerciseUpdateStatementLine();
   resetBoardToNeutral();
   setActiveMode(null);
 }
 
-function startExercise(phaseOverride, sourceOverride) {
+function startExercise(phaseOverride, sourceOverride, categorieOverride, fenOverride) {
+  // Source "Position précise" (issue #83) : un FEN est obligatoire — refuse
+  // de lancer plutôt que d'émettre exercise_new sans rien à valider côté
+  // serveur. Vérifié AVANT ensureModeSwitchClean/la remise à zéro de l'état
+  // ci-dessous, pour ne rien casser de l'exercice en cours si le lancement
+  // est refusé. Retourne explicitement false (lu par launchExerciseFromSheet)
+  // pour que la feuille mobile, le cas échéant, reste ouverte sur l'erreur.
+  const source = sourceOverride || exerciseSourceFiltre();
+  let fenPrecis = null;
+  if (source === "position_precise") {
+    fenPrecis = fenOverride || _exerciseFenInputValue();
+    if (!fenPrecis) {
+      _exerciseShowFenError("Collez un FEN avant de lancer l'exercice.");
+      return false;
+    }
+  }
+
   ensureModeSwitchClean("exercise");
   exerciseAnswered  = false;
   exerciseSelected  = null;
@@ -283,7 +429,8 @@ function startExercise(phaseOverride, sourceOverride) {
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
   _exerciseUpdateDejaFaitDisplay(null);
-  _exerciseUpdateLichessInfoDisplay();
+  exerciseLichessAvertissement = null;
+  _exerciseUpdateStatementLine();
   // Nouvel exercice (issue #64, affiné issue #81 point 6) : contrairement aux
   // autres modes (simple trait "Nouvelle partie", coachNewSegment), la
   // conversation affichée est intégralement vidée à chaque nouvel exercice —
@@ -297,27 +444,31 @@ function startExercise(phaseOverride, sourceOverride) {
   if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
   const statusEl = document.getElementById("exercise-status");
   if (statusEl) statusEl.textContent = "Chargement d'une position...";
-  // phaseOverride/sourceOverride (issue #76/#78, startNextExercise
-  // ci-dessous) : phase et source de l'exercice en cours plutôt que celles
-  // des sélecteurs, quand fournies.
+  // phaseOverride/sourceOverride/categorieOverride/fenOverride (issue
+  // #76/#78/#83, startNextExercise ci-dessous) : phase/source/catégorie/FEN
+  // de l'exercice en cours plutôt que ceux des sélecteurs, quand fournis.
   socket.emit("exercise_new", {
     phase: phaseOverride || exercisePhaseFiltre(),
-    source: sourceOverride || exerciseSourceFiltre(),
+    source,
+    categorie: categorieOverride || exerciseCategorieFiltre(),
+    fen: fenPrecis,
   });
 }
 
 function startNextExercise() {
   // Bouton "Exercice suivant" (issue #76, source conservée depuis l'issue
-  // #78) : relance directement un exercice de la même catégorie (phase) ET
-  // de la même source que l'exercice en cours, abandonné ou tout juste
-  // terminé, sans ouvrir la feuille ni les sélecteurs — à la différence de
-  // "Nouvel exercice"/"Autre catégorie", qui repassent par le choix de
-  // phase/source. Disponible dans tous les états d'un exercice déjà chargé
-  // (réponse donnée, exploration libre après verdict, ou même avant toute
-  // réponse — cliquer dessus revient alors à abandonner l'exercice en
-  // cours) : comme exercise_new, ce tirage ne laisse aucun état serveur à
-  // nettoyer entre deux exercices (cf. _current_exercise, app.py).
-  startExercise(exerciseCurrentPhase, exerciseCurrentSource);
+  // #78, catégorie/FEN depuis l'issue #83) : relance directement un exercice
+  // de la même catégorie (phase), de la même source, et pour "lichess" de la
+  // même catégorie explicite (ou pour "position_precise" de la même
+  // position) que l'exercice en cours, abandonné ou tout juste terminé, sans
+  // ouvrir la feuille ni les sélecteurs — à la différence de "Nouvel
+  // exercice"/"Autre catégorie", qui repassent par le choix de phase/source.
+  // Disponible dans tous les états d'un exercice déjà chargé (réponse
+  // donnée, exploration libre après verdict, ou même avant toute réponse —
+  // cliquer dessus revient alors à abandonner l'exercice en cours) : comme
+  // exercise_new, ce tirage ne laisse aucun état serveur à nettoyer entre
+  // deux exercices (cf. _current_exercise, app.py).
+  startExercise(exerciseCurrentPhase, exerciseCurrentSource, exerciseCurrentCategorie, exerciseCurrentFenPrecis);
 }
 
 function reprendreExerciceCoup() {
@@ -633,19 +784,50 @@ function exerciseChatContextExtra() {
   };
 }
 
-function _exerciseUpdateLichessInfoDisplay() {
-  // Ligne d'état dédiée à la source "Problèmes Lichess" (issue #78) :
-  // "Problème <note> · ton niveau en <catégorie> <niveau>" — masquée pour la
-  // source "mes erreurs" ou tant qu'aucun problème Lichess n'est chargé.
-  const el = document.getElementById("exercise-lichess-info");
+// Libellés français des phases (issue #83, pour l'énoncé ci-dessous) — mêmes
+// valeurs que les <option> du sélecteur de phase (desktop + feuille mobile).
+const EXERCISE_PHASE_LIBELLES = {
+  toutes: "toutes phases",
+  ouverture: "ouverture",
+  milieu_de_partie: "milieu de partie",
+  finale: "finale",
+};
+
+function _exerciseUpdateStatementLine() {
+  // Énoncé de l'exercice (issue #83) : camp au trait, puis numéro de
+  // problème/catégorie/niveau (source "Problèmes Lichess"), phase (source
+  // "Mes erreurs") ou "Position libre" (source "Position précise") — affiché
+  // dans #exercise-statement-line (templates/index.html, DANS
+  // #board-sticky-wrap : visible sans défiler sur mobile comme sur grand
+  // écran), en remplacement de l'ancienne #exercise-lichess-info, qui, elle,
+  // finissait hors écran sous le panneau du coach une fois celui-ci rempli
+  // de messages (constat d'Alain sur GSM, 390×750). Masquée en dehors du
+  // mode exercice ou tant qu'aucun exercice n'est actif.
+  const el = document.getElementById("exercise-statement-line");
   if (!el) return;
-  if (exerciseCurrentSource !== "lichess" || exerciseLichessRating === null) {
+  if (!exerciseActive || (typeof activeMode !== "undefined" && activeMode !== "exercise")) {
     el.style.display = "none";
     el.textContent = "";
     return;
   }
-  const libelle = exerciseLichessCategorieLibelle || "";
-  el.textContent = `Problème ${exerciseLichessRating} · ton niveau en ${libelle} ${exerciseLichessNiveau}`;
+  const camp = exerciseCampAlain === "noirs" ? "Noirs" : "Blancs";
+  let texte;
+  if (exerciseCurrentSource === "lichess" && exerciseLichessRating !== null) {
+    const libelle = exerciseLichessCategorieLibelle || "";
+    texte = `${camp} à jouer · Problème ${exerciseLichessRating} · ${libelle} · niveau ${exerciseLichessNiveau}`;
+  } else if (exerciseCurrentSource === "position_precise") {
+    texte = `${camp} à jouer · Position libre`;
+  } else {
+    const phaseLibelle = EXERCISE_PHASE_LIBELLES[exerciseCurrentPhase] || exerciseCurrentPhase;
+    texte = `${camp} à jouer · Mes erreurs · ${phaseLibelle}`;
+  }
+  // Avertissement en une phrase (issue #83) si la phase demandée a dû être
+  // ignorée pour ce tirage — rare, affiché en fin d'énoncé plutôt que dans
+  // un élément séparé.
+  if (exerciseLichessAvertissement) {
+    texte += ` — ${exerciseLichessAvertissement}`;
+  }
+  el.textContent = texte;
   el.style.display = "block";
 }
 
@@ -849,16 +1031,25 @@ if (typeof socket !== "undefined") {
     exerciseCurrentPhase  = data.phase || "toutes";
     // Source de ce tirage (issue #78) — mémorisée pour "Exercice suivant"
     // (exerciseCurrentSource) et pour l'affichage (libellé "Solution du
-    // problème", ligne d'état dédiée).
+    // problème", énoncé dédié).
     exerciseCurrentSource = data.source || "mes_erreurs";
     exerciseLichessCategorieLibelle = data.categorie_libelle || null;
     exerciseLichessRating           = (typeof data.rating === "number") ? data.rating : null;
     exerciseLichessNiveau           = (typeof data.niveau === "number") ? data.niveau : null;
     exerciseLichessThemes           = Array.isArray(data.themes) ? data.themes.join(" ") : null;
+    // Choix explicite de catégorie (issue #83) — absent (undefined) pour les
+    // deux autres sources, repli sur "automatique". FEN de la "Position
+    // précise" en cours — null pour les deux autres sources.
+    exerciseCurrentCategorie   = data.categorie_demandee || "automatique";
+    exerciseLichessAvertissement = data.avertissement || null;
+    exerciseCurrentFenPrecis   = (data.source === "position_precise") ? data.fen : null;
     _exerciseResetCoachLines();
     _exerciseUpdateDejaFaitDisplay(data);
-    _exerciseUpdateLichessInfoDisplay();
     setActiveMode("exercise");
+    // Appelée APRÈS setActiveMode ci-dessus : _exerciseUpdateStatementLine
+    // masque l'énoncé tant qu'activeMode n'est pas "exercise", ce qui serait
+    // encore le cas (ancien mode) si elle était appelée avant.
+    _exerciseUpdateStatementLine();
     _exerciseUpdateCoachInputGating();
 
     _boardFlipped = (data.camp_alain === "noirs");
@@ -867,11 +1058,11 @@ if (typeof socket !== "undefined") {
     if (boardEl) boardEl.onclick = onExerciseBoardClick;
     renderExerciseBoard();
 
+    // Issue #83 : le camp au trait et le détail du problème vivent désormais
+    // dans l'énoncé toujours visible (#exercise-statement-line) — ce message
+    // transitoire se limite à inviter à jouer, sans dupliquer cette info.
     const statusEl = document.getElementById("exercise-status");
-    if (statusEl) {
-      const camp = data.camp_alain === "noirs" ? "Noirs" : "Blancs";
-      statusEl.textContent = `À toi de jouer (${camp}) — que joues-tu ?`;
-    }
+    if (statusEl) statusEl.textContent = "Fais ton coup.";
   });
 
   socket.on("exercise_comment", (data) => {
@@ -930,7 +1121,7 @@ if (typeof socket !== "undefined") {
     // reflète donc le niveau APRÈS ce résultat, pas celui du tirage.
     if (data && typeof data.niveau === "number") exerciseLichessNiveau = data.niveau;
     _exerciseUpdateCoupReelDisplay();
-    _exerciseUpdateLichessInfoDisplay();
+    _exerciseUpdateStatementLine();
     // Ligne de Stockfish (bonus, issue #58) : déjà calculée et transmise
     // avec le verdict (pv_meilleur_coup), pas besoin de recalcul côté client.
     _exerciseAddStockfishLine();
@@ -982,8 +1173,29 @@ if (typeof socket !== "undefined") {
       // (_exerciseShowAnalysisIndisponible), qu'il arrive avant ou après.
       : (err === "pas_de_verdict_exercice")
       ? "L'analyse Stockfish est indisponible."
+      // fen_invalide (issue #83, source "Position précise") : message de
+      // validation déjà prêt à afficher, construit côté serveur par
+      // _valider_fen_position_precise (app.py) — position illisible,
+      // illégale, ou déjà mat/pat.
+      : (err === "fen_invalide")
+      ? ((data && data.message) || "FEN invalide.")
       : "Le coach n'a pas pu répondre, réessayez.";
     if (statusEl) statusEl.textContent = msg;
     console.warn("[exercice]", msg, data);
   });
 }
+
+// Initialisation du choix de catégorie retenu pour cet appareil (issue #83) :
+// applique la valeur mémorisée (localStorage) au <select> desktop dès le
+// chargement de la page, avant toute ouverture de la feuille mobile ou tout
+// premier "Nouvel exercice" — sans ça, le <select> resterait sur
+// "Automatique" (premier <option>) jusqu'au premier passage par la feuille
+// mobile (openExercisePhaseSheet) ou un changement manuel.
+document.addEventListener("DOMContentLoaded", () => {
+  const sel = document.getElementById("exercise-categorie-select");
+  if (sel) {
+    const stored = _exerciseCategorieLoad();
+    if (Array.from(sel.options).some((o) => o.value === stored)) sel.value = stored;
+  }
+  _exerciseUpdateSourceDependentUI();
+});
