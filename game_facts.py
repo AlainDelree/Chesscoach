@@ -139,6 +139,25 @@ avec une erreur de transcription, et fini par déclarer ce FEN invalide :
     de SEUIL_IDEE_PION, traduites en français, et des idées mécaniques
     (parade d'une menace, échec/mat, développement/centralisation) — liste
     courte (3 au plus), triée par importance, jamais de valeur chiffrée.
+
+Ajouté par l'issue #87, constat sur un exercice réel (mode "Exercice", coup
+Re3 dans une position Q7/ppkq3p/2p3n1/2Pp1p2/1P6/2b5/P5PP/4R2K w - - 9 35) :
+les données transmises étaient exactes (listes de pièces, description
+mécanique des coups), mais le coach a quand même parlé d'un "échange tour
+contre tour" (un seul camp avait une tour) et affirmé qu'un fou en e5
+attaquait une tour en e3 (géométriquement faux) — les données ne CONTREDISAIENT
+pas ces inventions, elles se contentaient de ne pas les couvrir :
+  - describe_material_summary : résumé du matériel de chaque camp par type de
+    pièce, avec les absences dites explicitement ("aucune tour") plutôt que
+    silencieuses, le total en points et l'équilibre matériel — généralise les
+    deux lignes "n'a plus de dame" déjà présentes dans build_game_facts_text ;
+  - _statut_attaque_case, utilisée par describe_pv_with_balance pour le
+    second demi-coup de toute ligne (la réponse adverse immédiate au coup
+    proposé ou au meilleur coup) : dit TOUJOURS explicitement si la pièce qui
+    vient de jouer au premier demi-coup est désormais attaquée ou non, là où
+    les descriptions mécaniques existantes ne mentionnaient une pièce que
+    lorsqu'elle était attaquée (silence total sinon, jamais une négation
+    explicite).
 """
 
 import io
@@ -300,6 +319,40 @@ def _resultat_echange_case(board_apres: "chess.Board", case: int, camp_alain: st
         return f" : {san_capture} {san_recapture} perdrait {nom_piece_perdue}"
     label = camp_label(piece.color, camp_alain)
     return f" : {san_capture} {san_recapture}, échange favorable ou équilibré pour {label}"
+
+
+def _statut_attaque_case(board_apres: "chess.Board", case: int, camp_piece,
+                          camp_alain: str = "") -> str:
+    """Statut explicite (attaqué ou PAS attaqué) d'une pièce amie restée sur
+    `case` après la réponse adverse immédiate d'une ligne principale (issue
+    #87, point 2) — comble un angle mort réel : une description mécanique ne
+    mentionne une pièce QUE quand elle est attaquée (_pieces_attaquees_apres
+    ci-dessus), jamais quand elle ne l'est PAS. Un coach a déjà affirmé
+    qu'une tour restée immobile était "désormais attaquée" par un fou qui
+    venait de jouer sur une case ne l'attaquant géométriquement pas — les
+    données transmises ne mentionnaient simplement pas cette tour (silence,
+    pas une négation explicite), ce qui n'empêchait pas l'invention. Cette
+    fonction dit toujours explicitement l'un ou l'autre.
+
+    `camp_piece` : couleur (chess.WHITE/chess.BLACK) de la pièce dont on
+    vérifie le statut sur `case` — si elle n'y est plus (capturée, ou a
+    bougé depuis, déjà décrit ailleurs) ou si camp_piece est None, retourne
+    une chaîne vide plutôt qu'une supposition."""
+    if camp_piece is None:
+        return ""
+    piece = board_apres.piece_at(case)
+    if piece is None or piece.color != camp_piece:
+        return ""
+    nom = f"{_NOM_PIECE_MAJ[piece.piece_type]} {_couleur_accordee(piece.piece_type, piece.color)} en {chess.square_name(case)}"
+    attaquants = sorted(board_apres.attackers(not piece.color, case))
+    if not attaquants:
+        return f"{nom} n'est PAS attaqué(e) par ce coup"
+    noms_attaquants = ", ".join(
+        f"{_NOM_PIECE_MAJ[board_apres.piece_at(sq).piece_type]} {chess.square_name(sq)}"
+        for sq in attaquants
+    )
+    echange = _resultat_echange_case(board_apres, case, camp_alain)
+    return f"{nom} est désormais attaqué(e) par {noms_attaquants}{echange}"
 
 
 def _attaques_defenses_arrivee(board: "chess.Board", board_apres: "chess.Board",
@@ -567,12 +620,29 @@ def describe_pv_with_balance(fen_avant: str, pv_text: str, camp_alain: str = "",
     try:
         board = chess.Board(fen_avant)
         resultat = []
-        for san in pv_text.split()[:max_plies]:
+        case_premier_coup = None
+        camp_premier_coup = None
+        for i, san in enumerate(pv_text.split()[:max_plies]):
             move = _parse_coup(board, san)
             if move is None:
                 break
+            piece_qui_joue = board.piece_at(move.from_square)
             description = _decrit_coup_mecanique(board, move, camp_alain)
             board.push(move)
+            if i == 0:
+                # Case/camp du premier demi-coup de la ligne (le coup proposé
+                # ou le meilleur coup lui-même) — sert à vérifier son statut
+                # une fois la réponse adverse immédiate jouée, ci-dessous.
+                case_premier_coup = move.to_square
+                camp_premier_coup = piece_qui_joue.color if piece_qui_joue else None
+            elif i == 1 and case_premier_coup is not None:
+                # Première réponse adverse (issue #87, point 2) : dit
+                # explicitement si la pièce qui vient de jouer au demi-coup
+                # précédent est désormais attaquée ou non — jamais un simple
+                # silence qui laisserait deviner.
+                statut = _statut_attaque_case(board, case_premier_coup, camp_premier_coup, camp_alain)
+                if statut:
+                    description = f"{description} ; {statut}"
             resultat.append({
                 "san": san,
                 "description": description,
@@ -793,6 +863,88 @@ def describe_pieces_lists(fen: str, camp_alain: str = "") -> str:
     return (
         f"{label_blancs} : {_liste_pieces(board, True)}\n"
         f"{label_noirs} : {_liste_pieces(board, False)}"
+    )
+
+
+# Types de pièces résumés par describe_material_summary, dans l'ordre
+# d'affichage demandé (issue #87) — dame d'abord (la plus forte), roi exclu
+# (toujours présent des deux côtés, sans valeur de points).
+_TYPES_RESUME_MATERIEL = (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT, chess.PAWN)
+
+_NOM_PIECE_SINGULIER = {
+    chess.QUEEN: "dame", chess.ROOK: "tour", chess.BISHOP: "fou",
+    chess.KNIGHT: "cavalier", chess.PAWN: "pion",
+}
+
+_NOM_PIECE_PLURIEL = {
+    chess.QUEEN: "dames", chess.ROOK: "tours", chess.BISHOP: "fous",
+    chess.KNIGHT: "cavaliers", chess.PAWN: "pions",
+}
+
+
+def _aucun_texte(piece_type: int) -> str:
+    """"aucune tour"/"aucune dame" (féminin) ou "aucun fou"/"aucun cavalier"/
+    "aucun pion" (masculin) — absence explicite d'un type de pièce (issue
+    #87, point 1), condition centrale du bug source : le coach avait parlé
+    d'un "échange tour contre tour" dans une position où un seul camp avait
+    une tour."""
+    article = "aucune" if piece_type in _FEMININ else "aucun"
+    return f"{article} {_NOM_PIECE_SINGULIER[piece_type]}"
+
+
+def _resume_materiel_camp(board: "chess.Board", est_blanc: bool) -> tuple[list[str], int]:
+    segs = []
+    total = 0
+    for pt in _TYPES_RESUME_MATERIEL:
+        n = len(board.pieces(pt, est_blanc))
+        total += n * _VALEURS[pt]
+        if n == 0:
+            segs.append(_aucun_texte(pt))
+        elif n == 1:
+            segs.append(f"1 {_NOM_PIECE_SINGULIER[pt]}")
+        else:
+            segs.append(f"{n} {_NOM_PIECE_PLURIEL[pt]}")
+    return segs, total
+
+
+def describe_material_summary(fen: str, camp_alain: str = "") -> str:
+    """API publique (issue #87, point 1) : résumé du matériel de chaque camp,
+    PAR TYPE de pièce, avec les absences dites explicitement ("aucune tour"),
+    le total en points classiques et l'équilibre matériel — en complément de
+    describe_pieces_lists (qui donne les pièces case par case, mais ne dit
+    jamais explicitement qu'un type de pièce est totalement absent d'un
+    camp). Sans cette absence explicite, le coach a déjà parlé d'un "échange
+    tour contre tour" dans une position où les Noirs n'avaient plus aucune
+    tour — les données fournies (liste des pièces) étaient exactes, mais
+    n'empêchaient pas cette invention faute de le dire en toutes lettres.
+
+    Retourne "" si fen est vide ou illisible."""
+    fen = (fen or "").strip()
+    if not fen:
+        return ""
+    try:
+        board = chess.Board(fen)
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] describe_material_summary a échoué : {e}")
+        return ""
+    label_blancs = camp_label(True, camp_alain)
+    label_noirs = camp_label(False, camp_alain)
+    segs_blancs, total_blancs = _resume_materiel_camp(board, True)
+    segs_noirs, total_noirs = _resume_materiel_camp(board, False)
+    diff = total_blancs - total_noirs
+    if diff == 0:
+        equilibre = "matériel égal"
+    else:
+        camp_en_plus = label_blancs if diff > 0 else label_noirs
+        equilibre = f"{camp_en_plus} ont {abs(diff)} point(s) de plus"
+    return (
+        "Résumé du matériel par type de pièce (points classiques : pion=1, "
+        "cavalier=fou=3, tour=5, dame=9 ; roi non compté) — ne parle JAMAIS "
+        "d'échange, de prise ou de perte d'un type de pièce marqué "
+        "\"aucun(e)\" ci-dessous pour le camp concerné :\n"
+        f"  {label_blancs} : {', '.join(segs_blancs)} (total {total_blancs} points)\n"
+        f"  {label_noirs} : {', '.join(segs_noirs)} (total {total_noirs} points)\n"
+        f"  Équilibre matériel : {equilibre}."
     )
 
 
@@ -1274,6 +1426,13 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
     if not board.pieces(chess.QUEEN, chess.BLACK):
         position_lignes.append("Les Noirs n'ont plus de dame.")
     parties.append("\n".join(position_lignes))
+
+    # Résumé du matériel par type de pièce de la position actuelle (issue
+    # #87, point 1) — généralise les deux lignes "n'a plus de dame" ci-dessus
+    # à tous les types de pièces, avec le total en points et l'équilibre.
+    materiel_resume = describe_material_summary(board.fen(), camp_alain)
+    if materiel_resume:
+        parties.append(materiel_resume)
 
     if flagged_moves:
         lignes_flag = []

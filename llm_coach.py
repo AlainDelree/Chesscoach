@@ -29,6 +29,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+import coach_reliability
 import game_facts
 
 logger = logging.getLogger("chesscoach.llm_coach")
@@ -291,6 +292,59 @@ _GAME_FACTS_ADDENDUM = (
     "sans reprise possible, trop mineures pour être des \"moments clés\" "
     "mais réelles — signale-les si Alain demande un bilan complet de la "
     "partie, sans jamais les présenter comme LE tournant."
+)
+
+# Complément de system prompt ajouté dès que context["materiel_resume_texte"]
+# est fourni (issue #87 — mode "Exercice", et tout autre mode qui transmet ce
+# champ, cf. _build_context_text) : constat réel ayant motivé cette issue —
+# les données transmises au coach (listes de pièces, descriptions mécaniques)
+# étaient déjà exactes, mais sa réponse a quand même parlé d'un "échange tour
+# contre tour" dans une position où un seul camp avait une tour, et affirmé
+# qu'un fou attaquait une tour qu'il n'attaquait géométriquement pas — un
+# silence dans les données (aucune mention explicite d'absence ou de
+# non-attaque) n'empêchait pas ces inventions. Ce complément ferme cet angle
+# mort en rendant ces faits explicites ET en l'imposant comme règle de
+# construction de l'explication.
+_MATERIEL_ADDENDUM = (
+    "Résumé du matériel par type de pièce (issue #87, point 1) : le contexte "
+    "fournit un bloc \"Résumé du matériel par type de pièce\" — avant toute "
+    "affirmation sur un échange, une prise ou une perte visant un type de "
+    "pièce précis (dame/tour/fou/cavalier/pion), vérifie dans ce bloc que "
+    "CHACUN des deux camps impliqués a bien au moins une pièce de ce type. "
+    "Ne parle JAMAIS d'un \"échange tour contre tour\" ou équivalent si ce "
+    "bloc indique \"aucune tour\" (ou \"aucun fou\"/\"aucun cavalier\"/\"aucune "
+    "dame\"/\"aucun pion\") pour l'un des deux camps : décris alors ce que le "
+    "coup gagne ou cède réellement (par exemple \"tu gagnes la dame adverse "
+    "pour ta tour\" n'est PAS un \"échange de tours\" si l'adversaire n'a pas "
+    "de tour)."
+    "\n\n"
+    "Réponse adverse immédiate décrite, y compris quand elle N'ATTAQUE PAS "
+    "une pièce (issue #87, point 2) : dans le détail coup par coup d'une "
+    "ligne principale fourni dans le contexte, le second demi-coup (la "
+    "réponse adverse immédiate au premier coup de la ligne) précise "
+    "désormais EXPLICITEMENT si la pièce qui vient de jouer au premier "
+    "demi-coup est \"désormais attaqué(e)\" OU \"n'est PAS attaqué(e) par ce "
+    "coup\" — ce n'est plus un simple silence. Base-toi UNIQUEMENT sur cette "
+    "mention explicite, jamais sur ta propre lecture géométrique de la "
+    "position, pour dire si une pièce est attaquée après cette réponse."
+    "\n\n"
+    "Construction de l'explication à partir de la ligne, jamais d'un "
+    "échange imaginé (issue #87, point 3) : toute affirmation sur une "
+    "attaque, une défense, une capture ou un échange doit se retrouver "
+    "explicitement dans les descriptions mécaniques, les listes de pièces ou "
+    "le résumé du matériel fournis dans le contexte — si elle n'y figure "
+    "pas, ne l'affirme pas, décris la situation sans cette précision. Pour "
+    "expliquer une ERREUR (verdict \"erreur\"/\"blunder\"/\"imprécision\"), "
+    "pars D'ABORD de la ligne principale du coup proposé : ce que "
+    "l'adversaire y répond réellement, et ce que cela change concrètement "
+    "pour lui (une pièce sauvée, un avantage conservé, une occasion "
+    "manquée) — relie ensuite cela à la différence d'évaluation avec le "
+    "meilleur coup. N'invente JAMAIS un échange de pièces absent de cette "
+    "ligne pour justifier le verdict. Pour expliquer le MEILLEUR coup, "
+    "appuie-toi sur SA ligne principale (ce qu'il gagne ou menace "
+    "réellement, d'après le détail coup par coup fourni) sans déformer son "
+    "résultat réel : un coup qui gagne la dame adverse pour une tour n'est "
+    "jamais un \"échange de tours\", c'est un gain de dame."
 )
 
 # Complément de system prompt pour l'explication à la demande d'un coup
@@ -1029,6 +1083,13 @@ def _build_context_text(context) -> str:
     # ADDENDUM pour l'interdiction de citer un FEN qui accompagne ces listes).
     pieces_depart_texte = (context.get("pieces_depart_texte") or "").strip()
     pieces_actuelles_texte = (context.get("pieces_actuelles_texte") or "").strip()
+    # Résumé du matériel par type de pièce, avec les absences dites
+    # explicitement (issue #87, point 1, calculé par
+    # game_facts.describe_material_summary) — complète les listes de pièces
+    # ci-dessus (case par case) par un résumé PAR TYPE, condition nécessaire
+    # au garde-fou de _MATERIEL_ADDENDUM contre un "échange" ou une "prise"
+    # visant un type de pièce absent du camp concerné.
+    materiel_resume_texte = (context.get("materiel_resume_texte") or "").strip()
     # Menace adverse (issue #80, point 1), déjà calculée et décrite
     # mécaniquement par app.py/game_facts (EngineManager.get_threats +
     # describe_menace_adverse) : si Alain passait son tour, les meilleurs
@@ -1246,6 +1307,8 @@ def _build_context_text(context) -> str:
             "Liste des pièces de la position ACTUELLE, case par case (issue "
             f"#80) :\n{pieces_actuelles_texte}"
         )
+    if materiel_resume_texte:
+        lines.append(materiel_resume_texte)
     if menace_adverse_texte:
         lines.append(menace_adverse_texte)
     if move:
@@ -1490,7 +1553,8 @@ def _purge_vieux_logs_coach(log_path: Path, fichier_actif: Path) -> None:
 
 
 def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str,
-                     model: str = None, reponse: str = None, erreur: str = None, usage: dict = None) -> None:
+                     model: str = None, reponse: str = None, erreur: str = None, usage: dict = None,
+                     fiabilite: dict = None, avertissement: str = None) -> None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -1527,6 +1591,13 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     anciennes au-delà de _COACH_LOG_MAX_TOTAL_MB (cf.
     _purge_vieux_logs_coach) — le format de chaque entrée est inchangé
     (mêmes clés qu'avant cette issue), seul le DÉCOUPAGE en fichiers change.
+    Étendu par l'issue #87 : `fiabilite` (dict couleur/raison/controles/
+    alertes retourné par coach_reliability.evaluer_fiabilite, après relance
+    automatique éventuelle — None si non calculé, ex. appel en erreur avant
+    toute réponse) et `avertissement` (champ dédié, DISTINCT de `fiabilite`
+    : une seule phrase si une incohérence a été détectée dans la réponse
+    AVANT relance, None sinon) — pour diagnostiquer un avertissement de
+    fiabilité sans avoir à relire tout le détail de `fiabilite`.
     """
     if not log_path:
         return
@@ -1544,6 +1615,8 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
             "reponse": reponse,
             "erreur": erreur,
             "usage": usage,
+            "fiabilite": fiabilite,
+            "avertissement": avertissement,
         }
         with open(fichier_actif, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -1868,7 +1941,7 @@ def get_coach_response(messages, context, coach_memory, config):
     """
     api_key = (config or {}).get("llm_api_key", "")
     if not api_key:
-        return None, "no_api_key"
+        return None, "no_api_key", None
 
     clean_messages = [
         {"role": m.get("role"), "content": (m.get("content") or "").strip()}
@@ -1876,7 +1949,7 @@ def get_coach_response(messages, context, coach_memory, config):
         if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
     ]
     if not clean_messages:
-        return None, "empty"
+        return None, "empty", None
 
     # Issue #79, point 4b : refuse l'appel au modèle quand le contexte d'un
     # exercice ne contient aucun verdict Stockfish — AVANT tout appel API,
@@ -1892,7 +1965,7 @@ def get_coach_response(messages, context, coach_memory, config):
     # côté appel LLM, la panne moteur elle-même est déjà tracée dans
     # MOTEUR_ERREURS_LOG_PATH (cf. engine_stockfish.py).
     if (context or {}).get("mode_exercice") and not (context or {}).get("verdict_qualite"):
-        return None, "pas_de_verdict_exercice"
+        return None, "pas_de_verdict_exercice", None
 
     model = (config or {}).get("llm_model", "")
     prompt_sys = _SYSTEM_PROMPT
@@ -1941,6 +2014,11 @@ def get_coach_response(messages, context, coach_memory, config):
         # l'appel API (garde-fou ci-dessus), ce complément reste donc
         # surtout utile aux autres modes.
         prompt_sys = f"{prompt_sys}\n\n{_ANALYSE_INDISPONIBLE_ADDENDUM}"
+    if (context or {}).get("materiel_resume_texte"):
+        # Indépendant des branches ci-dessus (issue #87) : s'ajoute dès que
+        # le contexte fournit un résumé du matériel par type de pièce — pas
+        # seulement en mode exercice, cf. _build_context_text.
+        prompt_sys = f"{prompt_sys}\n\n{_MATERIEL_ADDENDUM}"
 
     memory_text = _build_memory_text(coach_memory)
     if memory_text:
@@ -1970,21 +2048,102 @@ def get_coach_response(messages, context, coach_memory, config):
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude : crédit épuisé : {e}")
         _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="credit_insuffisant")
-        return None, "credit_insuffisant"
+        return None, "credit_insuffisant", None
     except ModeleIndisponibleError as e:
         logger.warning(f"[LLM_COACH] Appel Claude : modèle indisponible : {e}")
         _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="modele_indisponible")
-        return None, "modele_indisponible"
+        return None, "modele_indisponible", None
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude échoué : {e}")
         _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur=str(e))
-        return None, str(e)
+        return None, str(e), None
 
     response = (response or "").strip()
+
+    # Contrôle automatique de fiabilité, après coup (issue #87, points 4 et
+    # 5) : les garde-fous de prompt ci-dessus ne peuvent pas, à eux seuls,
+    # garantir qu'aucune invention ne passe jamais — cas réel ayant motivé
+    # cette issue, des données exactes transmises au coach n'ont pas
+    # empêché une réponse incohérente (type de pièce absent cité, attaque
+    # géométriquement impossible affirmée). Contrôles déterministes
+    # (python-chess, aucun appel API supplémentaire) : cf. coach_reliability.
+    fen_reference = (context or {}).get("fen_depart_exercice") or (context or {}).get("fen") or ""
+    fen_reference2 = (context or {}).get("fen") or ""
+    analyse_indisponible_ctx = bool((context or {}).get("analyse_indisponible"))
+    verdict_qualite_ctx = (context or {}).get("verdict_qualite")
+    verdict_partiel_ctx = bool(verdict_qualite_ctx) and (
+        (context.get("eval_alain_cp") is None and context.get("eval_alain_mat") is None)
+        or not (context.get("meilleur_coup") or "").strip()
+        or (bool((context.get("coup_propose") or "").strip()) and not (context.get("pv_coup_propose") or "").strip())
+        or (bool((context.get("meilleur_coup") or "").strip()) and not (context.get("pv_meilleur_coup") or "").strip())
+    )
+    fiabilite = coach_reliability.evaluer_fiabilite(
+        response, fen_reference, fen_reference2,
+        analyse_indisponible=analyse_indisponible_ctx, verdict_partiel=verdict_partiel_ctx,
+    )
+    avertissement = None
+    if fiabilite["alertes"]:
+        # Avertissement journalisé dans tous les cas (issue #87, point 4),
+        # que la relance ci-dessous réussisse ou non — rien de visible pour
+        # Alain dans le cas normal (aucune incohérence détectée), c'est le
+        # cas ici qui ne l'est pas.
+        avertissement = fiabilite["raison"]
+        rappel = (
+            "Ta réponse précédente contient une incohérence détectée "
+            f"automatiquement : {fiabilite['raison']}. Corrige UNIQUEMENT ce "
+            "point précis (ne parle jamais d'un type de pièce absent du camp "
+            "concerné, ni d'une attaque, une case ou un coup non confirmé "
+            "par les données du contexte) et renvoie une réponse complète "
+            "corrigée, sans mentionner ce correctif à Alain."
+        )
+        messages_relance = clean_messages + [
+            {"role": "assistant", "content": response},
+            {"role": "user", "content": rappel},
+        ]
+        try:
+            # Relance automatique UNIQUE (issue #87, point 4) : jamais une
+            # seconde tentative même si celle-ci échoue ou ne corrige rien —
+            # pas de boucle possible. Une panne ici (API, réseau) ne doit
+            # JAMAIS remonter à Alain : la première réponse, déjà obtenue
+            # avec succès, reste celle retournée.
+            response2 = _call_claude(prompt_sys, messages_relance, api_key, model, usage_path)
+            response2 = (response2 or "").strip()
+            fiabilite2 = coach_reliability.evaluer_fiabilite(
+                response2, fen_reference, fen_reference2,
+                analyse_indisponible=analyse_indisponible_ctx, verdict_partiel=verdict_partiel_ctx,
+            )
+            if response2 and not fiabilite2["alertes"]:
+                response = response2
+                fiabilite = {
+                    "couleur": "orange",
+                    "raison": (
+                        "une incohérence détectée dans une première réponse "
+                        "a été corrigée par une relance automatique : à "
+                        "prendre avec prudence"
+                    ),
+                    "controles": fiabilite2["controles"], "alertes": [],
+                }
+            else:
+                fiabilite["couleur"] = "rouge"
+                fiabilite["raison"] = (
+                    "incohérence détectée et non corrigée après une relance "
+                    f"automatique : {fiabilite['alertes'][0]['detail']}"
+                )
+        except Exception as e:
+            logger.warning(f"[LLM_COACH] Relance automatique de fiabilité échouée : {e}")
+            fiabilite["couleur"] = "rouge"
+            fiabilite["raison"] = (
+                "incohérence détectée ; la relance automatique de correction "
+                f"a échoué ({e}) : avertissement seul"
+            )
+
     # dernier_appel vient d'être écrit par _call_claude (via _record_usage)
     # pour ce même appel : le relire ici évite de faire remonter le tuple
     # d'usage à travers toute la chaîne de retour juste pour le logging
     # (issue #54, champ d'usage ajouté à coach_calls.log).
     usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
-    _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, reponse=response, usage=usage_appel)
-    return response, None
+    _log_coach_call(
+        log_path, prompt_sys, context, clean_messages, mode_origine, model=model,
+        reponse=response, usage=usage_appel, fiabilite=fiabilite, avertissement=avertissement,
+    )
+    return response, None, fiabilite

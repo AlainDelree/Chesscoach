@@ -922,6 +922,64 @@ function _coachScrollReveal(history, el, toStart, allowPageScroll) {
   }
 }
 
+// Pastille de fiabilité (issue #87, point 5) : construit le petit badge
+// coloré (vert/orange/rouge, glyphe + texte, jamais la seule couleur) à
+// ajouter après le texte d'une réponse du coach — `fiabilite` est le dict
+// {couleur, raison, controles, alertes} transmis tel quel par le serveur
+// (coach_reliability.evaluer_fiabilite, via get_coach_response), jamais
+// recalculé côté client. Un clic/tap bascule l'affichage de la raison
+// complète (une phrase) ; sur desktop, le survol suffit aussi (CSS). Le
+// détail s'affiche dans le flux normal du document (jamais en overlay
+// positionné), pour ne jamais déborder à 390px/360px (cf. board.css).
+function _coachBuildFiabiliteBadge(fiabilite) {
+  const couleurs = { vert: "vert", orange: "orange", rouge: "rouge" };
+  const couleur = couleurs[fiabilite && fiabilite.couleur] || "orange";
+  const glyphes = { vert: "✓", orange: "!", rouge: "✕" };
+  const labels = { vert: "Fiabilité : OK", orange: "Fiabilité : prudence", rouge: "Fiabilité : attention" };
+
+  const wrap = document.createElement("div");
+  wrap.className = "coach-fiabilite-wrap";
+
+  const badge = document.createElement("button");
+  badge.type = "button";
+  badge.className = "coach-fiabilite-badge coach-fiabilite-" + couleur;
+
+  const glyph = document.createElement("span");
+  glyph.className = "coach-fiabilite-glyph";
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.textContent = glyphes[couleur];
+  badge.appendChild(glyph);
+
+  const label = document.createElement("span");
+  label.className = "coach-fiabilite-label";
+  label.textContent = labels[couleur];
+  badge.appendChild(label);
+
+  const detail = document.createElement("div");
+  detail.className = "coach-fiabilite-detail";
+  detail.textContent = (fiabilite && fiabilite.raison) || "";
+
+  badge.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const opening = !wrap.classList.contains("coach-fiabilite-open");
+    document.querySelectorAll(".coach-fiabilite-open").forEach((el) => {
+      if (el !== wrap) el.classList.remove("coach-fiabilite-open");
+    });
+    wrap.classList.toggle("coach-fiabilite-open", opening);
+  });
+
+  wrap.appendChild(badge);
+  wrap.appendChild(detail);
+  return wrap;
+}
+
+// Ferme toute pastille de fiabilité ouverte dès qu'on clique ailleurs dans
+// la page (même pattern que #eval-status-widget, controls.js/issue #82).
+document.addEventListener("click", (e) => {
+  if (e.target && e.target.closest && e.target.closest(".coach-fiabilite-wrap")) return;
+  document.querySelectorAll(".coach-fiabilite-open").forEach((el) => el.classList.remove("coach-fiabilite-open"));
+});
+
 // `allowPageScroll` (issue #67, défaut false) : à ne passer à true que pour
 // les réponses qu'Alain attend activement (réponse à une question tapée,
 // réponse à "Demander l'avis du coach") — pas pour les messages automatiques
@@ -931,7 +989,11 @@ function _coachScrollReveal(history, el, toStart, allowPageScroll) {
 // pédagogique/ouverture/finales, masqué dans le chat sur mobile par CSS
 // uniquement, cf. templates/index.html) sans dupliquer ni changer les données
 // envoyées à l'API (cette fonction ne touche jamais _coachHistory/socket.emit).
-function _coachRenderBubble(role, text, allowPageScroll, extraClass) {
+// `fiabilite` (issue #87, point 5, optionnel) : dict {couleur, raison, ...}
+// — ajoute la pastille de fiabilité après le texte, seulement pour les
+// réponses du coach qui en fournissent une (jamais pour un message
+// utilisateur ni une annonce automatique "je joue ...").
+function _coachRenderBubble(role, text, allowPageScroll, extraClass, fiabilite) {
   const history = document.getElementById("coach-history");
   if (!history) return;
   const empty = document.getElementById("coach-empty");
@@ -940,6 +1002,9 @@ function _coachRenderBubble(role, text, allowPageScroll, extraClass) {
   const isUser = role === "user";
   bubble.className = "coach-bubble " + (isUser ? "user" : "assistant") + (extraClass ? " " + extraClass : "");
   bubble.textContent = text;
+  if (!isUser && fiabilite && fiabilite.couleur) {
+    bubble.appendChild(_coachBuildFiabiliteBadge(fiabilite));
+  }
   history.appendChild(bubble);
   // Message d'Alain : comportement inchangé, on descend tout en bas (voir
   // son message envoyé). Réponse du coach : afficher le DÉBUT de la réponse
@@ -1066,7 +1131,7 @@ if (typeof socket !== "undefined") {
       _coachHistory.push({ role: "assistant", content: text });
       // Réponse à une question tapée par Alain : il l'attend, la page doit
       // défiler jusqu'à elle sur mobile (issue #67).
-      _coachRenderBubble("assistant", text, true);
+      _coachRenderBubble("assistant", text, true, undefined, data && data.fiabilite);
       // Alimente le tableau "Lignes du coach" du mode exercice (issue #58)
       // quand cette réponse arrive pendant un exercice actif — no-op pour
       // tout autre mode (fonction absente, ou exerciseActive faux).
@@ -1199,7 +1264,7 @@ if (typeof socket !== "undefined") {
     if (text) {
       // Réponse au bouton "Demander l'avis du coach" : Alain l'attend, la
       // page doit défiler jusqu'à elle sur mobile (issue #67).
-      _coachRenderBubble("assistant", text, true);
+      _coachRenderBubble("assistant", text, true, undefined, data && data.fiabilite);
       if (typeof exerciseOnCoachText === "function") exerciseOnCoachText(text);
       if (typeof gameCoachLinesOnCoachText === "function") gameCoachLinesOnCoachText(text);
     }

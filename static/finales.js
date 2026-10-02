@@ -610,7 +610,7 @@ if (typeof socket !== "undefined") {
   socket.on("finale_comment", (data) => {
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
-      _coachRenderBubble("assistant", text);
+      _coachRenderBubble("assistant", text, false, undefined, data && data.fiabilite);
       // Tableau "Lignes du coach" (issue #68) : alimenté aussi par le
       // commentaire automatique après chaque coup ("Commenter chaque coup"),
       // pas seulement par le chat libre/la demande ponctuelle (board.js).
