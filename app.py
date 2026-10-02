@@ -2530,6 +2530,14 @@ _opening_camp_alain: str | None = None
 _opening_in_book: bool = False
 
 
+@socketio.on("opening_list")
+def on_opening_list(_data):
+    """Retourne la liste des ouvertures connues (opening_book.py, issue #95
+    point 4), pour peupler le menu déroulant du panneau "Travail d'ouverture"
+    — même principe que finale_list/on_finale_list ci-dessous."""
+    emit("opening_list_response", {"openings": opening_book.get_known_openings()})
+
+
 @socketio.on("opening_suggestions")
 def on_opening_suggestions(_data):
     """Suggestions rapides de coups d'ouverture populaires à la position de

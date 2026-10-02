@@ -66,16 +66,33 @@ document.addEventListener("DOMContentLoaded", () => {
   _pedagogicMobileQuery.addEventListener("change", () => placePedagogicStartButtonsForViewport());
 });
 
+// Case "Commenter chaque coup" retirée de ce mode (issue #95, point 3) : la
+// partie pédagogique ne demande plus de commentaire automatique après chaque
+// coup — le bouton "Commenter la partie" en fin de partie et "Demander
+// l'avis du coach" en cours de partie suffisent. MODE_CAPS.pedagogic.hasComment
+// est passé à false (controls.js) pour masquer la case #shared-auto-comment
+// dans ce mode ; comme elle reste partagée avec les modes ouverture/finales
+// (qui la gardent), on ignore son état ici plutôt que de risquer de lire une
+// coche laissée active depuis un de ces modes.
 function pedagogicCommenterChaqueCoup() {
-  const cb = document.getElementById("shared-auto-comment");
-  return !!(cb && cb.checked);
+  return false;
 }
 
 function startPedagogicGame(camp) {
   ensureModeSwitchClean("pedagogic");
-  // Nouvelle partie (issue #64) : l'historique du chat envoyé à l'API repart
-  // de zéro, séparé à l'écran des échanges de la partie précédente.
-  if (typeof coachNewSegment === "function") coachNewSegment("Nouvelle partie");
+  // Nouvelle partie (issue #64, vidage complet depuis l'issue #95 point 7) :
+  // l'historique du chat envoyé à l'API repart de zéro ET l'affichage est
+  // intégralement vidé — comme un nouvel exercice (coachClear(), cf.
+  // exercise.js startExercise) plutôt qu'un simple trait séparateur
+  // (coachNewSegment) qui laissait l'ancien commentaire visible sans rien
+  // indiquer qu'il datait d'avant, sous un trait "Nouvelle partie" placé en
+  // dessous de lui (rapport de tests GSM d'Alain).
+  if (typeof coachClear === "function") coachClear();
+  // coachClear() (contrairement à coachNewSegment() utilisé auparavant ici)
+  // ne vide pas lui-même le tableau "Lignes du coach" du mode partie
+  // (gameCoachLinesReset, game_coach_lines.js) — appel explicite pour
+  // conserver ce même effet au démarrage d'une nouvelle partie.
+  if (typeof gameCoachLinesReset === "function") gameCoachLinesReset();
   // Issue #71 point 6 : le rapport d'analyse affiché (Bibliothèque/Revue)
   // n'a plus de rapport avec la partie qui démarre.
   if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
@@ -109,7 +126,8 @@ function abandonPedagogicGame() {
   showGameOverBanner(
     { gagnant: opposant, message: "Partie abandonnée par Alain — défaite." },
     pedagogicCampAlain,
-    () => analyserPartieDepuisPgn(_pedagogicGamePgnForAnalysis())
+    () => analyserPartieDepuisPgn(_pedagogicGamePgnForAnalysis()),
+    commenterPartiePedagogique
   );
   // Issue #65 point 5 : grise "Demander l'avis du coach" (askCoachAvailable,
   // controls.js) dès l'abandon, et déplace "Jouer les Blancs/Noirs" en haut
@@ -141,6 +159,17 @@ function reprendrePedagogicCoup() {
 
 function askPedagogicCoach() {
   if (!pedagogicActive || !pedagogicGame || pedagogicGameOver || pedagogicWaiting) return;
+  askCoachOnDemand(pedagogicGame.fen(), null, pedagogicCampAlain);
+}
+
+// Bouton "Commenter la partie" (issue #95, point 3), affiché par
+// showGameOverBanner une fois la partie terminée (fin normale, mat, nulle ou
+// abandon) à côté de "Analyser cette partie"/"Nouvelle partie" — même effet
+// que askPedagogicCoach() ci-dessus (demande un commentaire de la position au
+// coach), simplement accessible après la fin de partie où askPedagogicCoach()
+// se bloque volontairement (pedagogicGameOver).
+function commenterPartiePedagogique() {
+  if (!pedagogicGame) return;
   askCoachOnDemand(pedagogicGame.fen(), null, pedagogicCampAlain);
 }
 
@@ -286,7 +315,7 @@ if (typeof socket !== "undefined") {
       pedagogicGameOver = true;
       const statusEl = document.getElementById("pedagogic-status");
       if (statusEl) statusEl.textContent = (data.game_over_info && data.game_over_info.message) || "Partie terminée.";
-      showGameOverBanner(data.game_over_info, pedagogicCampAlain, () => analyserPartieDepuisPgn(_pedagogicGamePgnForAnalysis()));
+      showGameOverBanner(data.game_over_info, pedagogicCampAlain, () => analyserPartieDepuisPgn(_pedagogicGamePgnForAnalysis()), commenterPartiePedagogique);
       if (typeof updateSharedControlBar === "function") updateSharedControlBar();
       if (typeof placePedagogicStartButtonsForViewport === "function") placePedagogicStartButtonsForViewport();
       return;

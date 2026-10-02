@@ -260,6 +260,10 @@
 .eval-fill-black { background: #222;    width: 100%; flex: 1; transition: flex 0.4s ease; }
 .eval-fill-white { background: #e0e0e0; width: 100%; flex: 1; transition: flex 0.4s ease; }
 
+/* Grisage des contrôles sans effet pour la source choisie (issue #95, point 1
+   — ex. phase de la partie quand "Position précise" est sélectionnée). */
+.exercise-field-disabled { opacity: 0.45; pointer-events: none; }
+
 /* ── Panneau de chat avec le coach ── */
 .coach-drawer {
   display: none;
@@ -267,6 +271,10 @@
   gap: 8px;
   max-height: calc(100vh - 60px);
   overflow-y: auto;
+  /* Issue #95, point 6 : évite le chaînage de défilement vers la page (et le
+     rafraîchissement natif qu'il peut déclencher sur mobile) une fois cette
+     zone défilée jusqu'à son bord — défilement interne inchangé. */
+  overscroll-behavior-y: contain;
 }
 .coach-history {
   display: flex;
@@ -275,6 +283,7 @@
   overflow-y: auto;
   flex: 1;
   padding: 4px;
+  overscroll-behavior-y: contain;
 }
 .coach-input-row { display: flex; gap: 8px; align-items: flex-end; }
 .coach-send-btn  { margin: 0; padding: 8px 18px; font-size: 0.82rem; min-height: 0; }

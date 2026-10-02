@@ -24,6 +24,18 @@
        les styles des composants (plateau, historique, chat...) et les
        variables de palette --cc-*, pas l'agencement de la page qui les
        contient. */
+    /* Empêche le "tire pour rafraîchir" de Chrome/Android (issue #95, point 6)
+       — un défilement un peu trop loin vers le haut rechargeait toute la
+       page et faisait perdre la partie/l'exercice en cours. overscroll-
+       behavior-y:contain bloque uniquement l'effet de bord par défaut au
+       sommet/bas de la page (rafraîchissement natif, navigation "swipe
+       back") sans toucher au défilement normal (molette, glissement tactile
+       à l'intérieur de la page) ni au défilement interne des menus/feuilles
+       du bas (overlays position:fixed, pas d'enchaînement de défilement vers
+       body) — pur CSS, aucun gestionnaire tactile ajouté. */
+    html, body {
+      overscroll-behavior-y: contain;
+    }
     body {
       margin: 0;
       font-family: var(--cc-font-body);
@@ -851,6 +863,11 @@
         overflow-y: auto;
         flex: 1 1 auto;
         min-height: 0;
+        /* Issue #95, point 6 : empêche un défilement qui atteint le haut de
+           cette feuille de "déborder" vers le défilement de la page en
+           dessous (scroll chaining) et d'y déclencher le rafraîchissement
+           natif — la feuille défile normalement en son sein, inchangé. */
+        overscroll-behavior-y: contain;
       }
       .phase-sheet-title { font-family: var(--cc-font-heading); font-weight: 400; font-size: 1.4rem; color: var(--cc-text); margin: 0 0 14px; }
       .phase-sheet-label { font-family: var(--cc-font-body); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--cc-text-muted); margin-bottom: 8px; }
@@ -1286,12 +1303,24 @@
         font-size: 0.78rem;
         font-weight: 700;
       }
+      /* flex: 0 1 auto + min-width:0 + ellipsis (issue #95, point 3) : avec
+         l'ajout du bouton "Commenter la partie" en mode pédagogique, jusqu'à
+         trois boutons peuvent coexister sur cette même ligne (flex-wrap:
+         nowrap, voir #mobile-game-over-bar ci-dessus) — leurs largeurs
+         naturelles cumulées dépassaient alors la largeur de l'écran sur GSM
+         étroit (débordement horizontal constaté à 360px et 390px avec
+         Playwright), le texte flex:0 0 auto ne pouvant jamais rétrécir.
+         Peuvent désormais rétrécir (et tronquer avec une ellipse en dernier
+         recours) exactement comme #mobile-game-over-text déjà à côté. */
       #mobile-game-over-bar button {
-        flex: 0 0 auto;
+        flex: 0 1 auto;
+        min-width: 0;
         font-size: 0.72rem;
         min-height: 0;
         padding: 6px 8px;
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       /* Onglets Coach / Lignes / Analyse / Coups (point 1) — un seul panneau
@@ -1650,9 +1679,22 @@
            que l'ancien bandeau, inchangé). "Nouvelle partie" (issue #77
            point 4) ramène l'écran à l'état avant-partie du mode actif, sans
            recharger la page (mobileNewGameFromBanner, mobile_game.js). -->
+      <!-- Libellés raccourcis ("Analyser"/"Commenter", issue #95 point 3) par
+           rapport au grand bandeau desktop ("Analyser cette partie"/
+           "Commenter la partie", board.js showGameOverBanner) : avec jusqu'à
+           trois boutons sur cette même ligne compacte (mode pédagogique),
+           les libellés complets débordaient horizontalement de la page à
+           360-390px de large (repéré avec Playwright) avant ce
+           raccourcissement — "Nouvelle partie" reste complet, déjà bien plus
+           court. -->
       <div id="mobile-game-over-bar">
         <span id="mobile-game-over-text"></span>
-        <button type="button" id="mobile-game-over-analyse-btn">Analyser cette partie</button>
+        <button type="button" id="mobile-game-over-analyse-btn">Analyser</button>
+        <!-- "Commenter" (issue #95, point 3) : masqué par défaut, affiché
+             par _showMobileGameOverBar (board.js) seulement quand l'appelant
+             fournit onCommenter (pedagogic.js uniquement) — même principe
+             que "Analyser" ci-dessus. -->
+        <button type="button" id="mobile-game-over-comment-btn" style="display:none;">Commenter</button>
         <button type="button" id="mobile-game-over-newgame-btn" onclick="mobileNewGameFromBanner()">Nouvelle partie</button>
       </div>
     </div>
@@ -1849,22 +1891,35 @@
                opening.js) / #opening-extra-controls (point 8, même choix que
                #free-extra-controls) : deux blocs déplacés indépendamment sur
                mobile en mode jeu, sans dupliquer la logique de démarrage.
-               #opening-name-input/#opening-status vivent ICI (issue #77
-               point 6) et non dans #opening-extra-controls : ce sont les
-               seuls contrôles réellement nécessaires pour démarrer (saisir un
-               nom d'ouverture, lire le message d'erreur si vide,
-               startOpeningGame() dans opening.js) — les laisser dans le menu
-               "..." (fermé par défaut sur mobile) rendait "Jouer les Blancs/
+               #opening-select/#opening-status vivent ICI (issue #77
+               point 6 ; #opening-select remplace l'ancien champ texte libre,
+               issue #95 point 4) et non dans #opening-extra-controls : ce
+               sont les seuls contrôles réellement nécessaires pour démarrer
+               (choisir une ouverture dans la liste, lire le message d'erreur
+               si aucune n'est choisie, startOpeningGame() dans opening.js) —
+               les laisser dans le menu "..." (fermé par défaut sur mobile)
+               rendait "Jouer les Blancs/
                Noirs" silencieusement sans effet pour qui n'avait pas pensé à
                l'ouvrir d'abord (rapport de clôture : "l'écran ne réagit à
                quasi rien"). Les suggestions rapides restent dans le menu
                "...", elles ne sont qu'un raccourci facultatif. -->
+          <!-- Liste déroulante des ouvertures (issue #95, point 4) : remplace
+               la saisie libre du nom — même composant visuel que
+               #finale-select (templates/index.html, panneau Finales ci-
+               dessous), peuplé par populateOpeningSelect() (opening.js) à
+               partir d'opening_book.get_known_openings() (app.py
+               on_opening_list). Le choix du camp reste séparé (deux boutons)
+               plutôt qu'un démarrage immédiat au choix comme pour les
+               finales : contrairement à une finale, une ouverture nécessite
+               encore de préciser la couleur jouée. -->
           <div id="opening-start-buttons" class="mode-start-buttons" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-            <input id="opening-name-input" type="text" placeholder="Nom de l'ouverture (ex. Défense française)" style="flex:1 1 100%; min-width:180px;">
+            <select id="opening-select" style="flex:1 1 100%; min-width:180px;">
+              <option value="">— Choisir une ouverture —</option>
+            </select>
             <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
             <button onclick="startOpeningGame('noirs')">Jouer les Noirs</button>
             <div id="opening-status" style="flex:1 1 100%; font-size:0.82rem; color:var(--cc-text-muted);"></div>
-            <div class="mode-start-hint">Choisis ta couleur pour commencer</div>
+            <div class="mode-start-hint">Choisis une ouverture puis ta couleur pour commencer</div>
           </div>
           <div id="opening-extra-controls">
             <!-- Suggestions rapides (issue #27) : coups les plus pondérés du
@@ -2085,7 +2140,13 @@
           </div>
         </div>
         <div class="coach-input-row">
-          <textarea id="coach-input" placeholder="Votre question..." rows="3" style="flex:1; resize:vertical; font:inherit;"></textarea>
+          <!-- Hauteur doublée (issue #95, point 2 : rows 3 -> 6) — la zone de
+               saisie du coach était jugée trop petite sur mobile comme sur
+               grand écran. Sans effet sur la taille du plateau : #coach-column
+               et #board-column sont deux colonnes séparées (desktop), et sur
+               mobile le plateau reste dans #board-sticky-wrap, hors du flux de
+               la zone à onglets où vit ce textarea. -->
+          <textarea id="coach-input" placeholder="Votre question..." rows="6" style="flex:1; resize:vertical; font:inherit;"></textarea>
           <button id="coach-send-btn" class="coach-send-btn btn-filled" onclick="coachSend()">Envoyer</button>
           <div id="coach-spinner" class="coach-spinner"></div>
         </div>
@@ -2156,12 +2217,18 @@
   <div id="exercise-phase-sheet" class="phase-sheet" role="dialog" aria-label="Nouvel exercice">
    <div class="phase-sheet-scroll" id="exercise-phase-sheet-scroll">
     <h3 class="phase-sheet-title">Nouvel exercice</h3>
+    <!-- #exercise-phase-section (issue #95, point 1) : grisée par
+         _exerciseUpdateSourceDependentUI (exercise.js) quand la source
+         "Position précise" est choisie — la phase est alors ignorée côté
+         serveur (app.py), seul le FEN collé compte. -->
+    <div id="exercise-phase-section">
     <div class="phase-sheet-label">Phase de la partie</div>
     <div class="phase-sheet-options" id="exercise-phase-options">
       <button type="button" class="phase-pill" data-phase="toutes" onclick="exercisePhaseSheetPick('toutes')">Toutes les phases</button>
       <button type="button" class="phase-pill" data-phase="ouverture" onclick="exercisePhaseSheetPick('ouverture')">Ouverture</button>
       <button type="button" class="phase-pill" data-phase="milieu_de_partie" onclick="exercisePhaseSheetPick('milieu_de_partie')">Milieu de partie</button>
       <button type="button" class="phase-pill" data-phase="finale" onclick="exercisePhaseSheetPick('finale')">Finale</button>
+    </div>
     </div>
     <!-- Sélecteur de source (issue #78, mobile ; "Position précise" ajoutée
          par l'issue #83) : pilote le même <select id="exercise-source-select">

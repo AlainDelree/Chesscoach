@@ -74,12 +74,11 @@ def _afficher_resume(entree: dict, index_journal: dict | None = None) -> None:
     print(f"id={entree.get('id', '?')}  {entree.get('horodatage', '?')}  mode={entree.get('mode_origine') or '?'}{traite}")
     if entree.get("fen"):
         print(f"Position (FEN) : {entree['fen']}")
-    if entree.get("move"):
-        print(f"Coup : {entree['move']}")
+    journal = _trouver_entree_journal(entree.get("log_id"), index_journal)
+    print(_ligne_coup_ou_question(entree, journal))
     if entree.get("commentaire"):
         print(f"Commentaire d'Alain : {entree['commentaire']}")
     print(f"Réponse signalée : {_tronquer(entree.get('reponse'))}")
-    journal = _trouver_entree_journal(entree.get("log_id"), index_journal)
     for ligne in _lignes_pastille(journal):
         print(ligne)
 
@@ -113,6 +112,24 @@ def _trouver_entree_journal(log_id, index_journal: dict | None = None) -> dict |
     if index_journal is None:
         index_journal = _charger_index_journal()
     return index_journal.get(log_id)
+
+
+def _ligne_coup_ou_question(entree: dict, journal: dict | None) -> str:
+    """Ligne "Coup concerné"/"Question posée" (issue #95, point 8) : une
+    réponse du coach répond soit à un coup joué (mode partie/exercice...),
+    soit à une question libre d'Alain (chat) — jamais les deux à la fois.
+    Pour un coup, ligne inchangée ("Coup concerné : ..."). Pour une question
+    (entree["move"] vide), affiche la dernière question d'Alain retrouvée
+    dans l'entrée du journal reliée par log_id (lire_journal_coach.
+    _derniere_question, déjà utilisée par lire_journal_coach.py) plutôt que
+    l'ancien "Coup concerné : (aucun)", qui ne disait rien d'utile sur ce qui
+    avait motivé la réponse signalée ; "(aucune question)" si même la
+    question est introuvable (réponse non journalisée, archive déjà purgée,
+    ou réponse qui ne suit réellement aucune question)."""
+    if entree.get("move"):
+        return f"Coup concerné : {entree['move']}"
+    question = lire_journal_coach._derniere_question(journal.get("messages")) if journal else ""
+    return f"Question posée par Alain : {question}" if question else "Question posée par Alain : (aucune question)"
 
 
 def _lignes_pastille(journal: dict | None) -> list:
@@ -187,15 +204,15 @@ def _ligne_stockfish(fen: str) -> str | None:
 
 
 def _texte_pret_a_coller(entree: dict) -> str:
+    journal = _trouver_entree_journal(entree.get("log_id"))
     lignes = [
         "=== Signalement d'une réponse du coach (ChessCoach) ===",
         f"Commentaire d'Alain : {entree.get('commentaire') or '(aucun)'}",
         f"Mode : {entree.get('mode_origine') or '(inconnu)'}",
         f"FEN : {entree.get('fen') or '(inconnue)'}",
-        f"Coup concerné : {entree.get('move') or '(aucun)'}",
+        _ligne_coup_ou_question(entree, journal),
         f"Réponse du coach : {entree.get('reponse') or ''}",
     ]
-    journal = _trouver_entree_journal(entree.get("log_id"))
     lignes += _lignes_pastille(journal)
     if journal:
         contexte = lire_journal_coach._contexte_allege(journal.get("context") or {})

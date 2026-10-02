@@ -470,7 +470,11 @@ if (typeof socket !== "undefined") {
     renderFinaleBoard(lastFrom, lastTo);
     updateFinaleStatus();
 
-    _coachRenderBubble("assistant", `Finale "${data.nom}" chargée. ${data.description || ""}`, false, undefined, null, { mode_origine: "finales" });
+    // extraClass "coach-bubble-announce" (issue #95, point 5) : message
+    // d'annonce envoyé par l'application au démarrage, pas une réponse à une
+    // demande d'Alain — ne doit jamais à lui seul déclencher le plateau
+    // réduit mobile (cf. _coachRenderBubble, board.js).
+    _coachRenderBubble("assistant", `Finale "${data.nom}" chargée. ${data.description || ""}`, false, "coach-bubble-announce", null, { mode_origine: "finales" });
   });
 
   socket.on("finale_demo_started", (data) => {
@@ -509,7 +513,9 @@ if (typeof socket !== "undefined") {
     renderFinaleBoard();
     updateFinaleStatus();
 
-    _coachRenderBubble("assistant", `Démonstration "${data.nom}" chargée — Stockfish joue les deux camps, un demi-coup à la fois ("Coup suivant"). ${data.description || ""}`, false, undefined, null, { mode_origine: "finales" });
+    // extraClass "coach-bubble-announce" (issue #95, point 5) : voir
+    // commentaire équivalent ci-dessus (finale_started).
+    _coachRenderBubble("assistant", `Démonstration "${data.nom}" chargée — Stockfish joue les deux camps, un demi-coup à la fois ("Coup suivant"). ${data.description || ""}`, false, "coach-bubble-announce", null, { mode_origine: "finales" });
   });
 
   socket.on("finale_stockfish_move", (data) => {

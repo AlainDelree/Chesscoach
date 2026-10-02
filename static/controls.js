@@ -36,7 +36,12 @@ let activeMode = null; // null | "free" | "pedagogic" | "opening" | "finale" | "
 // cf. rapport de clôture, limite documentée plutôt que corrigée ici.
 const MODE_CAPS = {
   free:      { abandon: () => abandonFreeGame(),         reprendre: null,                            askCoach: () => askFreeCoach(),       askCoachAvailable: () => freePlayActive && !!freeGame && !freeGameOver,           hasComment: false },
-  pedagogic: { abandon: () => abandonPedagogicGame(),     reprendre: () => reprendrePedagogicCoup(),  askCoach: () => askPedagogicCoach(),  askCoachAvailable: () => pedagogicActive && !!pedagogicGame && !pedagogicGameOver, hasComment: true  },
+  // hasComment: false (issue #95, point 3) : la case "Commenter chaque coup"
+  // est retirée du mode pédagogique — bouton "Commenter la partie" (fin de
+  // partie) et "Demander l'avis du coach" (en cours) suffisent. Toujours
+  // présente dans les modes opening/finale ci-dessous, hors périmètre de ce
+  // point.
+  pedagogic: { abandon: () => abandonPedagogicGame(),     reprendre: () => reprendrePedagogicCoup(),  askCoach: () => askPedagogicCoach(),  askCoachAvailable: () => pedagogicActive && !!pedagogicGame && !pedagogicGameOver, hasComment: false },
   opening:   { abandon: () => abandonOpeningGame(),       reprendre: () => reprendreOpeningCoup(),    askCoach: () => askOpeningCoach(),    askCoachAvailable: () => openingActive && !!openingGame && !openingGameOver,       hasComment: true  },
   finale:    { abandon: () => abandonFinaleGame(),        reprendre: () => reprendreFinaleCoup(),     askCoach: () => askFinaleCoach(),     askCoachAvailable: () => finaleActive && !!finaleGame && !finaleGameOver,          hasComment: true  },
   // askCoachAvailable (issue #79, point 4a) : exige désormais un verdict

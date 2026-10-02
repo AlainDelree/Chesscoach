@@ -220,6 +220,14 @@ function _exerciseCategorieSave(value) {
 // pour "position_precise". Appelée au chargement de la page, à chaque
 // changement du sélecteur de source (desktop) et à chaque choix de source
 // dans la feuille mobile (exerciseSourceSheetPick) ou ouverture de celle-ci.
+//
+// Phase grisée pour "position_precise" (issue #95, point 1) : côté serveur
+// (app.py, on_exercise_new/_on_exercise_new_position_precise), la phase est
+// purement ignorée dès que la source est "Position précise" — seul le FEN
+// collé compte, la position précise prime toujours sur la phase. Avant ce
+// correctif, le sélecteur de phase restait affiché et modifiable en même
+// temps que le champ FEN, laissant croire à tort qu'il influençait encore
+// l'exercice (rapport de tests GSM d'Alain).
 function _exerciseUpdateSourceDependentUI() {
   const source = exerciseSourceFiltre();
   const showCategorie = source === "lichess";
@@ -239,6 +247,15 @@ function _exerciseUpdateSourceDependentUI() {
   const fenRowMobile = document.getElementById("exercise-fen-mobile-row");
   if (fenRowMobile) fenRowMobile.style.display = showFen ? "block" : "none";
   if (!showFen) _exerciseShowFenError("");
+
+  const phaseSelect = document.getElementById("exercise-phase-select");
+  if (phaseSelect) {
+    phaseSelect.disabled = showFen;
+    phaseSelect.classList.toggle("exercise-field-disabled", showFen);
+    phaseSelect.title = showFen ? "Ignorée : la position précise (FEN) prime toujours sur la phase." : "";
+  }
+  const phaseSectionMobile = document.getElementById("exercise-phase-section");
+  if (phaseSectionMobile) phaseSectionMobile.classList.toggle("exercise-field-disabled", showFen);
 }
 
 // ── Champ FEN de la « Position précise » (issue #83) ────────────────────────
