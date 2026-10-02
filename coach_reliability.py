@@ -98,6 +98,21 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
     identifiée ; les alertes qui survivent journalisent désormais le nombre
     de lectures valides retenues et leur résultat (ex. "3 lecture(s) valide
     (s) : 0, -3, 3"), pour juger après coup un éventuel faux positif.
+  - un quatrième contrôle (issue #98, cas réel : une réponse pourtant déjà
+    corrigée par la relance automatique affirmait encore "après Be5, ton
+    fou adverse attaque la tour", alors que le fou noir en e5 n'attaque pas
+    la tour blanche en e3, cf. detecter_attaque_defense_incoherente) vérifie
+    une phrase simple affirmant qu'une pièce attaque ou défend une autre,
+    contredite par TOUTES les lectures valides de la position concernée
+    (python-chess, Board.attacks) — les deux pièces doivent être
+    identifiables sans ambiguïté (case citée, mot de couleur "adverse"/
+    "noir"/"blanc"/"ton"/"ta"/"tes", ou pièce UNIQUE de ce type sur la
+    position essayée), sinon la phrase n'est jamais contrôlée (même
+    prudence que le reste du module). Gravité "orange" par défaut, "rouge"
+    seulement si un connecteur de justification de verdict suit à proximité
+    ou si la même affirmation se répète dans le texte — heuristique
+    volontairement approximative, documentée en détail au-dessus de
+    detecter_attaque_defense_incoherente.
 """
 
 import logging
@@ -1307,10 +1322,344 @@ def detecter_bilan_materiel_annonce(texte: str, candidats: list) -> list:
     return alertes
 
 
+# ── Phrases d'attaque/de défense entre deux pièces (issue #98) ─────────────
+# Constat ayant motivé cet ajout (cas réel, re3, essai 5 — même position que
+# les contrôles d'échange ci-dessus) : la réponse corrigée par la relance
+# automatique affirmait quand même "après Be5, ton fou adverse attaque la
+# tour", alors que le fou noir en e5 n'attaque géométriquement PAS la tour
+# blanche en e3 (il attaque a1, b2, c3, c7, d4, d6, f4, f6, g3, g7, h2, h8,
+# vérifié avec python-chess) — aucun contrôle existant ne vérifie une
+# affirmation d'attaque ou de défense entre deux pièces nommées.
+#
+# Portée volontairement limitée à une forme de phrase SIMPLE, active
+# ("<pièce1> attaque/défend <pièce2>") ou passive ("<pièce2> est
+# attaqué(e)/défendu(e) par <pièce1>"), reconnue par _ATTAQUE_DEFENSE_ACTIF_RE/
+# _ATTAQUE_DEFENSE_PASSIF_RE — une tournure plus élaborée (relative,
+# énumération de plusieurs pièces...) échappe à ce contrôle (faux négatif
+# assumé, même philosophie que le reste du module).
+#
+# Identification des deux pièces (type + couleur + case si possible) :
+#   - le type est l'un des 6 noms de pièce français (dame/tour/fou/cavalier/
+#     pion/roi, singulier ou pluriel) ;
+#   - la couleur n'est reconnue que via les mots explicitement cités par
+#     l'issue : "adverse" (camp opposé au camp d'Alain, cf. camp_alain),
+#     "noir(e)(s)"/"blanc(he)(s)" (couleur absolue), "ton"/"ta"/"tes" (camp
+#     d'Alain lui-même) — "adverse" l'emporte sur "ton"/"ta" si les deux sont
+#     accolés à la même pièce ("ton fou adverse", cas réel ci-dessus : la
+#     couleur retenue est l'adversaire d'Alain, pas Alain) ;
+#   - la case, si citée directement après la pièce (avec ou sans "en"/"sur"
+#     entre les deux, ex. "le pion h2" ou "le pion en h2") sert à vérifier/
+#     compléter la couleur plutôt qu'à la deviner (cf. _resoudre_piece_
+#     attaque_defense) ;
+#   - si ni couleur ni case ne permettent de trancher, la pièce n'est
+#     identifiée sans ambiguïté QUE s'il n'existe qu'UNE SEULE pièce de ce
+#     type, toutes couleurs confondues, sur la position essayée (résolution
+#     par défaut) — sinon (plusieurs pièces de ce type possibles), la pièce
+#     n'est pas identifiable : la phrase entière n'est jamais signalée
+#     (prudence explicitement demandée par l'issue).
+#
+# Position(s) essayée(s) (même ordre de priorité que demandé par l'issue) :
+#   - si la phrase est précédée, dans la même proposition (bornée par la
+#     première fin de phrase rencontrée en remontant, cf. _fenetre_clouage),
+#     d'une citation "après <coup(s)>" (ex. "après Be5,"), SEULES les
+#     positions obtenues en jouant ce(s) coup(s) depuis chacune des positions
+#     de `candidats` sont essayées (lecture scopée explicitement par le
+#     texte) — si aucune ne permet de jouer ce(s) coup(s), rien n'est
+#     signalé (la citation elle-même est hors de portée, cf. detecter_suites_
+#     illegales qui a ce rôle) ;
+#   - sinon, toutes les positions de `candidats` (position de départ,
+#     position actuelle, après coup proposé/réel/meilleur, lignes PV...) sont
+#     essayées, comme pour les autres contrôles de ce module.
+# Une incohérence n'est signalée que si TOUTES les lectures valides
+# (positions où les deux pièces sont identifiables sans ambiguïté)
+# contredisent l'affirmation — une seule lecture cohérente suffit à ne rien
+# signaler, et l'absence de toute lecture valide n'est jamais signalée non
+# plus (même tolérance que le reste du module).
+#
+# Négation ("le fou n'attaque pas la tour") : la négation française place
+# "ne"/"n'" directement avant le verbe, ce qui empêche structurellement
+# _ATTAQUE_DEFENSE_ACTIF_RE/_PASSIF_RE de reconnaître la forme verbale
+# attendue (adjacence stricte pièce+espace+verbe) — aucune règle de négation
+# dédiée n'est donc nécessaire pour cette forme. Reste explicitement exclue
+# une hypothèse introduite par "si" juste avant la pièce sujet (même
+# _SI_HYPOTHETIQUE_RE que le reste du module) : "si le fou attaque la tour"
+# emploie bien la forme verbale reconnue (présent de l'indicatif), sans
+# qu'aucune négation ne la bloque.
+#
+# Gravité ("orange" par défaut, "rouge" si l'affirmation est centrale — un
+# connecteur de justification de verdict comme "donc"/"c'est pourquoi" suit
+# la phrase à proximité — ou répétée au moins deux fois dans le même texte
+# avec la même paire pièce+couleur+relation) : heuristique volontairement
+# approximative (contrairement aux seuils numériques des contrôles
+# d'échange ci-dessus), documentée comme telle — une phrase centrale sans
+# connecteur explicite peut donc rester "orange" à tort (faux négatif de
+# gravité, jamais de faux positif de détection).
+_PIECE_MOD_RE = r"adverse\w*|blancs?|blanches?|noirs?|noires?"
+_PIECE_CASE_RE = r"(?:\s+(?:(?:en|sur)\s+)?([a-h][1-8])\b)?"
+
+_ATTAQUE_DEFENSE_ACTIF_RE = re.compile(
+    r"\b(?:(?P<p1_ton>ton|ta|tes)\s+)?"
+    r"(?P<p1_type>dames?|tours?|fous?|cavaliers?|pions?|rois?)"
+    rf"(?:\s+(?P<p1_mod>{_PIECE_MOD_RE}))?"
+    rf"(?:\s+(?:(?:en|sur)\s+)?(?P<p1_case>[a-h][1-8])\b)?"
+    r"\s+(?P<verbe>attaques?|attaquent|d[ée]fends?|d[ée]fendent)\s+"
+    r"(?:(?:le|la|les)\s+)?(?:(?P<p2_ton>ton|ta|tes)\s+)?"
+    r"(?P<p2_type>dames?|tours?|fous?|cavaliers?|pions?|rois?)"
+    rf"(?:\s+(?P<p2_mod>{_PIECE_MOD_RE}))?"
+    rf"(?:\s+(?:(?:en|sur)\s+)?(?P<p2_case>[a-h][1-8])\b)?",
+    re.IGNORECASE,
+)
+_ATTAQUE_DEFENSE_PASSIF_RE = re.compile(
+    r"\b(?:(?:le|la|les)\s+)?(?:(?P<p2_ton>ton|ta|tes)\s+)?"
+    r"(?P<p2_type>dames?|tours?|fous?|cavaliers?|pions?|rois?)"
+    rf"(?:\s+(?P<p2_mod>{_PIECE_MOD_RE}))?"
+    rf"(?:\s+(?:(?:en|sur)\s+)?(?P<p2_case>[a-h][1-8])\b)?"
+    r"\s+(?:est|sont)\s+(?P<verbe>attaqu[ée]e?s?|d[ée]fendue?s?)\s+par\s+"
+    r"(?:(?:le|la|les)\s+)?(?:(?P<p1_ton>ton|ta|tes)\s+)?"
+    r"(?P<p1_type>dames?|tours?|fous?|cavaliers?|pions?|rois?)"
+    rf"(?:\s+(?P<p1_mod>{_PIECE_MOD_RE}))?"
+    rf"(?:\s+(?:(?:en|sur)\s+)?(?P<p1_case>[a-h][1-8])\b)?",
+    re.IGNORECASE,
+)
+
+_APRES_CITATION_RE = re.compile(r"\bapr[eè]s\s+", re.IGNORECASE)
+_FENETRE_APRES_CITATION = 80
+
+_CONNECTEUR_VERDICT_RE = re.compile(
+    r"\b(donc|c'est pourquoi|ce qui (?:explique|justifie)|voil[àa] pourquoi|"
+    r"d'o[uù]|par cons[ée]quent)\b",
+    re.IGNORECASE,
+)
+_FENETRE_CONNECTEUR_VERDICT = 100
+
+
+def _camp_alain_chess(camp_alain: str):
+    if camp_alain == "blancs":
+        return chess.WHITE
+    if camp_alain == "noirs":
+        return chess.BLACK
+    return None
+
+
+def _resoudre_couleur_attaque_defense(mod: str, ton: str, camp_alain_couleur) -> object:
+    """Résout la couleur d'une pièce mentionnée dans une phrase d'attaque/
+    défense depuis les seuls indices TEXTUELS (jamais depuis la position —
+    cf. _resoudre_piece_attaque_defense pour le repli sur la position) :
+    "adverse" (camp opposé à camp_alain_couleur) l'emporte sur "ton"/"ta"/
+    "tes" (camp_alain_couleur lui-même) si les deux sont présents ; "noir(e)
+    (s)"/"blanc(he)(s)" donnent directement une couleur absolue. Retourne
+    None si aucun indice n'est présent, ou si "adverse"/"ton" est présent
+    mais camp_alain_couleur est inconnu (impossible de résoudre sans le camp
+    d'Alain)."""
+    if mod:
+        m = mod.lower()
+        if m.startswith("adverse"):
+            return None if camp_alain_couleur is None else not camp_alain_couleur
+        if m.startswith("blanc"):
+            return chess.WHITE
+        if m.startswith("noir"):
+            return chess.BLACK
+    if ton:
+        return None if camp_alain_couleur is None else camp_alain_couleur
+    return None
+
+
+def _resoudre_piece_attaque_defense(piece_type: int, couleur_texte, case_citee, board: "chess.Board"):
+    """Résout la case ET la couleur d'une pièce (type `piece_type`) citée
+    dans une phrase d'attaque/défense, sur `board` (issue #98) :
+      - case_citee connue : la pièce RÉELLEMENT présente sur cette case doit
+        être du type attendu (et de la couleur attendue si `couleur_texte`
+        est connu) — la case est alors AUTORITAIRE, elle peut donner la
+        couleur même si le texte n'en citait aucune ;
+      - sinon, couleur_texte connue : la pièce doit être la SEULE de ce type
+        ET cette couleur sur `board` ;
+      - sinon (ni case ni couleur) : la pièce doit être la SEULE de ce type,
+        TOUTES COULEURS confondues, sur `board` — résolution par défaut
+        tant qu'elle reste sans ambiguïté (cf. cas réel "la tour", issue
+        #98 : une seule tour sur l'échiquier après Re3 Be5, donc résolue
+        sans qu'aucun mot de couleur ne soit cité).
+    Retourne (case: int, couleur: bool) si résolu sans ambiguïté, None
+    sinon (cette position ne fournit simplement pas de lecture pour cette
+    pièce — pas une preuve de contradiction, cf. appelant)."""
+    if case_citee is not None:
+        p = board.piece_at(case_citee)
+        if p is None or p.piece_type != piece_type:
+            return None
+        if couleur_texte is not None and p.color != couleur_texte:
+            return None
+        return (case_citee, p.color)
+    if couleur_texte is not None:
+        cases = board.pieces(piece_type, couleur_texte)
+        if len(cases) == 1:
+            return (next(iter(cases)), couleur_texte)
+        return None
+    cases_blanches = board.pieces(piece_type, chess.WHITE)
+    cases_noires = board.pieces(piece_type, chess.BLACK)
+    if len(cases_blanches) + len(cases_noires) == 1:
+        if cases_blanches:
+            return (next(iter(cases_blanches)), chess.WHITE)
+        return (next(iter(cases_noires)), chess.BLACK)
+    return None
+
+
+def _coups_apres_citation_proche(texte: str, position: int) -> list:
+    """Cherche, dans les _FENETRE_APRES_CITATION caractères qui précèdent
+    `position` (bornés par la première fin de phrase rencontrée en
+    remontant, même principe que _coup_precedent_cite), la DERNIÈRE citation
+    "après <coup(s)>" (ex. "après Be5,") — retourne la liste de coups SAN
+    cités juste après ce mot (même regroupement que _extraire_suites), []
+    si aucune trouvée dans cette fenêtre."""
+    debut = max(0, position - _FENETRE_APRES_CITATION)
+    morceau = texte[debut:position]
+    derniere_frontiere = None
+    for mm in re.finditer(r"[.\n!?]", morceau):
+        derniere_frontiere = mm.end()
+    if derniere_frontiere is not None:
+        morceau = morceau[derniere_frontiere:]
+    occurrences = list(_APRES_CITATION_RE.finditer(morceau))
+    if not occurrences:
+        return []
+    reste = morceau[occurrences[-1].end():]
+    candidats_coups = [
+        mm for mm in _SAN_RE.finditer(reste)
+        if not _CASE_SEULE_RE.match(mm.group(1))
+    ]
+    coups = []
+    fin_courante = 0
+    for mm in candidats_coups:
+        if coups and not _SEPARATEUR_SUITE_RE.match(reste[fin_courante:mm.start()]):
+            break
+        coups.append(mm.group(1))
+        fin_courante = mm.end()
+    return coups
+
+
+def _candidats_apres_citation(coups: list, candidats: list) -> list:
+    resultats = []
+    for label, board in candidats:
+        board_apres = _jouer_suite(coups, board)
+        if board_apres is not None:
+            resultats.append((f"après {' '.join(coups)} depuis {label}", board_apres))
+    return resultats
+
+
+_PIECES_FEMININES = {chess.QUEEN, chess.ROOK}
+
+
+def _decrire_piece_genre(piece_type: int, couleur: bool) -> str:
+    """"le fou noir"/"la tour blanche" — accord de genre pour le journal
+    (issue #98, purement cosmétique, aucun impact sur la détection)."""
+    nom = _NOM_PIECE_AFFICHAGE[piece_type]
+    feminin = piece_type in _PIECES_FEMININES
+    article = "la" if feminin else "le"
+    adjectif = ("blanche" if feminin else "blanc") if couleur == chess.WHITE else "noire" if feminin else "noir"
+    return f"{article} {nom} {adjectif}"
+
+
+def detecter_attaque_defense_incoherente(texte: str, candidats: list, camp_alain: str = "") -> list:
+    """Détecte une phrase simple, active ("<pièce1> attaque/défend <pièce2>")
+    ou passive ("<pièce2> est attaqué(e)/défendu(e) par <pièce1>"), issue
+    #98, dont TOUTES les lectures valides (positions où les deux pièces sont
+    identifiables sans ambiguïté, cf. _resoudre_piece_attaque_defense)
+    contredisent la relation géométrique réelle (python-chess, Board.attacks)
+    — une "défense" exige en outre que les deux pièces soient du MÊME camp
+    (sinon ce n'est pas une défense, quelle que soit la géométrie). Cas de
+    référence ayant motivé ce contrôle : "après Be5, ton fou adverse attaque
+    la tour" est faux (le fou noir en e5 n'attaque pas la tour blanche en
+    e3) — cf. commentaire ci-dessus pour la portée complète (identification
+    des pièces, positions essayées, négation/hypothèse, gravité).
+
+    `camp_alain` : "blancs"/"noirs" (même convention que le reste du projet),
+    "" si inconnu — sert uniquement à résoudre "adverse"/"ton"/"ta"/"tes"
+    (cf. _resoudre_couleur_attaque_defense) ; sans lui, ces mots ne résolvent
+    aucune couleur (ni preuve ni contradiction, la pièce reste simplement
+    inidentifiable par ce biais).
+
+    Retourne une liste de dicts {"type": "attaque_defense_incoherente",
+    "gravite": "orange"/"rouge", "detail": str}."""
+    if not candidats:
+        return []
+    camp_alain_couleur = _camp_alain_chess(camp_alain)
+    alertes = []
+    compte_repetition: dict = {}
+
+    for regex in (_ATTAQUE_DEFENSE_ACTIF_RE, _ATTAQUE_DEFENSE_PASSIF_RE):
+        for m in regex.finditer(texte):
+            p1_type = _NOM_PIECE_TYPE.get(m.group("p1_type").lower())
+            p2_type = _NOM_PIECE_TYPE.get(m.group("p2_type").lower())
+            if p1_type is None or p2_type is None:
+                continue
+
+            avant = texte[max(0, m.start() - 40):m.start()]
+            if _SI_HYPOTHETIQUE_RE.search(avant):
+                continue
+
+            verbe = m.group("verbe").lower()
+            relation = "attaque" if verbe.startswith("attaqu") else "defend"
+            couleur1 = _resoudre_couleur_attaque_defense(m.group("p1_mod"), m.group("p1_ton"), camp_alain_couleur)
+            couleur2 = _resoudre_couleur_attaque_defense(m.group("p2_mod"), m.group("p2_ton"), camp_alain_couleur)
+            case1 = chess.parse_square(m.group("p1_case").lower()) if m.group("p1_case") else None
+            case2 = chess.parse_square(m.group("p2_case").lower()) if m.group("p2_case") else None
+
+            coups_apres = _coups_apres_citation_proche(texte, m.start())
+            if coups_apres:
+                candidats_phrase = _candidats_apres_citation(coups_apres, candidats)
+                if not candidats_phrase:
+                    continue
+            else:
+                candidats_phrase = candidats
+
+            lectures = []
+            for _label, board in candidats_phrase:
+                r1 = _resoudre_piece_attaque_defense(p1_type, couleur1, case1, board)
+                r2 = _resoudre_piece_attaque_defense(p2_type, couleur2, case2, board)
+                if r1 is None or r2 is None:
+                    continue
+                sq1, col1 = r1
+                sq2, col2 = r2
+                if relation == "attaque":
+                    vrai = sq2 in board.attacks(sq1)
+                else:
+                    vrai = col1 == col2 and sq2 in board.attacks(sq1)
+                lectures.append((sq1, col1, sq2, col2, vrai))
+
+            if not lectures or any(l[4] for l in lectures):
+                continue
+
+            sq1_0, col1_0, sq2_0, col2_0, _ = lectures[0]
+            desc1 = _decrire_piece_genre(p1_type, col1_0)
+            desc2 = _decrire_piece_genre(p2_type, col2_0)
+            verbe_txt = "attaque" if relation == "attaque" else "défend"
+            detail = (
+                f"\"{m.group(0).strip()}\" affirme que {desc1} "
+                f"({chess.square_name(sq1_0)}) {verbe_txt} {desc2} "
+                f"({chess.square_name(sq2_0)}), contredit par les "
+                f"{len(lectures)} lecture(s) valide(s) disponible(s) (aucune "
+                f"ne confirme cette {'attaque' if relation == 'attaque' else 'défense'})"
+            )
+            fenetre_connecteur = texte[m.end():m.end() + _FENETRE_CONNECTEUR_VERDICT]
+            central = bool(_CONNECTEUR_VERDICT_RE.search(fenetre_connecteur))
+            cle_repetition = (p1_type, col1_0, p2_type, col2_0, relation)
+            compte_repetition[cle_repetition] = compte_repetition.get(cle_repetition, 0) + 1
+            alertes.append({
+                "type": "attaque_defense_incoherente",
+                "detail": detail,
+                "_central": central,
+                "_cle_repetition": cle_repetition,
+            })
+
+    for a in alertes:
+        repetee = compte_repetition[a["_cle_repetition"]] >= 2
+        a["gravite"] = "rouge" if (a.pop("_central") or repetee) else "orange"
+        a.pop("_cle_repetition")
+    return alertes
+
+
 def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str = "",
                        analyse_indisponible: bool = False, verdict_partiel: bool = False,
                        coup_propose: str = "", coup_reel: str = "", meilleur_coup: str = "",
-                       pv_coup_propose: str = "", pv_meilleur_coup: str = "") -> dict:
+                       pv_coup_propose: str = "", pv_meilleur_coup: str = "",
+                       camp_alain: str = "") -> dict:
     """Fonction principale (issue #87, point 5 ; étendue par l'issue #90,
     point 1) : exécute les contrôles déterministes disponibles sur `texte`
     et retourne un verdict de fiabilité prêt à afficher ("couleur"
@@ -1335,6 +1684,11 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
     analyse_indisponible / verdict_partiel : contexte transmis par
     l'appelant — motifs "orange" indépendants du texte lui-même (analyse
     moteur partielle ou indisponible).
+    camp_alain (issue #98) : "blancs"/"noirs" (même convention que le reste
+    du projet), "" si inconnu — sert uniquement à detecter_attaque_defense_
+    incoherente, pour résoudre "adverse"/"ton"/"ta"/"tes" dans une phrase
+    d'attaque/défense ; sans lui, ce contrôle reste actif mais ces mots ne
+    résolvent simplement aucune couleur.
 
     Retourne {"couleur": "vert"|"orange"|"rouge", "raison": str (une seule
     phrase, affichable à Alain), "controles": [liste des contrôles exécutés
@@ -1407,6 +1761,22 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "de SEUIL_BILAN_MATERIEL_GRAVE_PTS (4 points), réglables en ce "
         "seul endroit (limite : seules ces trois formulations précises "
         "sont reconnues)",
+        "attaque/défense entre deux pièces citées (issue #98) : une phrase "
+        "simple, active (\"<pièce1> attaque/défend <pièce2>\") ou passive "
+        "(\"<pièce2> est attaqué(e)/défendu(e) par <pièce1>\"), est comparée "
+        "à la géométrie réelle (python-chess, Board.attacks) sur la "
+        "position qui suit une citation \"après <coup(s)>\" juste avant la "
+        "phrase si elle existe, sinon sur toutes les positions candidates "
+        "habituelles — signalée seulement si AUCUNE lecture valide ne "
+        "confirme l'affirmation (limite : les deux pièces doivent être "
+        "identifiables sans ambiguïté — par une case citée, par un mot de "
+        "couleur \"adverse\"/\"noir\"/\"blanc\"/\"ton\"/\"ta\"/\"tes\", ou, à "
+        "défaut, en étant la SEULE pièce de ce type sur la position essayée "
+        "— une tournure plus élaborée que la forme simple reconnue, ou une "
+        "pièce non identifiable ainsi, n'est jamais contrôlée ; gravité "
+        "\"rouge\" seulement si un connecteur de justification de verdict "
+        "suit à proximité ou si la même affirmation se répète, sinon "
+        "\"orange\" — heuristique approximative, cf. coach_reliability.py)",
     ]
 
     boards_reference = []
@@ -1440,6 +1810,7 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
     alertes += detecter_clouage_errone(texte, boards_reference, candidats_suites)
     alertes += detecter_echange_type_incoherent(texte, candidats_suites)
     alertes += detecter_bilan_materiel_annonce(texte, candidats_suites)
+    alertes += detecter_attaque_defense_incoherente(texte, candidats_suites, camp_alain)
 
     if alertes:
         premiere = alertes[0]["detail"]

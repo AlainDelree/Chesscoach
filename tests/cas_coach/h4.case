@@ -28,6 +28,9 @@ faits_attendus:
   # points) qualifiée d'« échange équilibré » doit rester signalée, même
   # après les changements de l'issue #97 (prises avec x, lectures multiples).
   reponse_simulee_signalee: Après Qxh4 gxh4, l'échange reste équilibré.
+  # Non-régression (issue #98, même constat que re3) : cette phrase
+  # CORRECTE ne doit déclencher aucune alerte.
+  reponse_simulee_verte: L'équilibre matériel reste nettement en ta défaveur.
 
 motifs_interdits:
   expansion

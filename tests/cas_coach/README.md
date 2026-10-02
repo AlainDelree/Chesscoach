@@ -74,7 +74,14 @@ faits_attendus:
   coach (même texte que celui injecté dans son system prompt)
 
 motifs_interdits:
-  une ligne par phrase/mot interdit dans la réponse du coach (--api)
+  une ligne par phrase/mot interdit dans la réponse FINALE du coach (--api)
+  — après une éventuelle relance automatique de fiabilité, cf. ci-dessous
+
+motifs_interdits_stricts:
+  comme motifs_interdits, mais vérifié EN PLUS sur la toute PREMIÈRE réponse
+  du coach si une relance automatique a eu lieu (issue #98) — pour les
+  motifs jugés trop graves pour tolérer qu'ils aient seulement été corrigés
+  après coup (voir « Relance automatique de fiabilité » ci-dessous)
 
 motifs_attendus:
   une ligne par phrase/mot attendu dans la réponse du coach (--api)
@@ -122,10 +129,25 @@ déclenché une alerte — à la fois dans le tableau récapitulatif et dans le
 détail par tentative, plus besoin de relire l'extrait de réponse pour
 comprendre pourquoi la pastille diffère de `pastille_attendue`.
 
+**Relance automatique de fiabilité (issue #98)** : quand la première
+réponse du coach a déclenché une alerte de fiabilité et que la relance
+automatique (`llm_coach.get_coach_response`) l'a corrigée, la pastille
+finale est « orange » (« à prendre avec prudence »), pas « vert » — compter
+cela comme un échec de `pastille_attendue: vert` serait trompeur, le
+mécanisme a justement fonctionné comme prévu. Un essai dans ce cas est donc
+compté comme **réussi**, et affiché à part dans la colonne « Relances » du
+tableau récapitulatif (ex. `1/5 relance(s) corrigée(s)`), jamais comme un
+échec de pastille. Reste un échec, inchangé : une pastille rouge, ou une
+pastille orange SANS relance justifiée (ex. analyse Stockfish
+indisponible). Pour exiger qu'un motif particulièrement grave soit absent
+même de la toute première réponse (avant correction), utiliser
+`motifs_interdits_stricts` plutôt que `motifs_interdits`.
+
 Champs obligatoires : `id`, `fen`, `coup_propose`, `camp_alain`,
 `meilleur_coup`. Les autres (`description`, `source`, `faits_attendus`,
-`motifs_interdits`, `motifs_attendus`, `pastille_attendue`) sont optionnels
-mais vivement recommandés — sans eux, le cas ne vérifie plus grand-chose.
+`motifs_interdits`, `motifs_interdits_stricts`, `motifs_attendus`,
+`pastille_attendue`) sont optionnels mais vivement recommandés — sans eux,
+le cas ne vérifie plus grand-chose.
 
 Deux vérifications sont **toujours** faites, même sans `faits_attendus` :
 le coup proposé doit être légal sur `fen`, et le meilleur coup recalculé

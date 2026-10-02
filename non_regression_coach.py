@@ -75,7 +75,15 @@ _SCALAR_FIELDS = (
     # cf. construire_contexte ci-dessous.
     "question",
 )
-_BLOCK_FIELDS = ("faits_attendus", "motifs_interdits", "motifs_attendus")
+_BLOCK_FIELDS = (
+    "faits_attendus", "motifs_interdits", "motifs_attendus",
+    # motifs_interdits_stricts (issue #98, point 2c) : comme motifs_interdits,
+    # mais vérifié en plus sur la PREMIÈRE réponse du coach (avant une
+    # éventuelle relance automatique de fiabilité, cf. verifier_reponse) —
+    # pour les motifs jugés assez graves pour ne JAMAIS tolérer qu'ils aient
+    # seulement été corrigés après coup.
+    "motifs_interdits_stricts",
+)
 
 
 class CasInvalideError(Exception):
@@ -571,6 +579,7 @@ def _verifier_fait(directive: str, cas: dict, extras: dict) -> tuple:
         fiabilite = coach_reliability.evaluer_fiabilite(
             arg, extras["fen_avant"], extras["fen_apres"],
             coup_propose=cas["coup_propose"], meilleur_coup=extras["meilleur_coup_calcule"],
+            camp_alain=cas["camp_alain"],
         )
         ok = fiabilite["couleur"] == "vert"
         return ok, f"{libelle} (pastille obtenue : {fiabilite['couleur']} — {fiabilite['raison']})"
@@ -583,6 +592,7 @@ def _verifier_fait(directive: str, cas: dict, extras: dict) -> tuple:
         fiabilite = coach_reliability.evaluer_fiabilite(
             arg, extras["fen_avant"], extras["fen_apres"],
             coup_propose=cas["coup_propose"], meilleur_coup=extras["meilleur_coup_calcule"],
+            camp_alain=cas["camp_alain"],
         )
         ok = bool(fiabilite["alertes"])
         return ok, f"{libelle} (pastille obtenue : {fiabilite['couleur']} — {fiabilite['raison']})"
@@ -634,18 +644,47 @@ def appeler_coach(messages: list, context: dict, modele: str) -> tuple:
 
 def verifier_reponse(cas: dict, response: str, fiabilite: dict) -> list:
     resultats = []
+    fiabilite = fiabilite or {}
     for motif in cas["motifs_interdits"]:
         present = _motif_interdit_present(motif, response)
         resultats.append((not present, f"motif_interdit absent: {motif!r}" + ("" if not present else " — PRÉSENT")))
+    # motifs_interdits_stricts (issue #98, point 2c) : vérifiés en plus sur
+    # la PREMIÈRE réponse du coach si une relance automatique a eu lieu
+    # (fiabilite["premiere_reponse_texte"], cf. llm_coach.get_coach_response)
+    # — absent si aucune relance (pas de première réponse distincte à
+    # vérifier), le motif n'est alors contrôlé que sur `response`, comme
+    # motifs_interdits ci-dessus.
+    premiere_texte = fiabilite.get("premiere_reponse_texte")
+    textes_strict = [response] + ([premiere_texte] if premiere_texte else [])
+    for motif in cas.get("motifs_interdits_stricts", []):
+        present = any(_motif_interdit_present(motif, t) for t in textes_strict)
+        resultats.append((not present, (
+            f"motif_interdit_strict absent (y compris avant une relance éventuelle): "
+            f"{motif!r}" + ("" if not present else " — PRÉSENT")
+        )))
     for motif in cas["motifs_attendus"]:
         present = _motif_present(motif, response)
         resultats.append((present, f"motif_attendu présent: {motif!r}" + ("" if present else " — ABSENT")))
     attendue = cas.get("pastille_attendue", "").strip()
     if attendue:
-        fiabilite = fiabilite or {}
         obtenue = fiabilite.get("couleur", "?")
+        # Relance automatique JUSTIFIÉE (issue #98, point 2a) : une première
+        # réponse fautive, corrigée par la relance (fiabilite["relance_
+        # corrigee"] — cf. llm_coach.get_coach_response), produit une
+        # pastille "orange" ("à prendre avec prudence") plutôt que "vert" —
+        # compter cela comme un échec de pastille serait trompeur, le
+        # mécanisme de relance a justement fonctionné comme prévu. Affiché à
+        # part dans la colonne "Relances" du résumé (cf. executer_cas/main),
+        # jamais comme un échec ici. Une pastille rouge, ou orange SANS
+        # relance justifiée (ex. analyse indisponible), reste un échec
+        # inchangé (issue #98, point 2b).
         if obtenue == attendue:
             resultats.append((True, f"pastille: {obtenue!r} (conforme)"))
+        elif attendue == "vert" and obtenue == "orange" and fiabilite.get("relance_corrigee"):
+            resultats.append((True, (
+                f"pastille: {obtenue!r} — relance automatique corrigée "
+                "(conforme, à prendre avec prudence)"
+            )))
         else:
             # Couleur obtenue, sa raison et les contrôles déclenchés affichés
             # explicitement (issue #94, point 6c) — avant cet ajout, seule la
@@ -689,6 +728,11 @@ def executer_cas(engine_manager, cas: dict, repetitions: int, api_active: bool, 
             "ok": not echecs,
             "motifs": echecs,
             "extrait": response[:300],
+            # relance_corrigee (issue #98, point 2a) : une première réponse
+            # fautive corrigée par la relance automatique de fiabilité (cf.
+            # llm_coach.get_coach_response) — affiché à part dans la colonne
+            # "Relances" du résumé (cf. main), jamais confondu avec un échec.
+            "relance_corrigee": bool((fiabilite or {}).get("relance_corrigee")),
         })
         if verbose and echecs:
             print(f"  [essai {i + 1}/{repetitions}] échec(s) : {', '.join(echecs)}")
@@ -838,22 +882,32 @@ def main() -> int:
         engine_manager.quit()
 
     # ── Résumé ───────────────────────────────────────────────────────────
+    # Colonne "Relances" (issue #98, point 2a) : nombre d'essais réussis
+    # GRÂCE à une relance automatique de fiabilité justifiée (première
+    # réponse fautive, corrigée — cf. verifier_reponse/executer_cas),
+    # affiché séparément de "API réussites" plutôt que noyé dans ce taux —
+    # un essai "1/5 relance(s) corrigée(s)" reste un essai RÉUSSI (compté
+    # dans n_ok ci-dessous), pas un échec de pastille.
     echec_global = False
-    print("\n" + "=" * 78)
-    print(f"{'Cas':<28} {'Faits':<8} {'API réussites':<16} Détail")
-    print("=" * 78)
+    print("\n" + "=" * 94)
+    print(f"{'Cas':<28} {'Faits':<8} {'API réussites':<16} {'Relances':<22} Détail")
+    print("=" * 94)
     for r in resultats:
         if r["erreur"]:
             echec_global = True
-            print(f"{r['id']:<28} {'ERREUR':<8} {'':<16} {r['erreur']}")
+            print(f"{r['id']:<28} {'ERREUR':<8} {'':<16} {'':<22} {r['erreur']}")
             continue
         faits_ok = not r["echecs_faits"]
         if not faits_ok:
             echec_global = True
         detail_parts = list(r["echecs_faits"])
+        relances_txt = ""
         if args.api and faits_ok:
             n_ok = sum(1 for t in r["tentatives"] if t["ok"])
             n_total = len(r["tentatives"])
+            n_relances = sum(1 for t in r["tentatives"] if t.get("relance_corrigee"))
+            if n_relances:
+                relances_txt = f"{n_relances}/{n_total} relance(s) corrigée(s)"
             if n_ok < n_total:
                 echec_global = True
                 # Motifs d'échec API distincts affichés directement dans le
@@ -869,8 +923,8 @@ def main() -> int:
         else:
             api_txt = "(non testé)" if not args.api else "—"
         detail = "; ".join(detail_parts)
-        print(f"{r['id']:<28} {'OK' if faits_ok else 'KO':<8} {api_txt:<16} {detail}")
-    print("=" * 78)
+        print(f"{r['id']:<28} {'OK' if faits_ok else 'KO':<8} {api_txt:<16} {relances_txt:<22} {detail}")
+    print("=" * 94)
 
     if args.api:
         for r in resultats:

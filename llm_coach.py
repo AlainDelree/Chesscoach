@@ -2325,11 +2325,18 @@ def get_coach_response(messages, context, coach_memory, config):
     meilleur_coup_ctx = (context or {}).get("meilleur_coup") or ""
     pv_coup_propose_ctx = (context or {}).get("pv_coup_propose") or ""
     pv_meilleur_coup_ctx = (context or {}).get("pv_meilleur_coup") or ""
+    # camp_alain (issue #98) : transmis tel quel à evaluer_fiabilite pour
+    # resoudre "adverse"/"ton"/"ta"/"tes" dans une phrase d'attaque/défense
+    # (cf. coach_reliability.detecter_attaque_defense_incoherente) — "" si
+    # absent du contexte (modes qui ne le transmettent pas), le contrôle
+    # reste alors simplement moins précis sur ces mots.
+    camp_alain_ctx = (context or {}).get("camp_alain") or ""
     fiabilite = coach_reliability.evaluer_fiabilite(
         response, fen_reference, fen_reference2,
         analyse_indisponible=analyse_indisponible_ctx, verdict_partiel=verdict_partiel_ctx,
         coup_propose=coup_propose_ctx, coup_reel=coup_reel_ctx, meilleur_coup=meilleur_coup_ctx,
         pv_coup_propose=pv_coup_propose_ctx, pv_meilleur_coup=pv_meilleur_coup_ctx,
+        camp_alain=camp_alain_ctx,
     )
     avertissement = None
     premiere_reponse = None
@@ -2374,6 +2381,7 @@ def get_coach_response(messages, context, coach_memory, config):
                 analyse_indisponible=analyse_indisponible_ctx, verdict_partiel=verdict_partiel_ctx,
                 coup_propose=coup_propose_ctx, coup_reel=coup_reel_ctx, meilleur_coup=meilleur_coup_ctx,
                 pv_coup_propose=pv_coup_propose_ctx, pv_meilleur_coup=pv_meilleur_coup_ctx,
+                camp_alain=camp_alain_ctx,
             )
             if response2 and not fiabilite2["alertes"]:
                 response = response2
@@ -2385,6 +2393,17 @@ def get_coach_response(messages, context, coach_memory, config):
                         "prendre avec prudence"
                     ),
                     "controles": fiabilite2["controles"], "alertes": [],
+                    # Champs ajoutés (issue #98, point 2) pour que le script
+                    # de non-régression puisse distinguer une relance
+                    # JUSTIFIÉE (première réponse fautive, corrigée) d'une
+                    # pastille orange ordinaire (ex. analyse indisponible) —
+                    # clés nouvelles en fin de dict, aucun impact sur un
+                    # lecteur existant qui ne regarde que "couleur"/"raison"/
+                    # "controles"/"alertes" (même principe que "premiere_
+                    # reponse" dans coach_calls.log, cf. _log_coach_call).
+                    "relance_effectuee": True,
+                    "relance_corrigee": True,
+                    "premiere_reponse_texte": premiere_reponse["texte"],
                 }
             else:
                 fiabilite["couleur"] = "rouge"
@@ -2392,6 +2411,9 @@ def get_coach_response(messages, context, coach_memory, config):
                     "incohérence détectée et non corrigée après une relance "
                     f"automatique : {fiabilite['alertes'][0]['detail']}"
                 )
+                fiabilite["relance_effectuee"] = True
+                fiabilite["relance_corrigee"] = False
+                fiabilite["premiere_reponse_texte"] = premiere_reponse["texte"]
         except Exception as e:
             logger.warning(f"[LLM_COACH] Relance automatique de fiabilité échouée : {e}")
             fiabilite["couleur"] = "rouge"
@@ -2399,6 +2421,9 @@ def get_coach_response(messages, context, coach_memory, config):
                 "incohérence détectée ; la relance automatique de correction "
                 f"a échoué ({e}) : avertissement seul"
             )
+            fiabilite["relance_effectuee"] = True
+            fiabilite["relance_corrigee"] = False
+            fiabilite["premiere_reponse_texte"] = premiere_reponse["texte"]
 
     # dernier_appel vient d'être écrit par _call_claude (via _record_usage)
     # pour ce même appel : le relire ici évite de faire remonter le tuple

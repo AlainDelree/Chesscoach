@@ -1,7 +1,7 @@
 # Cas de non-régression — voir tests/cas_coach/README.md pour le format.
 id: re3_dame_contre_tour
-description: Coup Re3 (au lieu de Re8) — le gain de dame contre une tour a déjà été qualifié à tort d'« échange », une dame non clouée dite « clouée », et le matériel dit « équilibré » alors que les Blancs sont en avance (issue #91)
-source: mes_erreurs — position réellement rejouée en exercice ChessCoach (voir le rapport de clôture de l'issue #91)
+description: Coup Re3 (au lieu de Re8) — le gain de dame contre une tour a déjà été qualifié à tort d'« échange », une dame non clouée dite « clouée », le matériel dit « équilibré » alors que les Blancs sont en avance (issue #91), et, après Be5, le fou noir dit attaquer à tort la tour en e3 (issue #98)
+source: mes_erreurs — position réellement rejouée en exercice ChessCoach (voir les rapports de clôture des issues #91 et #98)
 fen: Q7/ppkq3p/2p3n1/2Pp1p2/1P6/2b5/P5PP/4R2K w - - 9 35
 camp_alain: blancs
 coup_propose: Re3
@@ -10,11 +10,32 @@ meilleur_coup: Re8
 faits_attendus:
   camp_sans_tour: noirs
   texte_contient: Qxe8 est la SEULE réponse qui évite une perte nette ou un mat
+  # Non-régression (issue #98, essai 3) : cette phrase CORRECTE ("l'équilibre
+  # matériel" y est bien employé, mais pour dire l'inverse d'un équilibre)
+  # ne doit déclencher aucune alerte — ni le motif_interdit régulier
+  # ci-dessous (cf. le "regex:" ajouté), ni les contrôles déterministes.
+  reponse_simulee_verte: L'équilibre matériel reste nettement en ta défaveur.
+  # Phrase fausse ayant motivé le nouveau contrôle (issue #98, essai 5,
+  # après relance) : le fou noir en e5 (après Be5) n'attaque pas la tour
+  # blanche en e3.
+  reponse_simulee_signalee: Après Be5, ton fou adverse attaque la tour.
 
 motifs_interdits:
   échange de dames
   clouée
-  équilibre matériel
+  # "équilibre matériel" seul est trop strict (issue #98, essai 3) : une
+  # phrase CORRECTE ("l'équilibre matériel reste nettement en ta défaveur")
+  # le contient aussi, sans rien affirmer de faux — on ne signale donc plus
+  # que si l'expression n'est PAS suivie, dans les 25 caractères, de
+  # "faveur" (couvre aussi "défaveur") ou "nettement".
+  regex:\béquilibre\s+mat[ée]riel\b(?!.{0,25}?(?:faveur|nettement))
+  # Phrase fausse constatée (issue #98, essai 5, après relance) : le fou
+  # noir en e5 (après Be5) n'attaque pas la tour blanche en e3 — vérifié
+  # avec python-chess (il attaque a1, b2, c3, c7, d4, d6, f4, f6, g3, g7,
+  # h2, h8). Même affirmation couverte par coach_reliability.
+  # detecter_attaque_defense_incoherente (pastille), ce motif est une
+  # seconde vérification indépendante, directement sur le texte.
+  regex:fou\s+(?:noir\w*|adverse\w*).{0,60}?attaque.{0,20}?tour
 
 motifs_attendus:
   mat
