@@ -1,0 +1,22 @@
+# Cas de non-régression — voir tests/cas_coach/README.md pour le format.
+id: re3_dame_contre_tour
+description: Coup Re3 (au lieu de Re8) — le gain de dame contre une tour a déjà été qualifié à tort d'« échange », une dame non clouée dite « clouée », et le matériel dit « équilibré » alors que les Blancs sont en avance (issue #91)
+source: mes_erreurs — position réellement rejouée en exercice ChessCoach (voir le rapport de clôture de l'issue #91)
+fen: Q7/ppkq3p/2p3n1/2Pp1p2/1P6/2b5/P5PP/4R2K w - - 9 35
+camp_alain: blancs
+coup_propose: Re3
+meilleur_coup: Re8
+
+faits_attendus:
+  camp_sans_tour: noirs
+  texte_contient: Qxe8 est la SEULE réponse qui évite une perte nette ou un mat
+
+motifs_interdits:
+  échange de dames
+  clouée
+  équilibre matériel
+
+motifs_attendus:
+  mat
+
+pastille_attendue: vert

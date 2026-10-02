@@ -1,0 +1,158 @@
+# Cas de non-régression du coach (issue #93)
+
+Ce dossier contient des positions où le coach s'est trompé par le passé
+(tour inexistante citée, coup qualifié « illégal » à tort, « échange de
+dames » pour une dame prise contre une tour, « dame clouée » alors qu'elle
+ne l'est pas, « équilibre matériel » annoncé alors qu'un camp est en
+avance...). Le script `non_regression_coach.py`, à la racine du projet, les
+rejoue pour vérifier qu'une modification du prompt ou des données
+n'aggrave pas un cas déjà corrigé.
+
+## Lancer les cas
+
+Depuis la racine du projet :
+
+```bash
+# Vérifie seulement les FAITS envoyés au coach (vrai Stockfish, pas d'appel
+# API, ne dépense rien) — c'est la commande à lancer systématiquement.
+python3 non_regression_coach.py
+
+# Un ou plusieurs cas précis.
+python3 non_regression_coach.py --cas re3_dame_contre_tour
+
+# Appelle réellement le coach (Claude) et vérifie aussi sa réponse —
+# dépense des tokens. 3 répétitions par cas par défaut (la réponse d'un
+# modèle de langage varie d'un appel à l'autre).
+python3 non_regression_coach.py --api
+
+# Avec un modèle précis (sinon : le modèle actif de l'application) et plus
+# de répétitions.
+python3 non_regression_coach.py --api --modele haiku --repetitions 5
+
+# Affiche le détail des réponses fautives.
+python3 non_regression_coach.py --api --verbose
+```
+
+Le script affiche, avant tout appel API, une estimation du nombre d'appels
+(`nombre de cas x --repetitions`). Code de sortie non nul si un fait attendu
+est absent, ou si au moins une tentative d'appel API a échoué.
+
+Ce script ne modifie jamais l'historique des erreurs d'Alain, son niveau
+adaptatif, ses statistiques, son journal habituel (`coach_calls.log`) ni ses
+signalements — il journalise ses propres appels dans un fichier distinct
+(`data/logs/non_regression_coach_calls.log`) et ne se connecte jamais à une
+instance de l'application en cours d'exécution (il lance sa propre instance
+de Stockfish).
+
+## Format d'un fichier de cas (`*.case`)
+
+Un fichier texte par cas, dans ce dossier, avec des lignes `clé: valeur`
+pour les champs simples et des blocs `clé:` suivis de lignes indentées pour
+les listes. Les lignes commençant par `#` sont des commentaires (ignorées).
+
+```
+id: identifiant_court_et_stable
+description: une phrase expliquant ce qui a été corrigé
+source: mes_erreurs — ou "problème Lichess", ou référence précise
+fen: FEN de départ
+camp_alain: blancs ou noirs
+coup_propose: le coup à tester (SAN, ex. Re3)
+meilleur_coup: le meilleur coup attendu (SAN, ex. Re8)
+
+faits_attendus:
+  une ligne par fait — par défaut une sous-chaîne cherchée (insensible à
+  la casse et aux accents) dans le texte de contexte RÉELLEMENT envoyé au
+  coach (même texte que celui injecté dans son system prompt)
+
+motifs_interdits:
+  une ligne par phrase/mot interdit dans la réponse du coach (--api)
+
+motifs_attendus:
+  une ligne par phrase/mot attendu dans la réponse du coach (--api)
+
+pastille_attendue: vert, orange ou rouge
+```
+
+Champs obligatoires : `id`, `fen`, `coup_propose`, `camp_alain`,
+`meilleur_coup`. Les autres (`description`, `source`, `faits_attendus`,
+`motifs_interdits`, `motifs_attendus`, `pastille_attendue`) sont optionnels
+mais vivement recommandés — sans eux, le cas ne vérifie plus grand-chose.
+
+Deux vérifications sont **toujours** faites, même sans `faits_attendus` :
+le coup proposé doit être légal sur `fen`, et le meilleur coup recalculé
+par le vrai Stockfish doit correspondre à `meilleur_coup` (utile pour
+détecter un changement de comportement du moteur installé, pas seulement
+une régression du coach).
+
+### Directives reconnues dans `faits_attendus`
+
+Une ligne qui ne commence par aucun des mots-clés ci-dessous est traitée
+comme `texte_contient` (toute la ligne est la sous-chaîne cherchée) — c'est
+le cas le plus simple, suffisant pour la plupart des cas. Pour un fait
+indépendant du libellé exact employé par le code (donc plus robuste aux
+reformulations futures), utiliser une directive :
+
+- `texte_contient: <texte>` — sous-chaîne cherchée dans le texte de contexte.
+- `camp_sans_tour: blancs|noirs` — ce camp n'a aucune tour sur `fen`.
+- `camp_a_une_tour: blancs|noirs` — ce camp a exactement une tour sur `fen`.
+- `aucune_piece_clouee: blancs|noirs` — aucune pièce de ce camp n'est
+  clouée sur `fen` (calculé avec python-chess, `Board.is_pinned`).
+- `menace_significative_contient: <texte>` — le bloc de menace adverse
+  mentionne ce texte et contient au moins une menace marquée SIGNIFICATIVE.
+- `reponse_simulee_verte: <texte>` — en simulant ce texte comme réponse du
+  coach (sans appel API), `coach_reliability.evaluer_fiabilite` ne doit
+  déclencher aucune alerte sur CE cas (utile pour les régressions de
+  détection, ex. une suite de coups auparavant signalée « illégale » à
+  tort, ou un échange mal qualifié).
+
+### Comment un fait est vérifié
+
+`non_regression_coach.py` reconstruit, avec les mêmes fonctions que
+l'application (`game_facts.py`, `coach_reliability.py`,
+`engine_stockfish.py`) et un vrai Stockfish, exactement le contexte que le
+mode « Exercice » envoie au coach pour `fen`/`coup_propose`/`camp_alain`
+(comme une « Position précise », sans comparaison à un coup réellement
+joué). `faits_attendus` est vérifié sur ce contexte ; `motifs_interdits`/
+`motifs_attendus`/`pastille_attendue` sont vérifiés sur la réponse réelle du
+coach, uniquement avec `--api`.
+
+## Ajouter un cas
+
+### À la main
+
+Dupliquer un fichier `.case` existant, changer `id` (doit être unique dans
+ce dossier) et les autres champs, puis lancer `python3
+non_regression_coach.py --cas <nouvel_id> --verbose` pour vérifier que le
+fichier est bien formé et que les faits attendus sont corrects.
+
+### Depuis un signalement existant
+
+Si le coup, le FEN et la réponse fautive sont déjà enregistrés dans un
+signalement (bouton « Signaler » de l'application, voir
+`lire_signalements.py`) :
+
+```bash
+python3 non_regression_coach.py --depuis-signalement <id_signalement> --nouvel-id <nouvel_id>
+```
+
+Crée un squelette (`<nouvel_id>.case`) avec le FEN, le coup et le camp
+déjà remplis, et la réponse fautive citée en commentaire au-dessus — il
+reste à compléter `description`, `meilleur_coup`, `faits_attendus`,
+`motifs_interdits`/`motifs_attendus` (en choisissant les mots fautifs dans
+le commentaire) et `pastille_attendue`, puis à supprimer le commentaire.
+
+## Cas fournis au départ
+
+- `re3_dame_contre_tour` — gain de dame contre une tour mal qualifié
+  d'« échange », dame non clouée dite « clouée », matériel dit
+  « équilibré » alors que les Blancs sont en avance (issue #91).
+- `c4_bxc6_bxc6_reste_verte` — non-régression de l'issue #90 : la suite
+  « Bxc6+ bxc6 » ne doit plus être signalée comme une suite de coups
+  illégale.
+- `h4_menace_gxh3_defensif` — h4 pare une menace réelle sur h3 et ne doit
+  pas être présenté comme un plan offensif (issue #80).
+
+Deux cas supplémentaires, tirés de `parties_test_coach.pgn` (parties sans
+erreur connue, pour avoir aussi des cas de référence « tout va bien »),
+étaient prévus par l'issue #93 mais n'ont pas pu être créés : ce fichier
+n'est pas présent dans ce dépôt (périmètre strict du projet).

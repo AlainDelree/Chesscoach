@@ -1,0 +1,19 @@
+# Cas de non-régression — voir tests/cas_coach/README.md pour le format.
+id: c4_bxc6_bxc6_reste_verte
+description: Non-régression de l'issue #90 — la suite « Bxc6+ bxc6 » (le fou blanc de b5 prend le cavalier de c6 avec échec, le pion b7 reprend) ne doit plus être signalée comme une suite illégale, ni l'échange qualifié « équilibré » (fou=3 contre cavalier=3) comme une incohérence
+source: mes_erreurs — position ayant réellement déclenché le faux positif corrigé par l'issue #90
+fen: r1b1kbnr/pp3ppp/1qn1p3/1Bpp4/3PP3/2PQ1P2/PP4PP/RNB1K1NR b KQkq - 4 6
+camp_alain: noirs
+coup_propose: Nf6
+meilleur_coup: Nf6
+
+faits_attendus:
+  reponse_simulee_verte: Si tu joues Nf6, les Blancs peuvent répondre Bxc6+ bxc6, un échange équilibré entre le fou et le cavalier.
+
+motifs_interdits:
+  illégal
+
+motifs_attendus:
+  Nf6
+
+pastille_attendue: vert
