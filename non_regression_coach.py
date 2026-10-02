@@ -441,6 +441,7 @@ def _camp_chess(camp: str):
 _DIRECTIVES_CONNUES = (
     "texte_contient", "camp_sans_tour", "camp_a_une_tour",
     "aucune_piece_clouee", "menace_significative_contient", "reponse_simulee_verte",
+    "reponse_simulee_signalee",
 )
 
 
@@ -487,6 +488,18 @@ def _verifier_fait(directive: str, cas: dict, extras: dict) -> tuple:
             coup_propose=cas["coup_propose"], meilleur_coup=extras["meilleur_coup_calcule"],
         )
         ok = fiabilite["couleur"] == "vert"
+        return ok, f"{libelle} (pastille obtenue : {fiabilite['couleur']} — {fiabilite['raison']})"
+    if cle == "reponse_simulee_signalee":
+        # Symétrique de reponse_simulee_verte (issue #97, point 4) : vérifie
+        # qu'un texte simulé DÉCLENCHE bien au moins une alerte — sert à
+        # s'assurer que la tolérance des lectures multiples (coach_
+        # reliability._rassembler_lectures) n'a pas affaibli un contrôle au
+        # point de manquer une vraie incohérence déjà couverte.
+        fiabilite = coach_reliability.evaluer_fiabilite(
+            arg, extras["fen_avant"], extras["fen_apres"],
+            coup_propose=cas["coup_propose"], meilleur_coup=extras["meilleur_coup_calcule"],
+        )
+        ok = bool(fiabilite["alertes"])
         return ok, f"{libelle} (pastille obtenue : {fiabilite['couleur']} — {fiabilite['raison']})"
     # Défaut : texte_contient (mot-clé explicite, ou simple ligne libre non
     # préfixée par un mot-clé connu — cf. docstring ci-dessus) : `arg` est

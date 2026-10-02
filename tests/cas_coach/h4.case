@@ -1,7 +1,7 @@
 # Cas de non-régression — voir tests/cas_coach/README.md pour le format.
 id: h4_menace_gxh3_defensif
-description: h4 pare une menace adverse réelle sur h3 (...gxh3+ et ...Qxh3+, dame noire en h5) — a déjà été présenté à tort comme un plan offensif (« expansion à l'aile roi ») au lieu d'un coup défensif (issue #80). Étendu par l'issue #94 : la suite Qxh4 gxh4 (si la dame noire prend le pion h4) ne doit JAMAIS être qualifiée d'« échange équilibré » — c'est une dame perdue contre un pion, gain net de 8 points pour les Blancs.
-source: mes_erreurs — position réellement rejouée en exercice ChessCoach (voir le rapport de clôture de l'issue #80, puis issue #94)
+description: h4 pare une menace adverse réelle sur h3 (...gxh3+ et ...Qxh3+, dame noire en h5) — a déjà été présenté à tort comme un plan offensif (« expansion à l'aile roi ») au lieu d'un coup défensif (issue #80). Étendu par l'issue #94 : la suite Qxh4 gxh4 (si la dame noire prend le pion h4) ne doit JAMAIS être qualifiée d'« échange équilibré » — c'est une dame perdue contre un pion, gain net de 8 points pour les Blancs. Étendu par l'issue #97 : « Bxh6 Qxh6 » (fou blanc c1 contre fou noir g7, via h6) a été signalé à tort comme un gain net de 3 points pour les Noirs, parce que python-chess acceptait "Bxh6" comme un coup valide même sur h6 VIDE (le "x" ignoré) et que le coup précédent cité juste avant la parenthèse ("Bh6", qui place le fou noir en h6) n'était pas pris en compte.
+source: mes_erreurs — position réellement rejouée en exercice ChessCoach (voir le rapport de clôture de l'issue #80, puis issues #94 et #97)
 fen: 1r1r2k1/4Qpbp/2Bp1n2/3Pp2q/2P1P1p1/2N3PP/PP3PK1/R1B2R2 w - - 0 23
 camp_alain: blancs
 coup_propose: h4
@@ -10,6 +10,24 @@ meilleur_coup: h4
 faits_attendus:
   menace_significative_contient: h3
   texte_contient: gain net de 8 point(s) pour Blancs (Alain)
+  # Issue #97, point 2 : le coup cité juste avant la parenthèse ("Bh6") est
+  # inclus comme lecture candidate — fou blanc contre fou noir via h6, un
+  # échange réellement équilibré (bilan nul) : ne doit déclencher aucune
+  # alerte, donc rester verte.
+  reponse_simulee_verte: Les Noirs peuvent jouer Bh6 pour échanger les fous (Bxh6 Qxh6), un échange équilibré.
+  # Même suite SANS "Bh6" cité (lecture ambiguë, issue #97, point 3) : au
+  # moins une lecture valide (via un demi-coup caché) reste cohérente avec
+  # "équilibré" — ne rien signaler, malgré l'ambiguïté.
+  reponse_simulee_verte: Les Noirs peuvent jouer (Bxh6 Qxh6), un échange équilibré.
+  # Non-régression (issue #97, point 3 — les lectures multiples ne doivent
+  # jamais affaiblir une vraie incohérence) : la même suite "Bxh6 Qxh6",
+  # avec "Bh6" cité, reste un échange équilibré (bilan nul) — la qualifier
+  # de "favorable aux Blancs" doit rester signalé.
+  reponse_simulee_signalee: Les Noirs peuvent jouer Bh6 pour échanger les fous (Bxh6 Qxh6), un échange favorable aux Blancs.
+  # Non-régression (issue #94) : la suite Qxh4 gxh4 (dame contre pion, 8
+  # points) qualifiée d'« échange équilibré » doit rester signalée, même
+  # après les changements de l'issue #97 (prises avec x, lectures multiples).
+  reponse_simulee_signalee: Après Qxh4 gxh4, l'échange reste équilibré.
 
 motifs_interdits:
   expansion
