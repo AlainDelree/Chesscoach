@@ -744,7 +744,12 @@ def _prepare_flagged_moves_for_coach(moves: list, camp_alain: str = "") -> list:
     ce qui est désormais attaqué, calculé mécaniquement plutôt que laissé au
     modèle qui devait sinon reconstituer ces détails de tête à partir de la
     seule notation SAN. None si fen_avant/san/meilleur_coup manquent ou ne
-    sont pas légaux sur cette position."""
+    sont pas légaux sur cette position.
+
+    "fen_avant" (issue #85) : ajouté en plus des champs ci-dessus, pour que
+    get_move_explanations journalise chaque explication retenue avec sa
+    position — retiré avant tout envoi à l'API par get_move_explanations,
+    jamais transmis au coach."""
     prepared = []
     for m in moves or []:
         meilleur_coup = _meilleur_coup_san(m)
@@ -769,6 +774,12 @@ def _prepare_flagged_moves_for_coach(moves: list, camp_alain: str = "") -> list:
                 game_facts.describe_move_mechanically(fen_avant, meilleur_coup, camp_alain)
                 if meilleur_coup else None
             ),
+            # fen_avant (issue #85, part. 1) : UNIQUEMENT pour que
+            # llm_coach.get_move_explanations puisse journaliser une entrée
+            # par coup expliqué avec sa position — retiré par cette fonction
+            # avant tout envoi à l'API (cf. get_move_explanations), jamais
+            # transmis au coach.
+            "fen_avant": fen_avant,
         })
     return prepared
 

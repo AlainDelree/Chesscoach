@@ -739,26 +739,51 @@ def get_move_explanations(flagged_moves, camp_alain, config):
         camp_alain = ""
 
     model = (config or {}).get("llm_model", "")
+    # "fen_avant" (issue #85, part. 1) : transmis par l'appelant (app.py
+    # _prepare_flagged_moves_for_coach) UNIQUEMENT pour permettre une entrée
+    # de log par coup ci-dessous, cohérente avec les entrées "fen"/"move" du
+    # mode "analyse_partie" à la demande (on_analyse_expliquer_coup) et du
+    # mode "exercice" — jamais envoyé au modèle : sans intérêt pour choisir
+    # les coups décisifs (les descriptions mécaniques déjà présentes dans
+    # `m` suffisent), ce serait juste du texte en plus par coup dans un
+    # appel qui en liste déjà potentiellement des dizaines.
     coups_avec_auteur = []
     for m in flagged_moves:
         camp = (m.get("camp") or "").strip()
         auteur = game_facts.camp_label(camp == "blancs", camp_alain) if camp in ("blancs", "noirs") else ""
-        coups_avec_auteur.append({**m, "auteur": auteur})
+        m_sans_fen = {k: v for k, v in m.items() if k != "fen_avant"}
+        coups_avec_auteur.append({**m_sans_fen, "auteur": auteur})
     data_obj = {"camp_alain": camp_alain or None, "coups": coups_avec_auteur}
     data_text = json.dumps(data_obj, ensure_ascii=False, indent=2)
     prompt_user = f"Coups flagués de la partie (JSON) :\n{data_text}"
 
     usage_path = (config or {}).get("usage_path")
+    # Journalisation (issue #85, part. 1) : ce point d'appel (étape 1 du
+    # module d'explications narratives, on_analyse_choisir_coups_decisifs)
+    # n'écrivait jusqu'ici jamais dans coach_calls.log — c'est l'origine du
+    # commentaire introuvable constaté par Alain (coup 6...Nf6, "Erreur
+    # -117cp"). Une seule entrée par coup RETENU par le coach (pas par coup
+    # flagué transmis), chacune avec le FEN/coup/camp/verdict propres à ce
+    # coup (cf. boucle sur `resultat` ci-dessous) — pas une entrée unique
+    # pour tout l'appel, qui aurait mélangé plusieurs coups sous un seul
+    # "fen"/"move".
+    log_path = (config or {}).get("coach_log_path")
     try:
         raw = _call_claude(_MOVE_SELECTION_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path)
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) : crédit épuisé : {e}")
+        _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, data_obj, prompt_user,
+                         "analyse_partie", model=model, erreur="credit_insuffisant")
         return None, "credit_insuffisant"
     except ModeleIndisponibleError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) : modèle indisponible : {e}")
+        _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, data_obj, prompt_user,
+                         "analyse_partie", model=model, erreur="modele_indisponible")
         return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) échoué : {e}")
+        _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, data_obj, prompt_user,
+                         "analyse_partie", model=model, erreur=str(e))
         return None, str(e)
 
     text = (raw or "").strip()
@@ -771,29 +796,62 @@ def get_move_explanations(flagged_moves, camp_alain, config):
         parsed = json.loads(text)
     except (ValueError, TypeError):
         logger.warning(f"[LLM_COACH] Réponse sélection de coups décisifs non-JSON : {raw!r}")
+        _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, data_obj, prompt_user,
+                         "analyse_partie", model=model, erreur="reponse_invalide")
         return None, "reponse_invalide"
 
     if not isinstance(parsed, dict):
+        _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, data_obj, prompt_user,
+                         "analyse_partie", model=model, erreur="reponse_invalide")
         return None, "reponse_invalide"
 
     choix = parsed.get("choix")
     if not isinstance(choix, list):
+        _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, data_obj, prompt_user,
+                         "analyse_partie", model=model, erreur="reponse_invalide")
         return None, "reponse_invalide"
 
-    ids_valides = {m.get("id") for m in flagged_moves if m.get("id") is not None}
+    par_id = {m.get("id"): m for m in flagged_moves if m.get("id") is not None}
     resultat = []
     for c in choix:
         if not isinstance(c, dict):
             continue
         id_ = c.get("id")
         explication = (c.get("explication") or "").strip()
-        if id_ in ids_valides and explication:
+        if id_ in par_id and explication:
             resultat.append({"id": id_, "explication": explication})
 
     if not resultat:
+        _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, data_obj, prompt_user,
+                         "analyse_partie", model=model, erreur="reponse_invalide")
         return None, "reponse_invalide"
 
-    return resultat[:5], None
+    resultat = resultat[:5]
+
+    # Une entrée par coup réellement expliqué (issue #85, part. 1) : même
+    # appel/réponse API pour tous (system_prompt/messages/usage identiques
+    # dans chaque entrée, puisqu'un seul appel couvre les coups retenus),
+    # mais "context" et "reponse" propres à CE coup — FEN avant le coup,
+    # coup (san + numéro de coup "coup_plein"), camp, verdict_qualite/
+    # verdict_delta_cp et meilleur coup, cohérent avec les entrées "fen"/
+    # "move" de on_analyse_expliquer_coup (mode "analyse_partie") et de
+    # l'exercice.
+    usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
+    for c in resultat:
+        original = par_id.get(c["id"]) or {}
+        entry_context = {
+            "fen": original.get("fen_avant"),
+            "move": original.get("san"),
+            "coup_plein": original.get("coup_plein"),
+            "camp": original.get("camp"),
+            "verdict_qualite": original.get("qualite"),
+            "verdict_delta_cp": original.get("delta_cp"),
+            "meilleur_coup": original.get("meilleur_coup"),
+        }
+        _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, entry_context, prompt_user,
+                         "analyse_partie", model=model, reponse=c["explication"], usage=usage_appel)
+
+    return resultat, None
 
 
 def load_coach_memory(path) -> dict:
@@ -1389,6 +1447,48 @@ def _build_context_text(context) -> str:
     return "\n".join(lines)
 
 
+# Limite de taille totale du journal coach_calls (issue #85, part. 2),
+# tous fichiers confondus (fichier du mois en cours + archives mensuelles) —
+# réglable en ce seul endroit. Au-delà, les fichiers archivés les plus
+# anciens sont supprimés (jamais le fichier du mois en cours, cf.
+# _purge_vieux_logs_coach) jusqu'à repasser sous la limite.
+_COACH_LOG_MAX_TOTAL_MB = 20
+
+
+def _coach_log_fichier_actif(log_path: Path) -> Path:
+    """Chemin du fichier à écrire pour l'appel en cours (issue #85, part. 2,
+    rotation mensuelle) : insère l'année-mois courant avant l'extension du
+    chemin configuré (ex. coach_calls.log -> coach_calls-2026-10.log). Le
+    fichier d'origine, sans suffixe, n'est plus jamais réécrit après ce
+    changement : il reste tel quel, comme l'archive la plus ancienne."""
+    suffixe = datetime.now().strftime("%Y-%m")
+    return log_path.with_name(f"{log_path.stem}-{suffixe}{log_path.suffix}")
+
+
+def _purge_vieux_logs_coach(log_path: Path, fichier_actif: Path) -> None:
+    """Supprime les archives coach_calls-AAAA-MM.log les plus anciennes tant
+    que la taille totale (fichier actif + archives) dépasse
+    _COACH_LOG_MAX_TOTAL_MB (issue #85, part. 2) — jamais `fichier_actif`,
+    même s'il dépasse seul la limite : perdre les entrées du mois en cours
+    serait pire que dépasser temporairement la limite sur un mois chargé.
+    Tri par nom de fichier (donc chronologique, AAAA-MM croissant ; le
+    fichier d'origine sans suffixe de date trie avant toute archive datée et
+    est donc supprimé en premier s'il faut faire de la place). Appelée
+    depuis le bloc try de _log_coach_call : une erreur ici (ex. droits
+    insuffisants) est donc déjà couverte par son except, jamais remontée."""
+    motif = f"{log_path.stem}*{log_path.suffix}"
+    fichiers = sorted(log_path.parent.glob(motif), key=lambda p: p.name)
+    limite_octets = _COACH_LOG_MAX_TOTAL_MB * 1024 * 1024
+    total = sum(f.stat().st_size for f in fichiers)
+    for f in fichiers:
+        if total <= limite_octets:
+            break
+        if f == fichier_actif:
+            continue
+        total -= f.stat().st_size
+        f.unlink()
+
+
 def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str,
                      model: str = None, reponse: str = None, erreur: str = None, usage: dict = None) -> None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
@@ -1421,12 +1521,19 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     l'API) est absent — un changement de modèle en cours de session reste
     ainsi traçable ligne à ligne, même sur un appel qui a échoué avant toute
     réponse (ex. modele_indisponible).
+
+    Étendu par l'issue #85 (part. 2) : rotation mensuelle (un fichier par
+    mois, cf. _coach_log_fichier_actif) et purge des archives les plus
+    anciennes au-delà de _COACH_LOG_MAX_TOTAL_MB (cf.
+    _purge_vieux_logs_coach) — le format de chaque entrée est inchangé
+    (mêmes clés qu'avant cette issue), seul le DÉCOUPAGE en fichiers change.
     """
     if not log_path:
         return
     try:
         log_path = Path(log_path)
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        fichier_actif = _coach_log_fichier_actif(log_path)
         entry = {
             "horodatage": datetime.now().isoformat(),
             "mode_origine": mode_origine,
@@ -1438,8 +1545,9 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
             "erreur": erreur,
             "usage": usage,
         }
-        with open(log_path, "a", encoding="utf-8") as f:
+        with open(fichier_actif, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        _purge_vieux_logs_coach(log_path, fichier_actif)
     except Exception as e:
         logger.warning(f"[LLM_COACH] Écriture du log coach_calls échouée : {e}")
 
@@ -1603,18 +1711,35 @@ def get_opening_moves(opening_name: str, config):
 
     model = (config or {}).get("llm_model", "")
     usage_path = (config or {}).get("usage_path")
+    # Journalisation (issue #85, part. 1) : ce point d'appel n'écrivait
+    # jusqu'ici jamais dans coach_calls.log, contrairement à get_coach_response
+    # — même mécanisme (_log_coach_call), mode_origine dédié "ouverture_coups"
+    # pour le distinguer du mode_origine "ouverture" du chat coach pendant
+    # l'entraînement d'ouverture lui-même (cf. on_opening_move).
+    log_path = (config or {}).get("coach_log_path")
+    contexte_log = {"opening_name": opening_name}
 
     try:
         raw = _call_claude(_OPENING_SYSTEM_PROMPT, opening_name, api_key, model, usage_path)
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (ouverture) : crédit épuisé : {e}")
+        _log_coach_call(log_path, _OPENING_SYSTEM_PROMPT, contexte_log, opening_name,
+                         "ouverture_coups", model=model, erreur="credit_insuffisant")
         return None, "credit_insuffisant"
     except ModeleIndisponibleError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (ouverture) : modèle indisponible : {e}")
+        _log_coach_call(log_path, _OPENING_SYSTEM_PROMPT, contexte_log, opening_name,
+                         "ouverture_coups", model=model, erreur="modele_indisponible")
         return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (ouverture) échoué : {e}")
+        _log_coach_call(log_path, _OPENING_SYSTEM_PROMPT, contexte_log, opening_name,
+                         "ouverture_coups", model=model, erreur=str(e))
         return None, str(e)
+
+    usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
+    _log_coach_call(log_path, _OPENING_SYSTEM_PROMPT, contexte_log, opening_name,
+                     "ouverture_coups", model=model, reponse=raw, usage=usage_appel)
 
     text = (raw or "").strip()
     if text.startswith("```"):
@@ -1671,18 +1796,35 @@ def get_training_program(patterns_erreurs, repertoire_ouvertures, config):
     }, ensure_ascii=False, indent=2)
     prompt_user = f"Données du joueur (JSON) :\n{data_text}"
     usage_path = (config or {}).get("usage_path")
+    # Journalisation (issue #85, part. 1) : même lacune que get_opening_moves
+    # ci-dessus, même correctif — mode_origine dédié "programme_entrainement".
+    log_path = (config or {}).get("coach_log_path")
+    contexte_log = {
+        "patterns_erreurs": patterns_erreurs or {},
+        "repertoire_ouvertures": repertoire_ouvertures or {},
+    }
 
     try:
         raw = _call_claude(_TRAINING_PROGRAM_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path)
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) : crédit épuisé : {e}")
+        _log_coach_call(log_path, _TRAINING_PROGRAM_SYSTEM_PROMPT, contexte_log, prompt_user,
+                         "programme_entrainement", model=model, erreur="credit_insuffisant")
         return None, "credit_insuffisant"
     except ModeleIndisponibleError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) : modèle indisponible : {e}")
+        _log_coach_call(log_path, _TRAINING_PROGRAM_SYSTEM_PROMPT, contexte_log, prompt_user,
+                         "programme_entrainement", model=model, erreur="modele_indisponible")
         return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) échoué : {e}")
+        _log_coach_call(log_path, _TRAINING_PROGRAM_SYSTEM_PROMPT, contexte_log, prompt_user,
+                         "programme_entrainement", model=model, erreur=str(e))
         return None, str(e)
+
+    usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
+    _log_coach_call(log_path, _TRAINING_PROGRAM_SYSTEM_PROMPT, contexte_log, prompt_user,
+                     "programme_entrainement", model=model, reponse=raw, usage=usage_appel)
 
     text = (raw or "").strip()
     if text.startswith("```"):
