@@ -227,9 +227,11 @@ jamais de logique dupliquée à la main. Viewports 390×750 et 360×640,
   (`gameCoachLinesPlayingIdx`) force le plateau complet quel que soit le
   défilement — les 3 vérifiées indépendamment, toutes correctes après le
   correctif.
-- Captures d'écran dans `_test_harness/` (non commité, worktree local) :
-  plateau complet en partie pédagogique (réglage Grand), bandeau de fin de
-  partie compact (une ligne, message long tronqué) avant/après correctif.
+- Captures d'écran prises pendant la session (plateau complet en partie
+  pédagogique réglage Grand, bandeau de fin de partie compact une ligne,
+  message long tronqué avant/après correctif) — outillage de test
+  (`_test_harness/` : serveur Flask jetable + script Playwright + captures)
+  supprimé du disque après vérification, jamais commité.
 
 ### Limites
 
@@ -255,6 +257,4 @@ jamais de logique dupliquée à la main. Viewports 390×750 et 360×640,
 - Pas de test sur un véritable appareil physique (GSM/PC) ni dans un vrai
   navigateur mobile (Safari iOS, Chrome Android) — seule l'émulation de
   viewport/tactile de Chromium a été utilisée.
-- `.env` non touché ; `_test_harness/` (serveur Flask jetable + script
-  Playwright + captures) n'a pas été commité, laissé sur disque pour
-  inspection si besoin.
+- `.env` non touché.
