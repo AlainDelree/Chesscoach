@@ -102,6 +102,17 @@ let currentModeTab = "library";
 
 function switchModeTab(tabKey) {
   if (MODE_TABS.indexOf(tabKey) === -1) return;
+  // Issue #86 point 4 : la conversation du coach (affichage ET historique
+  // envoyé à l'API, coachClear() — board.js) est propre à chaque mode. Avant
+  // ce correctif, elle restait affichée en changeant de mode (partagée par
+  // toute la page, cf. #coach-history) et ne se vidait qu'au prochain clic
+  // sur "Effacer" ou au démarrage d'un nouvel exercice/d'une nouvelle partie
+  // (coachNewSegment) — les messages d'un exercice restaient donc visibles en
+  // lançant une Partie pédagogique, par exemple (rapport signalé par Alain).
+  // Condition sur un VRAI changement (tabKey !== l'ancien currentModeTab) :
+  // re-cliquer l'onglet déjà actif (ou le réappel via le menu déroulant
+  // mobile) ne doit rien effacer tant qu'on reste dans le même mode.
+  if (tabKey !== currentModeTab && typeof coachClear === "function") coachClear();
   currentModeTab = tabKey;
   // Issue #71 point 2 : remonter tout en haut à chaque changement de mode —
   // sans ça, la position de défilement laissée par le mode précédent reste

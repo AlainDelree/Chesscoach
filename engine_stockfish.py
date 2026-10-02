@@ -859,6 +859,18 @@ class EngineManager:
 
         board_nul = board.copy()
         board_nul.push(chess.Move.null())
+        # Reconstruction depuis le FEN (issue #86 point 5) : board_nul.copy()
+        # garde tout l'historique de `board` plus le coup nul qu'on vient d'y
+        # ajouter — python-chess refuse de transmettre un historique contenant
+        # un coup nul au moteur UCI (aucune notation UCI pour un coup nul) et
+        # journalise "Not transmitting history with null moves to UCI engine"
+        # (chess/engine.py, _position) avant de retomber de toute façon sur la
+        # position seule. Repartir d'un plateau neuf à partir du FEN (donc
+        # sans AUCUN historique, pas seulement sans coup nul) donne le même
+        # résultat — seule la position compte pour get_multipv — sans jamais
+        # déclencher l'avertissement : chess.Board(fen) a un move_stack vide,
+        # qu'aucun coup nul ne peut alors invalider.
+        board_nul = chess.Board(board_nul.fen())
         menaces_brutes = self.get_multipv(board_nul, n=n, depth=depth)
         if not menaces_brutes:
             return {"disponible": False, "raison": "moteur_indisponible"}
