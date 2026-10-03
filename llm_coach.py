@@ -676,6 +676,15 @@ _REPONSE_STRUCTUREE_ADDENDUM = (
     "seulement si elle éclaire vraiment le coup en question — jamais à la "
     "fois en ouverture et en conclusion, et jamais comme simple rappel "
     "générique sans lien avec ce coup précis."
+    "\n\n"
+    "Attaque réservée aux listes fournies (issue #101) : n'affirme JAMAIS "
+    "qu'une pièce (ou un pion) en attaque une autre, ou qu'une case est "
+    "attaquée, si cette attaque ne figure PAS explicitement dans les listes "
+    "\"... attaque :\"/\"Pièces attaquées après ce coup\" fournies dans les "
+    "données pour ce coup — jamais ton propre calcul géométrique, qui s'est "
+    "déjà révélé faux (un fou dit à tort attaquer une tour qu'il n'attaque "
+    "pas). En cas de doute sur ce qu'une pièce attaque, ne parle simplement "
+    "pas d'attaque plutôt que de risquer une invention."
 )
 
 # Complément au-dessus, spécifique à la source « Problèmes Lichess » du mode

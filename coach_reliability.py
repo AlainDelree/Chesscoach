@@ -138,6 +138,28 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
     Bxc6+ Qxc6, le cavalier noir pris par le fou blanc) en exigeant que
     chaque camp perde un CAVALIER. Les deux types cités identiques ("fou
     contre fou") retombent sur l'ancienne règle symétrique, inchangée.
+  - un cinquième correctif contre un faux positif réel (issue #101, série de
+    20 appels après la fusion des issues #94 à #100, cas "bxh7") : le
+    bénéficiaire d'un qualificatif "favorable"/"défavorable" (ci-dessus,
+    detecter_echanges_mal_qualifies) n'était retenu que par PROXIMITÉ
+    textuelle (le mot de camp le plus proche dans une fenêtre de 30
+    caractères) — "... en plus de forcer l'échange favorable Bxg6 hxg6 si
+    les Blancs s'y risquent" associait ainsi à tort "favorable" aux Blancs
+    (mot le plus proche après la suite citée), alors que "les Blancs" n'est
+    ici que le sujet d'une proposition HYPOTHÉTIQUE introduite par "si" —
+    l'échange est en réalité favorable aux Noirs (lecture unique, -2 pour
+    les Blancs). Le camp bénéficiaire n'est désormais retenu que par une
+    tournure EXPLICITEMENT liée au qualificatif (cf. _resoudre_beneficiaire_
+    qualificatif) : attachement direct ("favorable aux Blancs", "favorable
+    pour toi"/"pour les Noirs", "défavorable à ton adversaire"), ou sujet
+    sans ambiguïté dans la même proposition ("les Blancs y gagnent"/"y
+    perdent") hors de toute proposition hypothétique ou subordonnée (si/
+    que/qui/dont/où/alors que/bien que/parce que/puisque) interposée entre
+    le qualificatif et ce sujet. Si aucune de ces tournures n'est trouvée,
+    le camp reste indéterminé et le qualificatif n'est tout simplement pas
+    vérifié pour cette occurrence (faux négatif assumé, même philosophie que
+    le reste du module) — la vérification de "équilibré(e)" (symétrique,
+    aucun camp nécessaire) est inchangée.
 """
 
 import logging
@@ -847,10 +869,19 @@ def detecter_suites_illegales(texte: str, candidats: list) -> list:
 #     concernées ;
 #   - le qualificatif "équilibré"/"équilibrée" ne nécessite aucun camp
 #     explicite (c'est une affirmation symétrique : delta matériel nul) ;
-#   - les qualificatifs "favorable"/"défavorable" ne sont vérifiés QUE s'un
-#     camp (Blancs/Noirs) est explicitement mentionné à proximité immédiate
-#     (_FENETRE_CAMP_PROXIMITE_ECHANGE) — sans cette mention, le camp visé
-#     est trop incertain pour être deviné, le qualificatif n'est alors
+#   - les qualificatifs "favorable"/"défavorable" ne sont vérifiés QUE si un
+#     camp bénéficiaire est retenu par _resoudre_beneficiaire_qualificatif
+#     (issue #101) : une tournure EXPLICITEMENT liée au qualificatif lui-même
+#     ("favorable aux Blancs", "favorable pour toi"/"pour les Noirs",
+#     "défavorable à ton adversaire"), ou un sujet sans ambiguïté dans la
+#     même proposition ("les Blancs y gagnent"/"y perdent") hors de toute
+#     proposition hypothétique ("si...") ou subordonnée interposée entre le
+#     qualificatif et ce sujet — la seule proximité textuelle ne suffit plus
+#     (cas réel ayant motivé ce changement : "l'échange favorable Bxg6 hxg6
+#     si les Blancs s'y risquent" associait à tort "favorable" aux Blancs,
+#     simplement cités juste après dans une proposition hypothétique, alors
+#     que l'échange est en réalité favorable aux Noirs). Sans tournure
+#     explicite, le camp visé reste indéterminé, le qualificatif n'est alors
 #     jamais vérifié (faux négatif assumé) ;
 #   - les verbes "gagne"/"perd" cités par l'issue comme exemples ne sont
 #     DÉLIBÉRÉMENT PAS vérifiés : ce sont des verbes à usage bien trop
@@ -873,7 +904,6 @@ SEUIL_ECHANGE_GRAVE_PTS = 3
 _QUALIF_EQUILIBRE_RE = re.compile(r"\béquilibr\w*\b", re.IGNORECASE)
 _QUALIF_FAVORABLE_RE = re.compile(r"\bfavorables?\b", re.IGNORECASE)
 _QUALIF_DEFAVORABLE_RE = re.compile(r"\bd[ée]favorables?\b", re.IGNORECASE)
-_CAMP_MOT_RE = re.compile(r"\b(blancs?|blanches?|noirs?|noires?)\b", re.IGNORECASE)
 
 # Fenêtre de recherche d'un qualificatif autour d'une suite citée : un peu
 # avant (un qualificatif peut précéder, ex. "échange favorable Rxe5 Nxe5"),
@@ -882,10 +912,73 @@ _CAMP_MOT_RE = re.compile(r"\b(blancs?|blanches?|noirs?|noires?)\b", re.IGNORECA
 # qualificatif d'une phrase sans rapport.
 _FENETRE_AVANT_ECHANGE = 40
 _FENETRE_APRES_ECHANGE = 150
-# Distance maximale (caractères) entre "favorable"/"défavorable" et le mot de
-# camp qui lui donne un sens univoque — au-delà, le camp visé est trop
-# incertain (cf. portée ci-dessus).
-_FENETRE_CAMP_PROXIMITE_ECHANGE = 30
+
+# Bénéficiaire explicite d'un qualificatif "favorable"/"défavorable" (issue
+# #101) — deux tournures reconnues, cf. _resoudre_beneficiaire_qualificatif :
+#   1) attachement DIRECT, immédiatement après le qualificatif (au plus
+#      _FENETRE_BENEFICIAIRE_DIRECT caractères, qui ne laissent la place qu'à
+#      la préposition et au bénéficiaire lui-même — jamais une suite de coups
+#      ou une proposition intercalée) : "aux Blancs", "pour toi", "pour les
+#      Noirs", "à ton adversaire" ;
+#   2) sujet sans ambiguïté ("les Blancs y gagnent"/"y perdent") cherché dans
+#      toute la fenêtre du qualificatif, mais rejeté si une proposition
+#      hypothétique ou subordonnée (_SUBORDINATION_BENEFICIAIRE_RE) est
+#      interposée entre le qualificatif et ce sujet — exclut notamment "si
+#      les Blancs s'y risquent" (cas réel ayant motivé ce contrôle). Le camp
+#      bénéficiaire retenu est le SUJET lui-même avec "gagnent" ("les Blancs
+#      y gagnent" → Blancs bénéficiaire), mais son INVERSE avec "perdent"
+#      ("les Blancs y perdent" → Noirs bénéficiaire, puisque c'est l'autre
+#      camp qui profite de cette perte).
+_FENETRE_BENEFICIAIRE_DIRECT = 40
+_CAMP_NOM_GROUPE = r"(?:blancs?|blanches?|noirs?|noires?)"
+_BENEFICIAIRE_DIRECT_RE = re.compile(
+    rf"^\s*(?:aux?|à\s+la|pour|à)\s+"
+    rf"(?:(?P<toi>toi|vous|moi)"
+    rf"|(?:ton|ta|son|sa)\s+(?P<adversaire>adversaire)"
+    rf"|(?:les?\s+)?(?P<camp>{_CAMP_NOM_GROUPE}))\b",
+    re.IGNORECASE,
+)
+_BENEFICIAIRE_SUJET_RE = re.compile(
+    rf"\bles?\s+(?P<camp>{_CAMP_NOM_GROUPE})\s+(?:y\s+)?(?P<verbe>gagnent?|perdent?)\b",
+    re.IGNORECASE,
+)
+_SUBORDINATION_BENEFICIAIRE_RE = re.compile(
+    r"\b(si|que|qui|dont|o[uù]|alors que|bien que|parce que|puisque)\b",
+    re.IGNORECASE,
+)
+
+
+def _resoudre_beneficiaire_qualificatif(fenetre: str, m: "re.Match", camp_alain_couleur):
+    """Résout le camp bénéficiaire EXPLICITE d'un qualificatif "favorable"/
+    "défavorable" repéré par `m` (match de _QUALIF_FAVORABLE_RE/_QUALIF_
+    DEFAVORABLE_RE) dans `fenetre` (issue #101, cf. commentaire des
+    constantes ci-dessus pour les deux tournures reconnues). Retourne None
+    si aucune tournure explicite ne permet de trancher — le qualificatif
+    n'est alors pas vérifié par l'appelant (faux négatif assumé)."""
+    apres = fenetre[m.end():m.end() + _FENETRE_BENEFICIAIRE_DIRECT]
+    md = _BENEFICIAIRE_DIRECT_RE.match(apres)
+    if md:
+        if md.group("toi"):
+            return camp_alain_couleur
+        if md.group("adversaire"):
+            return None if camp_alain_couleur is None else not camp_alain_couleur
+        return _couleur_depuis_mot(md.group("camp"))
+    for sm in _BENEFICIAIRE_SUJET_RE.finditer(fenetre):
+        if sm.start() >= m.end():
+            entre = fenetre[m.end():sm.start()]
+        elif sm.end() <= m.start():
+            entre = fenetre[sm.end():m.start()]
+        else:
+            continue
+        if _SUBORDINATION_BENEFICIAIRE_RE.search(entre):
+            continue
+        couleur_sujet = _couleur_depuis_mot(sm.group("camp"))
+        if couleur_sujet is None:
+            continue
+        # "les Blancs y perdent" désigne le camp bénéficiaire INVERSE (les
+        # Noirs) — seul "gagnent" désigne directement le camp sujet lui-même.
+        return not couleur_sujet if sm.group("verbe").lower().startswith("perd") else couleur_sujet
+    return None
 
 
 def _materiel_camp(board: "chess.Board", couleur) -> int:
@@ -920,11 +1013,12 @@ def _fenetre_qualificatif_echange(texte: str, suite: dict) -> str:
     return texte[debut:fin]
 
 
-def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
+def detecter_echanges_mal_qualifies(texte: str, candidats: list, camp_alain: str = "") -> list:
     """Détecte une suite de captures citées (issue #91, tâche 3, AU MOINS
     deux coups — cf. portée ci-dessus) qualifiée dans le texte
     ("équilibré"/"favorable"/"défavorable", ce dernier couple seulement avec
-    un camp explicite à proximité) d'une façon CONTREDITE par le résultat
+    un camp bénéficiaire explicite, cf. _resoudre_beneficiaire_qualificatif,
+    issue #101) d'une façon CONTREDITE par le résultat
     matériel réel de cette suite, rejouée sur l'échiquier depuis l'une des
     positions candidates (même construction que detecter_suites_illegales —
     cette fonction ne duplique ni ne recalcule la légalité : une suite
@@ -966,10 +1060,16 @@ def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
     joue d'aucune façon connue, rien n'est signalé non plus (comme avant
     cette issue, prudence inchangée).
 
+    `camp_alain` (issue #101) : "blancs"/"noirs", "" si inconnu — sert
+    uniquement à résoudre "toi"/"ton adversaire" comme bénéficiaire explicite
+    de "favorable"/"défavorable" (cf. _resoudre_beneficiaire_qualificatif) ;
+    sans lui, ces mots ne résolvent aucun camp.
+
     Retourne une liste de dicts {"type": "echange_mal_qualifie", "gravite":
     str, "detail": str}."""
     if not candidats:
         return []
+    camp_alain_couleur = _camp_alain_chess(camp_alain)
     alertes = []
     for suite in _extraire_suites(texte):
         if suite["si_hypothetique"] or len(suite["coups"]) < 2:
@@ -1008,16 +1108,7 @@ def detecter_echanges_mal_qualifies(texte: str, candidats: list) -> list:
             for m in regex.finditer(fenetre):
                 if _qualificatif_nie(fenetre, m.start()):
                     continue
-                camp_m, meilleure_distance = None, None
-                for cm in _CAMP_MOT_RE.finditer(fenetre):
-                    distance = abs(cm.start() - m.start())
-                    if distance <= _FENETRE_CAMP_PROXIMITE_ECHANGE and (
-                        meilleure_distance is None or distance < meilleure_distance
-                    ):
-                        camp_m, meilleure_distance = cm, distance
-                if camp_m is None:
-                    continue
-                couleur = _couleur_depuis_mot(camp_m.group(1))
+                couleur = _resoudre_beneficiaire_qualificatif(fenetre, m, camp_alain_couleur)
                 if couleur is None:
                     continue
                 deltas_pour_camp = [d if couleur == chess.WHITE else -d for d in deltas]
@@ -1940,7 +2031,7 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         pv_coup_propose, pv_meilleur_coup,
     )
     alertes += detecter_suites_illegales(texte, candidats_suites)
-    alertes += detecter_echanges_mal_qualifies(texte, candidats_suites)
+    alertes += detecter_echanges_mal_qualifies(texte, candidats_suites, camp_alain)
     alertes += detecter_clouage_errone(texte, boards_reference, candidats_suites)
     alertes += detecter_echange_type_incoherent(texte, candidats_suites)
     alertes += detecter_bilan_materiel_annonce(texte, candidats_suites)

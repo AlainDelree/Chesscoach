@@ -158,6 +158,24 @@ pas ces inventions, elles se contentaient de ne pas les couvrir :
     les descriptions mécaniques existantes ne mentionnaient une pièce que
     lorsqu'elle était attaquée (silence total sinon, jamais une négation
     explicite).
+
+Ajouté par l'issue #101, tâche 2, constat sur une série de 20 appels réels
+après la fusion des issues #94 à #100 (même position que ci-dessus, coup
+Re3) : la donnée de _statut_attaque_case existait déjà, mais noyée en fin
+d'une phrase mécanique par ailleurs longue — le coach a quand même affirmé,
+3 fois sur 5, qu'après Be5 le fou noir en e5 attaquait la tour blanche en e3
+(géométriquement faux, il n'attaque que le pion en h2) :
+  - _toutes_pieces_attaquees : TOUTES les pièces des deux camps attaquées
+    sur une position, avec défenseur éventuel, tronqué à
+    _MAX_PIECES_ATTAQUEES_LISTE pour rester court ;
+  - describe_attaques_liste, appelée par describe_pv_with_balance pour le
+    même second demi-coup que _statut_attaque_case ci-dessus (donc pour les
+    trois sources du mode "Exercice", qui partagent toutes cette fonction) :
+    bloc de DEUX listes courtes et déterministes, dans un format séparé
+    plutôt que noyé dans la description mécanique — les cibles de la pièce
+    qui vient de jouer, et toutes les pièces attaquées (deux camps) — avec
+    une phrase explicite si la pièce du demi-coup précédent n'est PAS parmi
+    ces cibles.
 """
 
 import io
@@ -404,6 +422,100 @@ def _statut_attaque_case(board_apres: "chess.Board", case: int, camp_piece,
     )
     echange = _resultat_echange_case(board_apres, case, camp_alain)
     return f"{nom} est désormais attaqué(e) par {noms_attaquants}{echange}"
+
+
+# Nombre maximal de pièces listées par _toutes_pieces_attaquees (issue #101,
+# tâche 2) — réglable en ce seul endroit, pour ne jamais gonfler le contexte
+# sur une position très tactique où de nombreuses pièces sont attaquées des
+# deux côtés.
+_MAX_PIECES_ATTAQUEES_LISTE = 6
+
+
+def _toutes_pieces_attaquees(board_apres: "chess.Board",
+                              max_items: int = _MAX_PIECES_ATTAQUEES_LISTE) -> list[str]:
+    """TOUTES les pièces (des deux camps, roi exclu — un roi attaqué est déjà
+    l'échec, signalé séparément) attaquées sur `board_apres`, avec leur(s)
+    défenseur(s) éventuel(s) — issue #101, tâche 2. Contrairement à
+    _pieces_attaquees_apres ci-dessus (limité aux cibles de LA pièce qui
+    vient de jouer), ce calcul balaie TOUTE la position : sert à fournir au
+    coach une liste explicite et déterministe plutôt que de le laisser
+    deviner quelle pièce, de quel camp, est menacée ailleurs sur l'échiquier.
+    Tronqué à `max_items` (un "…" final le signale) pour rester court."""
+    resultats = []
+    for sq in chess.SQUARES:
+        piece = board_apres.piece_at(sq)
+        if piece is None or piece.piece_type == chess.KING:
+            continue
+        attaquants = sorted(board_apres.attackers(not piece.color, sq))
+        if not attaquants:
+            continue
+        noms_attaquants = ", ".join(
+            f"{_NOM_PIECE_MAJ[board_apres.piece_at(a).piece_type]} {chess.square_name(a)}"
+            for a in attaquants
+        )
+        defenseurs = sorted(board_apres.attackers(piece.color, sq))
+        defense_txt = (
+            ", ".join(
+                f"{_NOM_PIECE_MAJ[board_apres.piece_at(d).piece_type]} {chess.square_name(d)}"
+                for d in defenseurs
+            )
+            if defenseurs else "sans défense"
+        )
+        resultats.append(
+            f"{_NOM_PIECE_MAJ[piece.piece_type]} {_couleur_accordee(piece.piece_type, piece.color)} en "
+            f"{chess.square_name(sq)} attaqué(e) par {noms_attaquants} ({defense_txt})"
+        )
+    if len(resultats) > max_items:
+        resultats = resultats[:max_items] + ["…"]
+    return resultats
+
+
+def describe_attaques_liste(san: str, board_apres: "chess.Board", move: "chess.Move",
+                             case_a_verifier: int | None = None, camp_a_verifier=None,
+                             camp_alain: str = "") -> str:
+    """Bloc de deux listes courtes et déterministes (issue #101, tâche 2),
+    pour la réponse adverse immédiate d'une ligne principale (deuxième
+    demi-coup, cf. describe_pv_with_balance) — constat ayant motivé cet
+    ajout : malgré la donnée déjà fournie par _statut_attaque_case
+    ci-dessus (noyée en fin de phrase mécanique), le coach a affirmé 3 fois
+    sur 5, sur un audit de 20 appels réels, qu'un fou venant de jouer en e5
+    attaquait une tour en e3 qu'il n'attaque géométriquement pas (il
+    n'attaque que le pion en h2). Ce bloc rend le même calcul plus SAILLANT,
+    dans un format de liste séparé plutôt que noyé dans la description
+    mécanique :
+      - les pièces/pions que la pièce qui vient de jouer attaque désormais
+        (même calcul que _pieces_attaquees_apres) ;
+      - TOUTES les pièces des deux camps attaquées après ce coup, avec
+        défenseur éventuel (_toutes_pieces_attaquees).
+    Si `case_a_verifier`/`camp_a_verifier` sont connus (la pièce qui a joué
+    au demi-coup PRÉCÉDENT) et que cette pièce n'est PAS parmi les cibles de
+    la pièce qui vient de jouer, une phrase explicite le dit — jamais
+    seulement déductible par son absence de la première liste.
+
+    Chaîne vide si `move` n'aboutit à aucune pièce sur `board_apres` (ne
+    devrait pas arriver pour un coup légal déjà joué)."""
+    piece = board_apres.piece_at(move.to_square)
+    if piece is None:
+        return ""
+    nom_piece = f"{_NOM_PIECE[piece.piece_type]} {_couleur_accordee(piece.piece_type, piece.color)}"
+    case_piece = chess.square_name(move.to_square)
+    cibles = _pieces_attaquees_apres(board_apres, move.to_square)
+    cibles_txt = ", ".join(cibles) if cibles else "aucune pièce ni pion adverse"
+    phrase = f"Après {san}, {nom_piece} en {case_piece} attaque : {cibles_txt}"
+    if (
+        case_a_verifier is not None and camp_a_verifier is not None
+        and case_a_verifier not in board_apres.attacks(move.to_square)
+    ):
+        cible = board_apres.piece_at(case_a_verifier)
+        if cible is not None and cible.color == camp_a_verifier:
+            nom_cible = f"{_NOM_PIECE[cible.piece_type]} {_couleur_accordee(cible.piece_type, cible.color)}"
+            pronom = "elle" if piece.piece_type in _FEMININ else "il"
+            phrase += (
+                f" ; {pronom} n'attaque PAS {nom_cible} en {chess.square_name(case_a_verifier)}"
+            )
+    toutes = _toutes_pieces_attaquees(board_apres)
+    toutes_txt = "; ".join(toutes) if toutes else "aucune"
+    return f"{phrase}\n  Pièces attaquées après ce coup (les deux camps) : {toutes_txt}"
 
 
 def _attaques_defenses_arrivee(board: "chess.Board", board_apres: "chess.Board",
@@ -1126,6 +1238,16 @@ def describe_pv_with_balance(fen_avant: str, pv_text: str, camp_alain: str = "",
                 statut = _statut_attaque_case(board, case_premier_coup, camp_premier_coup, camp_alain)
                 if statut:
                     description = f"{description} ; {statut}"
+                # Listes explicites d'attaques (issue #101, tâche 2) : le
+                # statut ci-dessus reste noyé en fin de phrase mécanique,
+                # jamais assez saillant à lui seul (cf. docstring de
+                # describe_attaques_liste). Ajouté en bloc séparé, pas en
+                # remplacement.
+                bloc_attaques = describe_attaques_liste(
+                    san, board, move, case_premier_coup, camp_premier_coup, camp_alain,
+                )
+                if bloc_attaques:
+                    description = f"{description}\n  {bloc_attaques}"
             resultat.append({
                 "san": san,
                 "description": description,

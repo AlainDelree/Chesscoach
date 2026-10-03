@@ -19,6 +19,13 @@ faits_attendus:
   # après relance) : le fou noir en e5 (après Be5) n'attaque pas la tour
   # blanche en e3.
   reponse_simulee_signalee: Après Be5, ton fou adverse attaque la tour.
+  # Liste explicite d'attaques (issue #101, tâche 2) : malgré la ligne déjà
+  # fournie dans les données (ci-dessous), le coach a affirmé 3 fois sur 5
+  # que le fou attaquait la tour en e3 — ce bloc doit désormais figurer,
+  # noms exacts, dans le contexte envoyé.
+  texte_contient: le fou noir en e5 attaque
+  texte_contient: n'attaque PAS la tour blanche en e3
+  texte_contient: Pièces attaquées après ce coup (les deux camps)
 
 motifs_interdits:
   échange de dames
@@ -36,6 +43,12 @@ motifs_interdits:
   # detecter_attaque_defense_incoherente (pastille), ce motif est une
   # seconde vérification indépendante, directement sur le texte.
   regex:fou\s+(?:noir\w*|adverse\w*).{0,60}?attaque.{0,20}?tour
+  # Variante sans qualificatif de couleur (issue #101, tâche 4 — constat
+  # réel sur 3 des 5 premières réponses du cas re3) : "le fou attaque ta
+  # tour", sans jamais dire "noir" ni "adverse", reste la même invention
+  # (seul fou présent sur l'échiquier après Be5 est le fou noir en e5, qui
+  # n'attaque pas la tour en e3).
+  regex:\bfou\b.{0,60}?attaque.{0,20}?tour
 
 motifs_attendus:
   mat

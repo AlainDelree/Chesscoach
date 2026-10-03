@@ -28,6 +28,24 @@ faits_attendus:
   # est cité juste avant, dans la même phrase, ce qui rend la suite jouable
   # une fois ce coup précédent inséré. Ne doit déclencher aucune alerte.
   reponse_simulee_verte: Bxh7+ fonctionne dans la position de départ, mais plus après g6 ... Dans la position de départ, Bxh7+ était jouable mais mauvais pour les Blancs : après Nxh7 Nxh7 Kxh7, c'est toi qui sors gagnant de l'échange.
+  # Bénéficiaire d'un qualificatif d'échange (issue #101, cas réel ayant
+  # motivé le correctif) : "favorable" est accolé à "les Blancs" dans une
+  # proposition HYPOTHÉTIQUE introduite par "si" (Bxg6 n'est qu'une
+  # possibilité "si les Blancs s'y risquent"), jamais explicitement lié au
+  # qualificatif lui-même — aucun camp ne doit être retenu, donc aucune
+  # alerte, même si l'échange Bxg6 hxg6 est en réalité favorable aux Noirs
+  # (lecture unique, -2 pour les Blancs).
+  reponse_simulee_verte: g6 bloque la diagonale d3-h7, en plus de forcer l'échange favorable Bxg6 hxg6 si les Blancs s'y risquent.
+  # Variante avec bénéficiaire EXPLICITEMENT lié au qualificatif ("favorable
+  # aux Blancs") : doit être signalée, l'échange Bxg6 hxg6 étant en réalité
+  # favorable aux Noirs (lecture unique, -2 pour les Blancs).
+  reponse_simulee_signalee: g6 bloque la diagonale d3-h7 ; c'est même un échange favorable aux Blancs après Bxg6 hxg6.
+  # Variante "pour toi" (camp_alain = noirs ici) : "défavorable pour toi"
+  # est faux (l'échange est en réalité favorable pour toi, +2) — doit être
+  # signalée.
+  reponse_simulee_signalee: g6 bloque la diagonale d3-h7 ; c'est même un échange défavorable pour toi après Bxg6 hxg6.
+  # Variante "pour toi" correcte (camp_alain = noirs) : aucune alerte.
+  reponse_simulee_verte: g6 bloque la diagonale d3-h7 ; c'est même un échange favorable pour toi après Bxg6 hxg6.
 
 motifs_interdits:
   je ne vois pas cette idée|je ne vois pas cette ligne|je n'ai pas cette idée|je n'ai pas de donnée sur ce coup|pas d'information sur ce coup
