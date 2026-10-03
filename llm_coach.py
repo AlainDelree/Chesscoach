@@ -2373,6 +2373,29 @@ def get_coach_response(messages, context, coach_memory, config):
             "citée, issue #91) et renvoie une réponse complète corrigée, "
             "sans mentionner ce correctif à Alain."
         )
+        # Consignes supplémentaires ciblées (issue #103, tâches 2 et 3) : la
+        # relance reprend EXPLICITEMENT le motif détecté — une reprise de
+        # phrase ou un possessif contradictoire ne se corrige pas de la même
+        # façon qu'une incohérence factuelle (cf. ci-dessus), le rappel
+        # générique seul laisserait trop de latitude au coach pour
+        # réintroduire le même défaut sous une autre forme.
+        types_alertes = {a.get("type") for a in fiabilite["alertes"]}
+        consignes_ciblees = []
+        if "reprise_phrase" in types_alertes:
+            consignes_ciblees.append(
+                "ne reprends ni ne corrige jamais une phrase en cours de "
+                "réponse (aucun \"pardon\", \"ou plutôt\", \"je me "
+                "corrige\"... — écris directement la bonne affirmation, "
+                "sans laisser de trace d'une hésitation précédente)"
+            )
+        if "possessif_incoherent" in types_alertes:
+            consignes_ciblees.append(
+                "accorde chaque possessif (\"ton\"/\"ta\"/\"tes\") avec le "
+                "camp d'Alain : jamais \"ton\"/\"ta\"/\"tes\" devant une "
+                "pièce de la couleur adverse, ni devant le mot \"adverse\""
+            )
+        if consignes_ciblees:
+            rappel += " Attention en particulier : " + " ; ".join(consignes_ciblees) + "."
         messages_relance = clean_messages + [
             {"role": "assistant", "content": response},
             {"role": "user", "content": rappel},

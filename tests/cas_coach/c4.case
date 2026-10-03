@@ -21,6 +21,14 @@ faits_attendus:
   # les Noirs perdent aussi un fou (ils perdent un cavalier) — doit rester
   # signalée (règle symétrique, deux types identiques).
   reponse_simulee_signalee: Si tu joues Nf6, la ligne se poursuit avec Bxc6+ Qxc6, un échange de fou contre fou qui laisse la position équilibrée matériellement.
+  # Possessif cohérent (issue #103, tâche 3, camp_alain noirs dans ce cas) :
+  # "ton cavalier noir" correspond bien au camp d'Alain ici — ne doit pas
+  # être signalé (symétrique du test "ton cavalier noir" signalé dans
+  # re3.case, camp_alain blancs).
+  reponse_simulee_verte: Ton cavalier noir contrôle bien le centre.
+  # "ton" + "adverse" reste contradictoire quel que soit le camp d'Alain
+  # (issue #103, tâche 3) — signalé même ici (camp_alain noirs).
+  reponse_simulee_signalee: Ton fou adverse est dangereux pour ton roi.
 
 motifs_interdits:
   illégal

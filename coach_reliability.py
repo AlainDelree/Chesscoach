@@ -20,12 +20,13 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
     tournure inhabituelle peut échapper à la détection (faux négatif), ou une
     couleur mentionnée par hasard à proximité d'un type de pièce sans lien
     réel peut déclencher une fausse alerte (faux positif) ;
-  - le contrôle "case/pièce" ne connaît que la position de départ et la
-    position actuelle transmises par l'appelant (pas chaque position
-    intermédiaire d'une ligne hypothétique citée en prose) : une case citée
-    dans une ligne hypothétique profonde peut donc être signalée à tort
-    (faux positif), ou une vraie erreur sur une position intermédiaire peut
-    ne pas être détectée (faux négatif) ;
+  - le contrôle "case/pièce" examine désormais (issue #103, tâche 1, cf.
+    paragraphe détaillé plus bas) la position de départ, la position
+    actuelle, les lignes principales fournies au coach ET les positions
+    atteintes en jouant les suites citées dans le texte lui-même — une case
+    citée dans une ligne hypothétique qui ne part d'AUCUNE de ces positions
+    reste cependant hors de portée (faux négatif assumé, comme pour les
+    autres contrôles de suites de ce module) ;
   - le contrôle "suite de coups cités" (issue #90) rejoue les coups cités
     À LA SUITE les uns des autres (même phrase/proposition) depuis la
     position de départ, la position actuelle, après le coup proposé/réel/
@@ -160,6 +161,38 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
     vérifié pour cette occurrence (faux négatif assumé, même philosophie que
     le reste du module) — la vérification de "équilibré(e)" (symétrique,
     aucun camp nécessaire) est inchangée.
+  - trois ajouts (issue #103, série de 20 appels après la fusion des issues
+    #94 à #102, cas réel re3, essai 1 : "Le bon coup était Re8 ! Il force
+    Qxe8 ... et après Qxe8, ta dame en a8 capture la dame noire en e8"
+    signalé à tort "case_incoherente" — la dame noire se trouve bien en e8
+    une fois "Re8 Qxe8" joué, mais le contrôle de case ne regardait alors
+    que la position de départ et la position actuelle ; même réponse,
+    "ton fou... pardon — ton cavalier noir en g6 défend le fou qui vient de
+    se poser en e5" contenant à la fois une reprise de phrase interdite par
+    le prompt et un possessif contradictoire — "ton" devant une pièce NOIRE
+    alors qu'Alain joue les Blancs) :
+    (1) detecter_case_piece_incoherente (cf. ci-dessous) compare désormais
+        une case citée non seulement à boards_reference (position de départ/
+        actuelle) mais aussi à CHAQUE position candidate de suite (`candidats`,
+        même construction que les autres contrôles de ce module — lignes
+        principales comprises) ET à chaque position atteinte en jouant les
+        suites de coups CITÉES DANS LE TEXTE lui-même (même extraction,
+        _extraire_suites, et même rejeu tolérant, _rassembler_lectures, que
+        les contrôles d'échange ci-dessus — coup précédent cité et demi-coup
+        caché compris) : une case cohérente avec AU MOINS UNE de ces
+        positions, quelle qu'elle soit, n'est plus jamais signalée ;
+    (2) detecter_reprises_phrase (nouveau) repère une poignée de marques de
+        reprise/correction en cours de réponse (liste _MARQUEURS_REPRISE,
+        réglable en un seul endroit), interdites par le prompt — gravité
+        "orange", mais déclenche la relance automatique comme toute alerte
+        (cf. evaluer_fiabilite/llm_coach.get_coach_response, qui ne
+        distinguent jamais les alertes par type pour décider de relancer) ;
+    (3) detecter_possessif_incoherent (nouveau) repère un possessif "ton"/
+        "ta"/"tes" directement accolé à un nom de pièce suivi d'une couleur
+        ou du mot "adverse", contredit par le camp d'Alain (`camp_alain`) —
+        même limite de prudence que le reste du module : sans `camp_alain`
+        connu, seule la combinaison "ton"+"adverse" (contradictoire quel que
+        soit le camp) est signalée, jamais une couleur seule.
 """
 
 import logging
@@ -354,20 +387,43 @@ _CASE_PIECE_RE = re.compile(
 )
 
 
-def detecter_case_piece_incoherente(texte: str, boards_reference: list) -> list:
+def detecter_case_piece_incoherente(texte: str, boards_reference: list, candidats: list = None) -> list:
     """Détecte une citation \"<pièce> [<couleur>] en/sur <case>\" (issue #87,
     point 5 — "case citée qui ne contient pas la pièce annoncée") contredite
-    par TOUTES les positions de référence disponibles — même tolérance que
-    detecter_coups_illegaux : une citation cohérente avec AU MOINS UNE des
-    positions de référence n'est jamais signalée, pour limiter les faux
-    positifs sur une ligne hypothétique qui ne part d'aucune des deux
-    positions connues (cf. limites en en-tête de module). Couleur exigée
-    DIRECTEMENT accolée au nom de la pièce dans la citation elle-même
-    (jamais devinée ailleurs dans la phrase, cf. detecter_types_pieces_absents
-    pour la raison de cette exigence) — une citation sans couleur explicite
-    n'est tout simplement pas contrôlée (faux négatif assumé)."""
+    par TOUTES les positions disponibles — même tolérance que
+    detecter_coups_illegaux : une citation cohérente avec AU MOINS UNE de ces
+    positions n'est jamais signalée, pour limiter les faux positifs sur une
+    ligne hypothétique qui ne part d'aucune position connue (cf. limites en
+    en-tête de module). Couleur exigée DIRECTEMENT accolée au nom de la
+    pièce dans la citation elle-même (jamais devinée ailleurs dans la
+    phrase, cf. detecter_types_pieces_absents pour la raison de cette
+    exigence) — une citation sans couleur explicite n'est tout simplement
+    pas contrôlée (faux négatif assumé).
+
+    `candidats` (issue #103, tâche 1 ; même paramètre que detecter_suites_
+    illegales/detecter_echanges_mal_qualifies, cf. _construire_candidats) :
+    chaque position candidate elle-même (position de départ/actuelle, après
+    coup proposé/réel/meilleur, chaque étape des lignes PV, trait inversé)
+    ET, pour chaque suite de coups CITÉE DANS LE TEXTE (_extraire_suites),
+    chaque position atteinte en la rejouant depuis l'une de ces positions
+    (_rassembler_lectures — coup précédent cité et demi-coup caché compris,
+    même tolérance que les contrôles d'échange ci-dessus) sont ajoutées au
+    pool de positions comparées à la case citée. Cas de référence ayant
+    motivé cet ajout (issue #103, essai 1, re3) : "ta dame en a8 capture la
+    dame noire en e8" est vraie dans la position atteinte en jouant la
+    suite citée "Re8 Qxe8" (le meilleur coup suivi de la reprise forcée),
+    jamais dans la position de départ ni la position actuelle seules —
+    l'ancienne version de ce contrôle la signalait donc à tort. "" si
+    `candidats` est omis (défaut None) : comportement inchangé (seules
+    boards_reference sont comparées, comme avant cette issue)."""
     if not boards_reference:
         return []
+    candidats = candidats or []
+    positions_citees = []
+    for suite in _extraire_suites(texte):
+        for _avant, apres in _rassembler_lectures(suite, candidats):
+            positions_citees.append(apres)
+    tous_boards = list(boards_reference) + [b for _label, b in candidats] + positions_citees
     alertes = []
     for m in _CASE_PIECE_RE.finditer(texte):
         piece_type = _NOM_PIECE_TYPE[m.group(1).lower()]
@@ -379,7 +435,7 @@ def detecter_case_piece_incoherente(texte: str, boards_reference: list) -> list:
             (b.piece_at(case) is not None
              and b.piece_at(case).piece_type == piece_type
              and b.piece_at(case).color == couleur)
-            for b in boards_reference
+            for b in tous_boards
         )
         if not coherente_quelque_part:
             camp_txt = "blanc" if couleur == chess.WHITE else "noir"
@@ -388,8 +444,10 @@ def detecter_case_piece_incoherente(texte: str, boards_reference: list) -> list:
                 "type": "case_incoherente",
                 "detail": (
                     f"\"{nom} {camp_txt} en {m.group(3)}\" ne correspond à la "
-                    "pièce présente sur cette case ni dans la position de "
-                    "départ ni dans la position actuelle"
+                    "pièce présente sur cette case dans AUCUNE position "
+                    "connue (position de départ, position actuelle, lignes "
+                    "principales, ni aucune suite de coups citée dans le "
+                    f"texte, {len(tous_boards)} position(s) comparée(s))"
                 ),
             })
     return alertes
@@ -1874,6 +1932,154 @@ def detecter_attaque_defense_incoherente(texte: str, candidats: list, camp_alain
     return alertes
 
 
+# ── Reprises de phrase et possessifs contradictoires (issue #103, tâches 2
+# et 3) ──────────────────────────────────────────────────────────────────
+# Constat ayant motivé ces deux ajouts (même réponse réelle que le cas
+# detecter_case_piece_incoherente ci-dessus, re3, essai 1) : "ton fou...
+# pardon — ton cavalier noir en g6 défend le fou qui vient de se poser en
+# e5" reprend une phrase en cours de réponse (interdit par le prompt, aucun
+# contrôle existant ne le détectait) ET attribue à Alain, via "ton", une
+# pièce NOIRE alors qu'il joue les Blancs (même famille d'erreur que "ton
+# fou adverse attaque la tour", issue #98, mais ici avec une couleur
+# explicite contradictoire plutôt que le mot "adverse").
+
+# Marques de reprise/correction en cours de réponse — liste COURTE et
+# RÉGLABLE EN CE SEUL ENDROIT (ajouter/retirer un tuple (nom, regex) pour
+# changer la détection, cf. evaluer_fiabilite qui l'utilise sans aucune
+# autre dépendance). Chaque motif est volontairement restreint à un
+# contexte qui signale une interruption RÉELLE (points de suspension "...",
+# tiret "—", début de proposition) plutôt qu'au mot seul : "pardon" et "ou
+# plutôt" ont un usage courant qui n'a rien d'une correction ("sans pardon
+# pour les erreurs", "ou plutôt" au sens de préférence, ex. "Nf3, ou plutôt
+# Nc3 si tu préfères un jeu plus actif") — en cas de doute, cf. consigne de
+# l'issue, rien n'est signalé. Les trois derniers motifs ("excuse-moi", "je
+# me corrige", "je me reprends") sont au contraire des signaux jugés
+# suffisamment univoques pour être reconnus sans cette même prudence.
+_MARQUEURS_REPRISE = [
+    ("pardon", re.compile(
+        r"(?:\.{3}|…|—)\s*pardon\b|\bpardon\b\s*(?:\.{3}|…|—)", re.IGNORECASE)),
+    ("excuse-moi / excusez-moi", re.compile(
+        r"\bexcuse[sz]?[\s-]?moi\b", re.IGNORECASE)),
+    ("ou plutôt (reprise)", re.compile(
+        r"(?:\.{3}|…|—)\s*ou\s+plut[oô]t\b", re.IGNORECASE)),
+    ("je me corrige", re.compile(r"\bje\s+me\s+corrige\b", re.IGNORECASE)),
+    ("je me reprends", re.compile(r"\bje\s+me\s+reprends\b", re.IGNORECASE)),
+    ("enfin, (début de proposition)", re.compile(
+        r"(?:^|[.\n!?]\s*|[,;:]\s*)enfin\s*,", re.IGNORECASE)),
+    ("non, (après tiret ou points de suspension)", re.compile(
+        r"(?:\.{3}|…|—)\s*non\s*,", re.IGNORECASE)),
+]
+
+
+def detecter_reprises_phrase(texte: str) -> list:
+    """Détecte, dans `texte`, une marque de reprise ou de correction en
+    cours de réponse (issue #103, tâche 2 ; liste _MARQUEURS_REPRISE
+    ci-dessus) — interdite par la consigne de prompt ("pas de reprise ni de
+    correction en cours de réponse"), mais qu'aucun contrôle déterministe ne
+    détectait jusqu'ici (cf. cas réel ci-dessus). Chaque occurrence trouvée
+    déclenche une alerte de gravité "orange" — cette gravité ne change rien
+    au déclenchement de la relance automatique (évaluée uniquement sur
+    `fiabilite["alertes"]` dans son ensemble, cf.
+    llm_coach.get_coach_response), seulement à la couleur finale affichée
+    si c'est la SEULE famille d'alerte présente.
+
+    Retourne une liste de dicts {"type": "reprise_phrase", "gravite":
+    "orange", "detail": str, "motif": str} — "motif" (nom du marqueur
+    reconnu) sert au journal (consigne explicite de l'issue : "journaliser
+    le motif détecté")."""
+    alertes = []
+    for nom, regex in _MARQUEURS_REPRISE:
+        for m in regex.finditer(texte):
+            alertes.append({
+                "type": "reprise_phrase",
+                "gravite": "orange",
+                "detail": (
+                    f"reprise/correction en cours de réponse détectée "
+                    f"(\"{m.group(0).strip()}\", motif \"{nom}\") — la "
+                    "consigne du prompt interdit toute reprise ou "
+                    "correction en cours de réponse"
+                ),
+                "motif": nom,
+            })
+    return alertes
+
+
+# Possessif "ton"/"ta"/"tes" DIRECTEMENT accolé (ou avec une apposition
+# courte d'un seul mot, ex. "ton propre cavalier noir") à un nom de pièce
+# suivi d'une couleur explicite ou du mot "adverse" (issue #103, tâche 3) —
+# "tu"/"te" ne sont volontairement PAS concernés (consigne explicite de
+# l'issue), ni un possessif sans couleur/"adverse" ("ton cavalier" seul).
+_POSSESSIF_PIECE_COULEUR_RE = re.compile(
+    r"\b(ton|ta|tes)\b(?:\s+\w+)?\s+"
+    r"(dames?|tours?|fous?|cavaliers?|pions?|rois?)\s+"
+    r"(blancs?|blanches?|noirs?|noires?|adverses?)\b",
+    re.IGNORECASE,
+)
+
+
+def detecter_possessif_incoherent(texte: str, camp_alain: str = "") -> list:
+    """Détecte un possessif "ton"/"ta"/"tes" accolé à un nom de pièce suivi
+    d'une couleur explicite ou du mot "adverse" (issue #103, tâche 3,
+    _POSSESSIF_PIECE_COULEUR_RE ci-dessus), contredit par le camp d'Alain
+    (`camp_alain`) : la couleur mentionnée est celle de l'ADVERSAIRE (ex.
+    "ton cavalier noir" alors qu'Alain joue les Blancs), ou "ton"/"ta"/"tes"
+    est associé au mot "adverse" lui-même (ex. "ton fou adverse" — toujours
+    contradictoire, quel que soit le camp d'Alain, puisque "ton" désigne par
+    construction une pièce D'ALAIN, jamais celle de son adversaire).
+
+    Sans `camp_alain` connu (\"\", défaut), seule la combinaison "ton"+
+    "adverse" est signalée (contradiction intrinsèque, qui ne dépend pas du
+    camp) — une couleur explicite ("noir"/"blanc") reste alors simplement
+    non vérifiée (faux négatif assumé, même philosophie que le reste du
+    module : impossible de juger une contradiction entre un possessif et
+    une couleur sans savoir de quel camp "ton" parle).
+
+    Ne signale JAMAIS un possessif sans couleur ni "adverse" ("ton
+    cavalier" seul), ni "tu"/"te" (non concernés par construction de la
+    regex), ni une phrase qui mentionne un possessif cohérent avec son
+    propre camp (ex. "ton fou noir contre le fou blanc adverse" quand Alain
+    joue les Noirs : "ton fou noir" est cohérent, "le fou blanc adverse"
+    n'est précédé d'aucun possessif "ton"/"ta"/"tes" — non signalé non
+    plus, par simple absence de correspondance de la regex).
+
+    Retourne une liste de dicts {"type": "possessif_incoherent", "gravite":
+    "orange", "detail": str}."""
+    camp_alain_couleur = _camp_alain_chess(camp_alain)
+    alertes = []
+    for m in _POSSESSIF_PIECE_COULEUR_RE.finditer(texte):
+        mot_couleur = m.group(3).lower()
+        if mot_couleur.startswith("adverse"):
+            alertes.append({
+                "type": "possessif_incoherent",
+                "gravite": "orange",
+                "detail": (
+                    f"\"{m.group(0).strip()}\" associe le possessif "
+                    f"\"{m.group(1)}\" (une pièce d'Alain) au mot "
+                    "\"adverse\" (une pièce de l'adversaire) — possessif "
+                    "contradictoire"
+                ),
+            })
+            continue
+        if camp_alain_couleur is None:
+            continue
+        couleur_mentionnee = _couleur_depuis_mot(mot_couleur)
+        if couleur_mentionnee is None or couleur_mentionnee == camp_alain_couleur:
+            continue
+        camp_txt = "Blancs" if camp_alain_couleur == chess.WHITE else "Noirs"
+        couleur_txt = "blanche" if couleur_mentionnee == chess.WHITE else "noire"
+        alertes.append({
+            "type": "possessif_incoherent",
+            "gravite": "orange",
+            "detail": (
+                f"\"{m.group(0).strip()}\" associe le possessif "
+                f"\"{m.group(1)}\" (Alain joue les {camp_txt}) à une pièce "
+                f"{couleur_txt} — c'est la pièce de l'adversaire, pas celle "
+                "d'Alain"
+            ),
+        })
+    return alertes
+
+
 def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str = "",
                        analyse_indisponible: bool = False, verdict_partiel: bool = False,
                        coup_propose: str = "", coup_reel: str = "", meilleur_coup: str = "",
@@ -2002,6 +2208,19 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "\"rouge\" seulement si un connecteur de justification de verdict "
         "suit à proximité ou si la même affirmation se répète, sinon "
         "\"orange\" — heuristique approximative, cf. coach_reliability.py)",
+        "reprises de phrase (issue #103) : une poignée de marques de "
+        "reprise/correction en cours de réponse (\"pardon\", \"excuse-moi\", "
+        "\"ou plutôt\", \"je me corrige\"... — liste réglable, cf. "
+        "_MARQUEURS_REPRISE) interdites par le prompt — gravité \"orange\" "
+        "(limite : \"pardon\" et \"ou plutôt\" ne sont reconnus qu'à "
+        "proximité immédiate de points de suspension ou d'un tiret, pour "
+        "ne jamais signaler leur emploi courant sans correction)",
+        "possessif contradictoire (issue #103) : \"ton\"/\"ta\"/\"tes\" "
+        "directement accolé à un nom de pièce suivi d'une couleur ou du "
+        "mot \"adverse\", contredit par le camp d'Alain (\"ton cavalier "
+        "noir\" quand Alain joue les Blancs, \"ton fou adverse\") — gravité "
+        "\"orange\" (limite : sans camp d'Alain connu, seule la combinaison "
+        "\"ton\"+\"adverse\" est signalée)",
     ]
 
     boards_reference = []
@@ -2024,18 +2243,29 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         alertes += detecter_types_pieces_absents(texte, board_pieces)
         alertes += detecter_nombre_pieces_excessif(texte, board_pieces)
         alertes += detecter_echange_impossible(texte, board_pieces)
-    if boards_reference:
-        alertes += detecter_case_piece_incoherente(texte, boards_reference)
+    # candidats_suites construit AVANT detecter_case_piece_incoherente
+    # (issue #103, tâche 1) : ce contrôle a désormais besoin des mêmes
+    # positions candidates que les autres contrôles de suites ci-dessous
+    # (lignes principales, trait inversé...), en plus des positions
+    # atteintes en jouant les suites citées dans le texte lui-même (calculé
+    # à l'intérieur de detecter_case_piece_incoherente).
     candidats_suites = _construire_candidats(
         fen_reference, fen_reference2, coup_propose, coup_reel, meilleur_coup,
         pv_coup_propose, pv_meilleur_coup,
     )
+    if boards_reference:
+        alertes += detecter_case_piece_incoherente(texte, boards_reference, candidats_suites)
     alertes += detecter_suites_illegales(texte, candidats_suites)
     alertes += detecter_echanges_mal_qualifies(texte, candidats_suites, camp_alain)
     alertes += detecter_clouage_errone(texte, boards_reference, candidats_suites)
     alertes += detecter_echange_type_incoherent(texte, candidats_suites)
     alertes += detecter_bilan_materiel_annonce(texte, candidats_suites)
     alertes += detecter_attaque_defense_incoherente(texte, candidats_suites, camp_alain)
+    # Deux contrôles purement textuels (issue #103, tâches 2 et 3) — aucun
+    # besoin de FEN ni de candidats, toujours exécutés dès qu'un texte est
+    # fourni (même sans aucune position de référence connue).
+    alertes += detecter_reprises_phrase(texte)
+    alertes += detecter_possessif_incoherent(texte, camp_alain)
 
     if alertes:
         premiere = alertes[0]["detail"]

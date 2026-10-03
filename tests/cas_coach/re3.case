@@ -26,6 +26,35 @@ faits_attendus:
   texte_contient: le fou noir en e5 attaque
   texte_contient: n'attaque PAS la tour blanche en e3
   texte_contient: Pièces attaquées après ce coup (les deux camps)
+  # Non-régression du contrôle de case étendu aux suites citées (issue
+  # #103, tâche 1, cas réel re3, essai 1) : "ta dame en a8 capture la dame
+  # noire en e8" est vraie dans la position atteinte en jouant la suite
+  # citée "Re8 Qxe8" (le meilleur coup suivi de la reprise forcée), jamais
+  # dans la position de départ ni la position actuelle seules — ne doit
+  # déclencher aucune alerte (régression de l'ancienne version du contrôle,
+  # qui ne connaissait que ces deux positions).
+  reponse_simulee_verte: Le bon coup était Re8, qui force Qxe8 ; après Qxe8, ta dame en a8 capture la dame noire en e8.
+  # Reprise de phrase isolée (issue #103, tâche 2) : "pardon" entre points
+  # de suspension et tiret signale une reprise/correction en cours de
+  # réponse, interdite par le prompt.
+  reponse_simulee_signalee: Ton fou... pardon — c'est une bonne case pour lui.
+  # Possessif contradictoire isolé (issue #103, tâche 3, camp_alain blancs
+  # dans ce cas) : "ton cavalier noir" attribue à Alain la pièce de
+  # l'adversaire.
+  reponse_simulee_signalee: Ton cavalier noir en g6 défend bien sa position.
+  # Cas réel combiné (issue #103, essai 1, re3) : reprise de phrase ET
+  # possessif contradictoire dans la même phrase.
+  reponse_simulee_signalee: Ton fou... pardon — ton cavalier noir en g6 défend le fou qui vient de se poser en e5.
+  # Variante (issue #103, tâche 2, prudence explicite) : "pardon" en emploi
+  # courant (aucune reprise) ne doit jamais être signalé.
+  reponse_simulee_verte: Je ne joue jamais sans pardon pour les erreurs passées.
+  # Variante (issue #103, tâche 3) : "ton cavalier" seul (sans couleur ni
+  # "adverse") ne doit jamais être signalé comme possessif contradictoire.
+  reponse_simulee_verte: Ton cavalier est resté passif tout le long de la partie.
+  # Variante (issue #103, tâche 1, non-régression) : une case citée dont la
+  # pièce annoncée n'existe dans AUCUNE position connue (ni départ/
+  # actuelle, ni aucune suite citée) reste toujours signalée.
+  reponse_simulee_signalee: Ta dame blanche en h4 contrôle toute la diagonale.
 
 motifs_interdits:
   échange de dames
