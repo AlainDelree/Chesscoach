@@ -422,6 +422,23 @@
       width: 420px;
       flex-shrink: 0;
     }
+    /* #game-tabs-column (onglets Coach/Lignes/Analyse/Coups, issue #70) :
+       n'a de sens que sur mobile en mode jeu (cf. media query plus bas, qui
+       le réaffiche via body.mobile-game-active) — ses 4 panneaux
+       .game-tab-panel n'ont de règle "un seul actif à la fois" que DANS
+       cette même media query (.game-tab-panel.active). Sans ce masquage de
+       base, posé ici hors media query, les 4 panneaux s'empilaient tous
+       visibles en même temps sur grand écran, sous une seconde barre
+       d'onglets et un second titre "Historique des coups" — en double de
+       l'historique déjà affiché dans #historique-column à gauche (issue
+       #102, point 3). Constat et choix détaillés dans le rapport de
+       clôture : le panneau de gauche reste la seule référence de
+       l'historique sur grand écran, comme avant les issues mobiles
+       #69/#70 ; Coach/Lignes restent utilisables via #coach-column
+       (toujours visible) et Analyse via l'onglet Bibliothèque/Revue PGN
+       (#game-analysis-panel, #mode-tabs-column) — ces emplacements
+       existaient déjà avant les onglets mobiles, rien n'est perdu. */
+    #game-tabs-column { display: none; }
     .mode-tab-bar {
       display: flex;
       flex-wrap: wrap;
@@ -1664,6 +1681,33 @@
                     </marker>
                   </defs>
                 </svg>
+              </div>
+              <!-- Bulle d'information temporaire (toast), centrée sur le
+                   plateau (issue #102, point 1) : composant réutilisable et
+                   générique — un seul nœud pour toute l'appli, jamais
+                   dupliqué ni déplacé entre mobile et grand écran
+                   (#board-file-column existe à l'identique dans les deux
+                   dispositions, contrairement à GAME_ALWAYS_RELOCATE de
+                   mobile_game.js). Posée ICI, en frère de #board-wrapper
+                   (pas dedans) : #board-wrapper a overflow:hidden (pour
+                   clipper les pièces/flèches à ses bords, cf. board.css) et
+                   clipperait donc une bulle large sur les très petits
+                   plateaux mobiles (mesuré ~174px de côté à 360px de large
+                   en mode jeu, cf. rapport de clôture) — trop étroit pour
+                   un texte lisible sur deux lignes au plus. #board-file-column
+                   n'a lui aucun overflow, et reste positionné ci-dessous
+                   (position:relative, board.css) pour que la bulle
+                   (position:absolute, inset:0) reste centrée sur le plateau
+                   quelle que soit sa taille réelle. Masquée par défaut (pas
+                   de classe "show") ; affichée/mise à jour par
+                   showBoardToast() (board.js), seul endroit qui en règle la
+                   durée. pointer-events:none à tous les niveaux (board.css) :
+                   les touchers/clics sur le plateau ne sont jamais bloqués.
+                   role="status" + aria-live="polite" : annonce discrète aux
+                   lecteurs d'écran (jamais "assertive", qui interromprait
+                   une lecture en cours). -->
+              <div id="board-toast" class="board-toast" role="status" aria-live="polite">
+                <div id="board-toast-bubble" class="board-toast-bubble"></div>
               </div>
               <div id="coord-file"></div>
             </div>

@@ -283,6 +283,11 @@ function updateOpeningStatus() {
 // d'une question d'Alain, il ne doit donc jamais à lui seul déclencher le
 // plateau réduit mobile.
 const OPENING_THEORY_END_MESSAGE = "Fin de la théorie : le livre d'ouvertures ne connaît plus cette position, la partie continue contre le moteur.";
+// Version courte (issue #102, point 2) : pour la bulle temporaire
+// (showBoardToast, board.js) uniquement — tient sur deux lignes au plus à
+// 360/390px de large (cf. rapport de clôture). Le message complet ci-dessus
+// reste inchangé dans le chat du coach ET la ligne d'état.
+const OPENING_THEORY_END_MESSAGE_COURT = "Fin de la théorie : la partie continue contre le moteur.";
 
 function _announceOpeningTheoryEnd() {
   if (openingTheoryEndAnnounced) return;
@@ -290,6 +295,7 @@ function _announceOpeningTheoryEnd() {
   _coachRenderBubble("assistant", OPENING_THEORY_END_MESSAGE, false, "coach-bubble-announce");
   const statusEl = document.getElementById("opening-status");
   if (statusEl) statusEl.textContent = OPENING_THEORY_END_MESSAGE;
+  if (typeof showBoardToast === "function") showBoardToast(OPENING_THEORY_END_MESSAGE_COURT);
 }
 
 function openingIsAlainTurn() {

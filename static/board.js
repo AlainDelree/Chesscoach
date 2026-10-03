@@ -1052,6 +1052,39 @@ function _coachBuildSignalerUI(container, meta) {
   return wrap;
 }
 
+// ── Bulle temporaire (toast) centrée sur le plateau (issue #102, point 1) ──
+// Composant réutilisable et générique : un texte court, affiché au centre du
+// plateau (#board-toast dans #board-wrapper, templates/index.html), qui
+// disparaît seul après CC_TOAST_DURATION_MS avec un fondu (transition CSS
+// opacity, board.css) — SEUL endroit où régler cette durée. N'importe quel
+// appelant (opening.js pour la fin de théorie, d'autres modes plus tard) ne
+// gère lui-même que la logique de dédoublonnage par événement (ex.
+// openingTheoryEndAnnounced), jamais l'affichage/minuterie/fondu, communs à
+// tout le monde ici. Ne bloque ni les touchers ni les coups (pointer-events:
+// none à tous les niveaux, board.css), ne déplace rien et ne réduit pas le
+// plateau (position:absolute, aucun impact sur le flux de la page). Un seul
+// nœud dans tout le document (#board-wrapper existe à l'identique sur mobile
+// et grand écran) : un nouvel appel remplace le texte et relance la
+// minuterie plutôt que d'empiler plusieurs bulles.
+const CC_TOAST_DURATION_MS = 4000;
+const CC_TOAST_FADE_MS = 400; // doit rester cohérent avec la transition CSS .board-toast (board.css)
+let _ccToastHideTimer = null;
+let _ccToastClearTimer = null;
+
+function showBoardToast(text) {
+  const toast = document.getElementById("board-toast");
+  const bubble = document.getElementById("board-toast-bubble");
+  if (!toast || !bubble || !text) return;
+  clearTimeout(_ccToastHideTimer);
+  clearTimeout(_ccToastClearTimer);
+  bubble.textContent = text;
+  toast.classList.add("show");
+  _ccToastHideTimer = setTimeout(() => {
+    toast.classList.remove("show");
+    _ccToastClearTimer = setTimeout(() => { bubble.textContent = ""; }, CC_TOAST_FADE_MS);
+  }, CC_TOAST_DURATION_MS);
+}
+
 // `allowPageScroll` (issue #67, défaut false) : à ne passer à true que pour
 // les réponses qu'Alain attend activement (réponse à une question tapée,
 // réponse à "Demander l'avis du coach") — pas pour les messages automatiques
