@@ -70,6 +70,64 @@
   position: relative;
 }
 
+/* #board-file-column (défini dans templates/index.html) : contexte de
+   positionnement pour la bulle temporaire ci-dessous — ajouté ici plutôt que
+   sur #board-wrapper (overflow:hidden, trop étroit sur les plus petits
+   plateaux mobiles pour une bulle lisible sur deux lignes, cf. commentaire
+   détaillé dans templates/index.html). */
+#board-file-column { position: relative; }
+
+/* Bulle d'information temporaire (toast) centrée sur le plateau — composant
+   réutilisable et générique (issue #102, point 1) : un texte court qui
+   apparaît puis disparaît seul après CC_TOAST_DURATION_MS (board.js, réglage
+   en un seul endroit), avec un fondu. Jamais de --cc-accent (terracotta) :
+   rien n'y est cliquable, la palette le réserve au cliquable (cf. en-tête de
+   ce fichier) — fond neutre foncé semi-transparent à la place, lisible aussi
+   bien sur les cases claires (--cc-neutral-200) que foncées
+   (--cc-accent-2-400) dessous. pointer-events:none sur le conteneur ET la
+   bulle : ne bloque jamais un toucher/clic sur le plateau en dessous (coups
+   toujours jouables pendant son affichage). Ancrée dans #board-file-column
+   (position:relative ci-dessus), donc toujours centrée sur le plateau réel
+   quelle que soit sa taille (mobile réduit/normal, grand écran) sans jamais
+   modifier le flux de la page ni la taille du plateau (position:absolute,
+   aucun impact sur le dimensionnement du plateau). max-width de la bulle en
+   largeur fixée en min(280px, 88vw) sur le conteneur lui-même (positionné par
+   transform plutôt que inset:0) plutôt que 100% de la largeur du plateau :
+   sur les plus petits plateaux mobiles (~170-260px de côté en mode jeu),
+   inset:0 confinerait la bulle à la largeur du plateau lui-même et ferait
+   dépasser deux lignes pour un texte même court — elle peut donc légèrement
+   déborder des bords du plateau (jamais de la largeur de l'écran), ce qui
+   reste visuellement "au centre du plateau" tel que demandé. */
+.board-toast {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(280px, 88vw);
+  transform: translate(-50%, -50%);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.board-toast.show { opacity: 1; }
+.board-toast-bubble {
+  pointer-events: none;
+  box-sizing: border-box;
+  width: 100%;
+  background: color-mix(in srgb, var(--cc-neutral-800) 82%, transparent);
+  color: #fff;
+  font-family: var(--cc-font-body);
+  font-weight: 600;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  text-align: center;
+  border-radius: var(--cc-radius-md);
+  padding: 8px 12px;
+  box-shadow: var(--cc-shadow-lg);
+}
+
 .square {
   display: flex;
   align-items: center;
