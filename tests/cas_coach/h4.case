@@ -46,7 +46,7 @@ faits_attendus:
   reponse_simulee_signalee: Après Qxh4 gxh4, un échange de cavalier contre dame.
 
 motifs_interdits:
-  expansion
+  regex: (?<!pas )(?<!pas une )(?<!paraît )(?<!paraît une )(?<!comme une )\bexpansion\b(?![^.\n]{0,40}mais)(?![^.\n]{0,15}offensive[^.\n]{0,15}non)
   regex: qxh4[\s,]*gxh4[^.\n]{0,80}[ée]quilibr|[ée]quilibr[^.\n]{0,80}qxh4[\s,]*gxh4
 
 motifs_attendus:
