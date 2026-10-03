@@ -89,6 +89,46 @@
       font-weight: 400;
     }
 
+    /* Listes déroulantes des ouvertures/finales (issue #100, point 3) :
+       jusqu'ici des <select> entièrement nus (style navigateur par défaut),
+       détonnant avec le reste de l'appli d'après Alain — comparées au
+       sélecteur de mode en haut à gauche (.mode-tab-bar:not(.open)
+       .mode-tab-btn.active plus bas : même bordure terracotta 2px, même
+       radius pilule, même police Caprasimo/poids 400). Appliquée telle
+       quelle (pas de média query) : le besoin ("sur mobile ET sur grand
+       écran") est identique aux deux tailles, contrairement aux styles
+       d'habillage mobile ci-dessous qui réorganisent la DISPOSITION de la
+       page. Garde la flèche native du navigateur plutôt qu'une flèche
+       recréée en CSS (appearance:none) : ce <select> reste un contrôle de
+       formulaire standard (zone de frappe clavier, défilement natif de ses
+       options — utile pour la cinquantaine d'ouvertures listées), seule son
+       apparence de repos est alignée sur le reste de l'appli, pas son
+       fonctionnement. min-height 44px (issue #50) : même cible tactile
+       minimale que les boutons génériques ci-dessus ; width:100% + box-sizing
+       border-box : jamais de débordement horizontal, quelle que soit la
+       largeur du conteneur flex qui l'entoure (#opening-start-buttons/
+       #finale-picker-row, déjà flex-wrap:wrap avec ce <select> en flex-basis
+       100%). */
+    .cc-select {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      font-family: var(--cc-font-heading);
+      font-weight: 400;
+      font-size: 0.95rem;
+      color: var(--cc-accent-strong);
+      background: var(--cc-bg);
+      border: 2px solid var(--cc-accent);
+      border-radius: var(--cc-radius-pill);
+      padding: 8px 14px;
+      min-height: 44px;
+      cursor: pointer;
+    }
+    .cc-select:disabled { opacity: 0.5; cursor: not-allowed; }
+    @media (hover: hover) and (pointer: fine) {
+      .cc-select:hover:not(:disabled) { background: var(--cc-neutral-200); }
+    }
+
     /* Sélecteur de modèle Claude actif (issue #61) : deux boutons contigus
        façon "segmented control", discret dans l'en-tête près du compteur de
        tokens. ID/classe dédiés (spécificité CSS) pour échapper à la règle
@@ -929,6 +969,23 @@
     #mobile-analysis-slot { display: contents; }
     .board-lines-command-bar { display: none; }
 
+    /* Issue #100 (bug préexistant découvert en testant la non-régression
+       grand écran des points 1/4) : .mode-start-slot/#mobile-game-idle-msg/
+       #mobile-game-over-bar n'avaient leur valeur par défaut (display:contents/
+       none) déclarée QUE dans la media query mobile juste en dessous — sur
+       grand écran, où cette media query ne s'applique jamais, ces 3 éléments
+       retombaient sur leur display natif (block), les rendant visibles "nus"
+       (hors de tout habillage .mobile-game-active) à côté des contrôles/du
+       grand bandeau desktop correctement affichés par ailleurs (repéré avec
+       Playwright en vérifiant la non-régression de #game-over-banner à 1400px
+       après les points 1/4 de cette issue). Même pattern que les deux lignes
+       ci-dessus : une valeur par défaut hors media query, resurclassée sans
+       changement par les règles ".show"/"body.mobile-game-active ..." de la
+       media query pour l'affichage mobile proprement dit. */
+    .mode-start-slot { display: contents; }
+    #mobile-game-idle-msg { display: none; }
+    #mobile-game-over-bar { display: none; }
+
     /* ── Issue #70 : écran de partie mobile (plateau fixe, onglets, bande
        compacte) — d'après la maquette design/partie_mobile/ (Claude Design,
        référence de disposition/comportement, pas de code ni de couleurs).
@@ -1248,11 +1305,27 @@
       body.mobile-game-active #mobile-game-idle-msg.show {
         display: block; font-size: 0.8rem; color: var(--cc-text-muted); text-align: center; padding: 10px 6px; margin-top: 6px;
       }
-      /* Bandeau de résultat remplace la barre d'actions/le bandeau avant-partie
+      /* Bandeau de résultat remplace la barre d'actions/l'invite "menu ⋯"
          (point 4) plutôt que de les superposer — classe posée par
-         showGameOverBanner/hideGameOverBanner (board.js). */
+         showGameOverBanner/hideGameOverBanner (board.js). #mobile-game-idle-msg
+         ne concerne que la partie libre (pas de sélecteur de redémarrage
+         dédié, cf. _updateActionBarState, mobile_game.js) : rien à proposer
+         tant qu'une nouvelle partie libre n'est pas lancée depuis le menu "...".
+         .mode-start-slot (issue #100, point 1) VOLONTAIREMENT absent de cette
+         règle depuis cette issue : avant, il restait masqué avec le reste
+         jusqu'à un clic explicite sur "Nouvelle partie" (mobileNewGameFromBanner,
+         mobile_game.js) — pédagogique/ouverture/finales, les trois modes qui en
+         ont un, l'avaient déjà replacé dans son slot dès la fin de partie
+         (placePedagogicStartButtonsForViewport/placeOpeningStartButtonsForViewport/
+         placeFinaleStartButtonsForViewport, appelées par abandonXGame() et par
+         les gestionnaires socket de fin de partie — gameEnCours devient faux dès
+         que XGameOver passe à true, indépendamment de cette classe CSS), seul
+         ce masquage empêchait de le voir. Alain avait signalé devoir recharger
+         la page pour relancer une autre ouverture/finale : masquer le sélecteur
+         jusqu'à "Nouvelle partie" en était la cause — il suffit maintenant de
+         choisir directement dans la liste redevenue visible à côté du résultat,
+         sans étape intermédiaire. */
       body.game-over-active.mobile-game-active #shared-mode-controls,
-      body.game-over-active.mobile-game-active .mode-start-slot,
       body.game-over-active.mobile-game-active #mobile-game-idle-msg {
         display: none !important;
       }
@@ -1262,62 +1335,69 @@
          (showGameOverBanner) pose style.display="block" en ligne. */
       body.mobile-game-active #game-over-banner { display: none !important; }
       /* Bande compacte de fin de partie (issue #77 point 2, d'après la
-         maquette design/partie_mobile/FinCoach.dc.html ; rendue réellement
-         tenable sur une seule ligne par l'issue #86 point 1) : le résultat et
-         les boutons "Analyser cette partie"/"Nouvelle partie", à la place de
-         la barre d'actions — réutilise les couleurs par résultat de
+         maquette design/partie_mobile/FinCoach.dc.html ; refondue en deux
+         lignes par l'issue #100 point 4) : le résultat (libellé court, sa
+         propre ligne) puis les boutons "Analyser"/"Commenter"/"Nouvelle
+         partie" (seconde ligne pleine largeur), à la place de la barre
+         d'actions — réutilise les couleurs par résultat de
          .game-over-banner--* (board.css) plutôt que de les dupliquer, cf.
          _showMobileGameOverBar (board.js). Masquée en plateau réduit comme la
          barre d'actions (cf. règle #board-sticky-wrap.board-compact plus
          haut, qui liste aussi cet id) — désormais atteignable après une fin
          de partie grâce à _isGameSessionActive() (mobile_game.js), pas
          seulement pendant une partie en cours.
-         AVANT l'issue #86 : flex-wrap:wrap + le texte en flex:1 1 100% le
-         forçaient sur sa PROPRE ligne, les deux boutons se répartissant la
-         largeur sur la ligne suivante — deux lignes dans les faits malgré le
-         commentaire de l'issue #77, consommant de la place dans la partie
-         fixe de l'écran pendant toute la lecture du résultat (constat du
-         rapport de clôture). APRÈS : flex-wrap:nowrap, texte tronqué avec
-         ellipse (flex:1 1 auto + min-width:0) plutôt que d'exiger sa propre
-         ligne, boutons dimensionnés à leur contenu (flex:0 0 auto, jamais
-         tronqués) avec une police/un remplissage plus petits — une seule
-         ligne quelle que soit la longueur du message de résultat. */
+         Issue #86 : une seule ligne nowrap (texte tronqué avec ellipse,
+         boutons dimensionnés à leur contenu) pour éviter que #77 ne prenne
+         deux lignes PAR DÉFAUT même avec un résultat/libellés courts.
+         Issue #100 point 4 : avec le bouton "Commenter" du mode pédagogique,
+         jusqu'à trois boutons à leurs libellés COMPLETS ("Analyser"/
+         "Commenter"/"Nouvelle partie") ne tenaient plus sur cette même ligne
+         à 360-390px — tronqués avec une ellipse ("Anal…"/"Comm…"/
+         "Nouvelle…", repéré par Alain). Plutôt que raccourcir encore les
+         libellés (déjà les plus courts raisonnables depuis #95), ou
+         remplacer les boutons de revue (option écartée par Alain, trop de
+         déplacement d'éléments) : deux lignes DÉLIBÉRÉES — le résultat seul
+         sur la première (texte court dérivé par _shortGameOverLabel,
+         board.js, jamais le message long du grand bandeau desktop), les
+         trois boutons pleine largeur sur la seconde, chacun avec assez de
+         place pour son libellé complet sans ellipse. */
       #mobile-game-over-bar { display: none; }
       body.mobile-game-active #mobile-game-over-bar.show {
         display: flex;
-        flex-wrap: nowrap;
-        align-items: center;
+        flex-direction: column;
         gap: 6px;
         width: 100%;
         box-sizing: border-box;
         margin-top: 6px;
-        padding: 6px 10px;
+        padding: 8px 10px;
         border-radius: var(--cc-radius-md);
       }
       #mobile-game-over-bar #mobile-game-over-text {
-        flex: 1 1 auto;
-        min-width: 0;
+        width: 100%;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        font-size: 0.78rem;
+        font-size: 0.8rem;
         font-weight: 700;
       }
-      /* flex: 0 1 auto + min-width:0 + ellipsis (issue #95, point 3) : avec
-         l'ajout du bouton "Commenter la partie" en mode pédagogique, jusqu'à
-         trois boutons peuvent coexister sur cette même ligne (flex-wrap:
-         nowrap, voir #mobile-game-over-bar ci-dessus) — leurs largeurs
-         naturelles cumulées dépassaient alors la largeur de l'écran sur GSM
-         étroit (débordement horizontal constaté à 360px et 390px avec
-         Playwright), le texte flex:0 0 auto ne pouvant jamais rétrécir.
-         Peuvent désormais rétrécir (et tronquer avec une ellipse en dernier
-         recours) exactement comme #mobile-game-over-text déjà à côté. */
+      #mobile-game-over-actions {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 6px;
+        width: 100%;
+      }
+      /* flex: 1 1 0 (issue #100 point 4) : les trois boutons se partagent la
+         largeur à égalité sur leur propre ligne pleine largeur — assez de
+         place pour leurs libellés complets à 360px (mesuré avec Playwright,
+         cf. rapport de clôture), l'ellipsis/overflow:hidden ci-dessous
+         restant un filet de sécurité plutôt que le cas normal (contrairement
+         à avant l'issue #100, où il se déclenchait systématiquement). */
       #mobile-game-over-bar button {
-        flex: 0 1 auto;
+        flex: 1 1 0;
         min-width: 0;
-        font-size: 0.72rem;
+        font-size: 0.74rem;
         min-height: 0;
-        padding: 6px 8px;
+        padding: 7px 4px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1679,23 +1759,31 @@
            que l'ancien bandeau, inchangé). "Nouvelle partie" (issue #77
            point 4) ramène l'écran à l'état avant-partie du mode actif, sans
            recharger la page (mobileNewGameFromBanner, mobile_game.js). -->
-      <!-- Libellés raccourcis ("Analyser"/"Commenter", issue #95 point 3) par
-           rapport au grand bandeau desktop ("Analyser cette partie"/
-           "Commenter la partie", board.js showGameOverBanner) : avec jusqu'à
-           trois boutons sur cette même ligne compacte (mode pédagogique),
-           les libellés complets débordaient horizontalement de la page à
-           360-390px de large (repéré avec Playwright) avant ce
-           raccourcissement — "Nouvelle partie" reste complet, déjà bien plus
-           court. -->
+      <!-- Deux lignes (issue #100, point 4) : le résultat (libellé COURT,
+           dérivé du camp/de l'abandon par _shortGameOverLabel, board.js — ex.
+           "Blancs gagnent"/"Défaite par abandon"/"Nulle") sur sa propre ligne
+           compacte, les boutons sur une seconde ligne pleine largeur avec
+           leurs libellés COMPLETS ("Analyser"/"Commenter"/"Nouvelle partie").
+           Avant cette issue, résultat + jusqu'à trois boutons partageaient
+           une seule ligne nowrap : les libellés, déjà raccourcis par l'issue
+           #95 point 3 ("Analyser"/"Commenter" plutôt que "Analyser cette
+           partie"/"Commenter la partie"), se faisaient quand même tronquer
+           avec une ellipse à 360-390px de large (repéré par Alain : "Anal…"/
+           "Comm…"/"Nouvelle…") — la largeur d'écran ne suffisait pas même
+           pour les versions déjà courtes. Les libellés eux-mêmes restent
+           inchangés par rapport à l'issue #95 (déjà les plus courts
+           raisonnables) ; seule la disposition change. -->
       <div id="mobile-game-over-bar">
-        <span id="mobile-game-over-text"></span>
-        <button type="button" id="mobile-game-over-analyse-btn">Analyser</button>
-        <!-- "Commenter" (issue #95, point 3) : masqué par défaut, affiché
-             par _showMobileGameOverBar (board.js) seulement quand l'appelant
-             fournit onCommenter (pedagogic.js uniquement) — même principe
-             que "Analyser" ci-dessus. -->
-        <button type="button" id="mobile-game-over-comment-btn" style="display:none;">Commenter</button>
-        <button type="button" id="mobile-game-over-newgame-btn" onclick="mobileNewGameFromBanner()">Nouvelle partie</button>
+        <div id="mobile-game-over-text"></div>
+        <div id="mobile-game-over-actions">
+          <button type="button" id="mobile-game-over-analyse-btn">Analyser</button>
+          <!-- "Commenter" (issue #95, point 3) : masqué par défaut, affiché
+               par _showMobileGameOverBar (board.js) seulement quand l'appelant
+               fournit onCommenter (pedagogic.js uniquement) — même principe
+               que "Analyser" ci-dessus. -->
+          <button type="button" id="mobile-game-over-comment-btn" style="display:none;">Commenter</button>
+          <button type="button" id="mobile-game-over-newgame-btn" onclick="mobileNewGameFromBanner()">Nouvelle partie</button>
+        </div>
       </div>
     </div>
 
@@ -1913,7 +2001,7 @@
                finales : contrairement à une finale, une ouverture nécessite
                encore de préciser la couleur jouée. -->
           <div id="opening-start-buttons" class="mode-start-buttons" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-            <select id="opening-select" style="flex:1 1 100%; min-width:180px;">
+            <select id="opening-select" class="cc-select" style="flex:1 1 100%;">
               <option value="">— Choisir une ouverture —</option>
             </select>
             <button onclick="startOpeningGame('blancs')">Jouer les Blancs</button>
@@ -1947,7 +2035,7 @@
                finale, donc de démarrer (rapport de clôture : "l'écran ne
                réagit à quasi rien"). -->
           <div id="finale-picker-row" class="mode-start-buttons" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-            <select id="finale-select" style="flex:1 1 100%; min-width:0;" onchange="onFinaleSelectChange()">
+            <select id="finale-select" class="cc-select" style="flex:1 1 100%; min-width:0;" onchange="onFinaleSelectChange()">
               <option value="">— Choisir une finale —</option>
             </select>
             <label style="font-size:0.78rem;">

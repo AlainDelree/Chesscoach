@@ -122,7 +122,9 @@ function abandonFinaleGame() {
   showGameOverBanner(
     { gagnant: opposant, message: "Partie abandonnée par Alain — défaite." },
     finaleCampAlain,
-    () => analyserPartieDepuisPgn(_finaleGamePgnForAnalysis())
+    () => analyserPartieDepuisPgn(_finaleGamePgnForAnalysis()),
+    undefined,
+    true
   );
   // Issue #65 point 5 : grise "Demander l'avis du coach" (askCoachAvailable,
   // controls.js) dès l'abandon.

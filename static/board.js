@@ -1430,8 +1430,31 @@ function resetBoardToNeutral() {
 // bouton "Commenter la partie" — fourni par pedagogic.js uniquement (demande
 // un commentaire global de la partie qui vient de se terminer, même effet
 // que "Demander l'avis du coach").
+//
+// `abandon` (issue #100, point 4) : partie terminée par "Abandonner" plutôt
+// que par mat/pat/nulle — distingue ce cas dans le libellé court de la bande
+// compacte mobile (_shortGameOverLabel ci-dessous), Alain ayant signalé
+// vouloir le savoir plutôt que de lire un générique "X gagnent" qui suggère à
+// tort un mat.
 
-function showGameOverBanner(gameOverInfo, campAlain, onAnalyser, onCommenter) {
+// Libellé court pour la bande compacte mobile (issue #100, point 4) : le
+// texte complet transmis par l'appelant (gameOverInfo.message, ex. "Échec et
+// mat — les Blancs gagnent la partie.") débordait ou se faisait tronquer à
+// 360-390px une fois réparti à côté des trois boutons "Analyser"/
+// "Commenter"/"Nouvelle partie" (constat du rapport de clôture de l'issue
+// #95/#86). Dérivé du camp gagnant plutôt que du texte serveur, par camp
+// ("Blancs gagnent"/"Noirs gagnent") plutôt que victoire/défaite — suggestion
+// d'Alain, qui reste vraie quel que soit le camp qu'il joue et ne nécessite
+// pas campAlain. Seul le grand bandeau desktop (#game-over-banner) continue
+// d'utiliser le texte complet, pas contraint par la même largeur.
+function _shortGameOverLabel(gameOverInfo, abandon) {
+  if (!gameOverInfo) return "";
+  if (abandon) return gameOverInfo.gagnant ? "Défaite par abandon" : "Partie abandonnée";
+  if (!gameOverInfo.gagnant) return "Nulle";
+  return gameOverInfo.gagnant === "blancs" ? "Blancs gagnent" : "Noirs gagnent";
+}
+
+function showGameOverBanner(gameOverInfo, campAlain, onAnalyser, onCommenter, abandon) {
   const el = document.getElementById("game-over-banner");
   if (!el || !gameOverInfo) return;
   let categorie = "nulle";
@@ -1469,7 +1492,7 @@ function showGameOverBanner(gameOverInfo, campAlain, onAnalyser, onCommenter) {
   // fragile sur le style inline ci-dessus.
   document.body.classList.add("game-over-active");
 
-  _showMobileGameOverBar(gameOverInfo.message, categorie, onAnalyser, onCommenter);
+  _showMobileGameOverBar(_shortGameOverLabel(gameOverInfo, abandon), categorie, onAnalyser, onCommenter);
   // Plateau réduit mobile dès la fin de partie si l'onglet déjà ouvert
   // déborde (issue #86 point 1/2) — pas seulement au prochain défilement ou
   // changement d'onglet.
@@ -1479,20 +1502,29 @@ function showGameOverBanner(gameOverInfo, campAlain, onAnalyser, onCommenter) {
 // Bande compacte de fin de partie sur mobile (issue #77 point 2) : ce grand
 // bandeau (ci-dessus) reste utilisé tel quel sur grand écran, mais masqué sur
 // mobile (cf. <style>, templates/index.html) au profit de #mobile-game-over-bar
-// — une seule ligne, mêmes classes de couleur par résultat
-// (.game-over-banner--victoire/defaite/nulle/mat, board.css, réutilisées telles
-// quelles). "Analyser cette partie" seulement si l'appelant fournit onAnalyser
-// (mêmes conditions que le grand bandeau, inchangé) ; "Nouvelle partie"
-// (mobileNewGameFromBanner, mobile_game.js) y est toujours proposé.
+// — mêmes classes de couleur par résultat (.game-over-banner--victoire/
+// defaite/nulle/mat, board.css, réutilisées telles quelles). "Analyser cette
+// partie" seulement si l'appelant fournit onAnalyser (mêmes conditions que le
+// grand bandeau, inchangé) ; "Nouvelle partie" (mobileNewGameFromBanner,
+// mobile_game.js) y est toujours proposé.
 // "Commenter la partie" (issue #95, point 3) : même principe que "Analyser
 // cette partie" ci-dessus, affiché seulement si onCommenter est fourni
 // (pedagogic.js uniquement).
-function _showMobileGameOverBar(message, categorie, onAnalyser, onCommenter) {
+// Issue #100 point 4 : deux lignes plutôt qu'une seule (#mobile-game-over-text
+// prend désormais toute la largeur sur sa propre ligne, les boutons une
+// seconde ligne pleine largeur juste en dessous, cf. <style>) — avec jusqu'à
+// trois boutons et leurs libellés complets ("Analyser"/"Commenter"/"Nouvelle
+// partie"), une seule ligne nowrap les tronquait avec une ellipse à 360-390px
+// (repéré par Alain : "Anal…"/"Comm…"/"Nouvelle…"). `label` (court, dérivé par
+// _shortGameOverLabel ci-dessus, ex. "Blancs gagnent"/"Défaite par abandon")
+// plutôt que le message complet du grand bandeau, qui débordait encore sur sa
+// propre ligne pour les résultats les plus longs.
+function _showMobileGameOverBar(label, categorie, onAnalyser, onCommenter) {
   const bar = document.getElementById("mobile-game-over-bar");
   if (!bar) return;
   bar.className = "mobile-game-over-bar game-over-banner--" + categorie + " show";
   const textEl = document.getElementById("mobile-game-over-text");
-  if (textEl) textEl.textContent = message;
+  if (textEl) textEl.textContent = label;
   const analyseBtn = document.getElementById("mobile-game-over-analyse-btn");
   if (analyseBtn) {
     analyseBtn.style.display = (typeof onAnalyser === "function") ? "" : "none";
