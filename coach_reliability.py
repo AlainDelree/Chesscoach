@@ -1352,6 +1352,94 @@ _ECHANGE_TYPE_CONTRE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Gardes-fous supplémentaires sur la forme asymétrique "<type1> contre
+# <type2>" (issue #104) — faux positif réel constaté sur le cas h4, essai 1 :
+# "tu restes solidement en avance au matériel (dame, deux tours, deux fous,
+# un cavalier contre dame, deux tours, un fou, un cavalier pour
+# l'adversaire)" a été pris pour un échange "cavalier contre dame", alors
+# que "contre" y sépare deux énumérations de matériel (le décompte d'Alain,
+# puis celui de l'adversaire) — ce n'est pas un échange du tout. Deux
+# conditions, appliquées dans cet ordre par _est_echange_type_contre :
+#   1. "X contre Y" n'est candidat à un échange QUE si le mot "échange"/
+#      "échanger"/"échanges"/"troc" apparaît dans les
+#      _FENETRE_MOT_ECHANGE_CONTRE caractères qui précèdent, dans la même
+#      proposition (jamais au-delà d'un "."/";" rencontré en remontant) —
+#      OU si "X contre Y" suit IMMÉDIATEMENT la suite de coups citée
+#      elle-même (rien d'autre qu'espace/virgule/ponctuation entre les
+#      deux). Sinon, ignoré ("en cas de doute, ne rien signaler").
+#   2. Même candidat, "X contre Y" reste ignoré s'il ressemble à un
+#      inventaire de matériel plutôt qu'à un échange : "contre" séparant
+#      deux énumérations de pièces (virgule et/ou quantité des deux
+#      côtés), ou les mots "matériel"/"avantage"/"adversaire"/"adverse" à
+#      proximité immédiate (ex. "en avance au matériel (...)", "... pour
+#      l'adversaire").
+# Conserve inchangé le comportement actuel pour "échange de X contre Y" (le
+# mot "échange" précède toujours de peu "de X contre Y") et pour "échange
+# de X" (_ECHANGE_DE_TYPE_RE, jamais concerné par ces gardes-fous).
+_MOT_ECHANGE_CONTRE_RE = re.compile(r"\b([ée]chang(?:e|er|es)|troc)\b", re.IGNORECASE)
+_FENETRE_MOT_ECHANGE_CONTRE = 40
+
+_INVENTAIRE_MATERIEL_CONTRE_RE = re.compile(
+    r"\b(mat[ée]riell?e?|avantage\w*|adversaires?|adverses?)\b", re.IGNORECASE
+)
+_QUANTITE_PIECE_CONTRE_RE = r"(?:\d+|une?|deux|trois|quatre|cinq|des?)\s+"
+_ENUMERATION_AVANT_CONTRE_RE = re.compile(
+    rf"(?:{_TYPE_PIECE_ALT})\s*,\s*(?:{_QUANTITE_PIECE_CONTRE_RE})?$", re.IGNORECASE
+)
+_ENUMERATION_APRES_CONTRE_RE = re.compile(
+    rf"^\s*,\s*(?:{_QUANTITE_PIECE_CONTRE_RE})?(?:{_TYPE_PIECE_ALT})\b", re.IGNORECASE
+)
+_FENETRE_ENUMERATION_CONTRE = 30
+_FENETRE_INVENTAIRE_MATERIEL_CONTRE = 100
+
+
+def _mot_echange_proche_contre(fenetre: str, position: int) -> bool:
+    """Condition 1 (mot \"échange\" dans la même proposition) de
+    _est_echange_type_contre ci-dessous."""
+    segment = fenetre[max(0, position - _FENETRE_MOT_ECHANGE_CONTRE):position]
+    borne = max(segment.rfind("."), segment.rfind(";"))
+    if borne != -1:
+        segment = segment[borne + 1:]
+    return bool(_MOT_ECHANGE_CONTRE_RE.search(segment))
+
+
+def _suit_suite_sans_autre_mot(fenetre: str, fin_suite: int, position: int) -> bool:
+    """Condition 1 (forme alternative) de _est_echange_type_contre
+    ci-dessous : \"X contre Y\" suit immédiatement la suite de coups citée,
+    sans aucun autre mot entre les deux (espace/virgule/ponctuation
+    tolérés)."""
+    if position < fin_suite:
+        return False
+    return bool(re.fullmatch(r"[\s,:;–-]*", fenetre[fin_suite:position]))
+
+
+def _ressemble_inventaire_materiel(fenetre: str, m) -> bool:
+    """Condition 2 de _est_echange_type_contre ci-dessous : \"X contre Y\"
+    ressemble à un inventaire de matériel plutôt qu'à un échange."""
+    debut_ctx = max(0, m.start() - _FENETRE_INVENTAIRE_MATERIEL_CONTRE)
+    fin_ctx = min(len(fenetre), m.end() + _FENETRE_INVENTAIRE_MATERIEL_CONTRE)
+    contexte = fenetre[debut_ctx:m.start()] + fenetre[m.end():fin_ctx]
+    if _INVENTAIRE_MATERIEL_CONTRE_RE.search(contexte):
+        return True
+    avant = fenetre[max(0, m.start() - _FENETRE_ENUMERATION_CONTRE):m.start()]
+    if _ENUMERATION_AVANT_CONTRE_RE.search(avant):
+        return True
+    apres = fenetre[m.end():m.end() + _FENETRE_ENUMERATION_CONTRE]
+    if _ENUMERATION_APRES_CONTRE_RE.search(apres):
+        return True
+    return False
+
+
+def _est_echange_type_contre(fenetre: str, fin_suite: int, m) -> bool:
+    """Décide si le match `m` de _ECHANGE_TYPE_CONTRE_RE affirme bien un
+    échange (issue #104) plutôt qu'un inventaire de matériel — cf. le
+    commentaire au-dessus de _ECHANGE_TYPE_CONTRE_RE pour les deux
+    conditions, appliquées dans l'ordre."""
+    if not (_mot_echange_proche_contre(fenetre, m.start())
+            or _suit_suite_sans_autre_mot(fenetre, fin_suite, m.start())):
+        return False
+    return not _ressemble_inventaire_materiel(fenetre, m)
+
 
 def _pertes_par_type(piece_type: int, lectures: list) -> list:
     """Pour chaque lecture (board_avant, board_apres) de `lectures`, le
@@ -1424,8 +1512,12 @@ def detecter_echange_type_incoherent(texte: str, candidats: list) -> list:
         if suite["si_hypothetique"] or len(suite["coups"]) < 2:
             continue
         fenetre = _fenetre_qualificatif_echange(texte, suite)
+        fin_suite_rel = suite["fin"] - max(0, suite["debut"] - _FENETRE_AVANT_ECHANGE)
         matches_simple = list(_ECHANGE_DE_TYPE_RE.finditer(fenetre))
-        matches_contre = list(_ECHANGE_TYPE_CONTRE_RE.finditer(fenetre))
+        matches_contre = [
+            m for m in _ECHANGE_TYPE_CONTRE_RE.finditer(fenetre)
+            if _est_echange_type_contre(fenetre, fin_suite_rel, m)
+        ]
         if not matches_simple and not matches_contre:
             continue
 

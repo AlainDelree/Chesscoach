@@ -31,6 +31,19 @@ faits_attendus:
   # Non-régression (issue #98, même constat que re3) : cette phrase
   # CORRECTE ne doit déclencher aucune alerte.
   reponse_simulee_verte: L'équilibre matériel reste nettement en ta défaveur.
+  # Phrase CORRECTE ayant motivé l'issue #104 (essai 1) : un INVENTAIRE de
+  # matériel ("un cavalier contre dame, deux tours, un fou, un cavalier
+  # pour l'adversaire") a été pris à tort pour un échange "cavalier contre
+  # dame" par l'ancienne règle "X contre Y" — "contre" y sépare ici le
+  # décompte d'Alain de celui de l'adversaire, ne doit déclencher aucune
+  # alerte.
+  reponse_simulee_verte: Après h4, la suite logique est Qg6 Re1 h6, où tu restes solidement en avance au matériel (dame, deux tours, deux fous, un cavalier contre dame, deux tours, un fou, un cavalier pour l'adversaire).
+  # Variante FAUSSE (issue #104) : un véritable "échange de cavalier contre
+  # dame" cité juste après Qxh4 gxh4 reste signalé (la dame noire y est en
+  # réalité perdue contre un pion, aucun cavalier n'intervient) — vérifie
+  # que le resserrement ci-dessus n'affaiblit pas la détection d'un vrai
+  # faux "X contre Y".
+  reponse_simulee_signalee: Après Qxh4 gxh4, un échange de cavalier contre dame.
 
 motifs_interdits:
   expansion
