@@ -57,7 +57,7 @@ source: mes_erreurs — ou "problème Lichess", ou référence précise
 fen: FEN de départ
 camp_alain: blancs ou noirs
 coup_propose: le coup à tester (SAN, ex. Re3)
-meilleur_coup: le meilleur coup attendu (SAN, ex. Re8)
+meilleur_coup: le meilleur coup attendu (SAN, ex. Re8) ; plusieurs coups acceptés séparés par | (ex. Re8|Nb4)
 
 question: question de suivi simulée (issue #96, optionnel) — ex. "et Bxh7+
   ?". Remplace le message initial habituel ("Commente le coup que je

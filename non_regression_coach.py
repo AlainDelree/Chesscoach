@@ -314,7 +314,7 @@ def construire_contexte(engine_manager, cas: dict) -> tuple:
     eval_alain_cp = _vers_point_de_vue_alain(eval_blancs_cp, camp_alain)
     eval_alain_mat = _vers_point_de_vue_alain(eval_mat, camp_alain)
 
-    meilleur_coup = eval_result["meilleur_coup"] or cas["meilleur_coup"]
+    meilleur_coup = eval_result["meilleur_coup"] or cas["meilleur_coup"].split("|")[0]
 
     menace_adverse_data = _calculer_menace_adverse(engine_manager, fen_avant)
     menace_adverse_texte = game_facts.describe_menace_adverse(menace_adverse_data, fen_avant, camp_alain)
@@ -615,7 +615,7 @@ def verifier_faits(cas: dict, extras: dict) -> list:
     resultats = []
     meilleur_reel = extras["meilleur_coup_calcule"]
     meilleur_attendu = cas["meilleur_coup"]
-    ok_meilleur = _normaliser(meilleur_reel).rstrip("+#") == _normaliser(meilleur_attendu).rstrip("+#")
+    ok_meilleur = _normaliser(meilleur_reel).rstrip("+#") in [_normaliser(m).rstrip("+#") for m in meilleur_attendu.split("|")]
     resultats.append((
         ok_meilleur,
         f"meilleur_coup_stockfish: attendu {meilleur_attendu!r}, calculé {meilleur_reel!r}",

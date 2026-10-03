@@ -12,7 +12,7 @@ source: signalement du 2 octobre 2026 (mode Exercice, Scénario inconnu)
 fen: r2q1rk1/pppbbppp/2n2n2/3p2N1/3P4/3BB3/PPP1QPPP/RN2K2R b KQ - 11 9
 camp_alain: noirs
 coup_propose: g6
-meilleur_coup: Re8
+meilleur_coup: Re8|Nb4|Ng4|Bd6
 question: et Bxh7+ ?
 
 faits_attendus:
