@@ -94,6 +94,34 @@ let _coachLogIdParIdx = {};
 // idx en cours de chargement (bouton "Expliquer ce coup" cliqué, réponse pas
 // encore arrivée) — évite les doubles clics sur le même coup.
 let _coachExplicationEnCours = {};
+// idx -> contrôleur d'attente coachWaitBegin (issue #105) pour l'explication
+// à la demande en cours pour ce coup — permet d'ignorer une réponse arrivée
+// après que le délai de garde a déjà affiché "Le coach n'a pas répondu à
+// temps." pour ce même coup.
+let _coachExplicationWaitParIdx = {};
+// idx -> true si le délai de garde a déjà tranché pour ce coup (issue #105) —
+// affiche "Le coach n'a pas répondu à temps." + "Réessayer" à la place du
+// bouton "Expliquer ce coup" dans renderGameAnalysisReport ci-dessous.
+let _coachExplicationTimeoutParIdx = {};
+// Contrôleur d'attente coachWaitBegin (issue #105) pour l'étape 1 (sélection
+// des coups décisifs en un seul appel) — null si aucun appel en cours.
+let _analyseChoixWait = null;
+
+// Message de délai dépassé + bouton "Réessayer" pour l'étape 1 (issue #105)
+// — appelé aussi bien par le minuteur de garde local (coachWaitBegin
+// onTimeout) que par un code d'erreur "timeout" reçu du serveur en premier.
+function _gameAnalysisShowChoixTimeout() {
+  const coachStatus = document.getElementById("game-analysis-coach-status");
+  if (!coachStatus) return;
+  coachStatus.innerHTML = "";
+  coachStatus.appendChild(document.createTextNode("Le coach n'a pas répondu à temps. "));
+  const retryBtn = document.createElement("button");
+  retryBtn.type = "button";
+  retryBtn.className = "coach-retry-btn";
+  retryBtn.textContent = "Réessayer";
+  retryBtn.addEventListener("click", demanderExplicationsCoach);
+  coachStatus.appendChild(retryBtn);
+}
 // true si _gameAnalysisResults provient d'une analyse "en place" (issue #72,
 // partie en cours dans l'écran de jeu mobile) plutôt que de la revue de
 // bibliothèque — décide, à la réponse du serveur, si reviewMoves/renderReview()
@@ -233,6 +261,9 @@ function analyserPartieCourante() {
   _coachExplicationsParIdx = {};
   _coachExplicationEnCours = {};
   _coachLogIdParIdx = {};
+  _coachExplicationWaitParIdx = {};
+  _coachExplicationTimeoutParIdx = {};
+  if (_analyseChoixWait) { _analyseChoixWait.finish(); _analyseChoixWait = null; }
 
   if (enPlace) _appliquerEntetesPgn(_gameAnalysisPgnForActiveMode());
 
@@ -362,9 +393,22 @@ function renderGameAnalysisReport() {
         text: explication, log_id: _coachLogIdParIdx[m._idx],
       });
     } else {
+      // Délai dépassé (issue #105) : message clair au-dessus du bouton,
+      // qui devient "Réessayer" (même fonction demanderExplicationCoup —
+      // le flag _coachExplicationTimeoutParIdx est effacé à son prochain
+      // appel, qu'il réussisse ou échoue à nouveau).
+      if (_coachExplicationTimeoutParIdx[m._idx]) {
+        const p = document.createElement("div");
+        p.style.fontWeight = "normal";
+        p.style.color = "#a33";
+        p.style.fontSize = "0.78rem";
+        p.style.margin = "3px 0 0";
+        p.textContent = "Le coach n'a pas répondu à temps.";
+        li.appendChild(p);
+      }
       const btn = document.createElement("button");
       const enCours = !!_coachExplicationEnCours[m._idx];
-      btn.textContent = enCours ? "Chargement..." : "Expliquer ce coup";
+      btn.textContent = enCours ? "Chargement..." : (_coachExplicationTimeoutParIdx[m._idx] ? "Réessayer" : "Expliquer ce coup");
       btn.disabled = enCours;
       btn.style.marginTop = "3px";
       btn.style.fontWeight = "normal";
@@ -396,6 +440,23 @@ function demanderExplicationsCoach() {
     return;
   }
   if (coachStatus) coachStatus.textContent = "Le coach choisit les coups les plus décisifs...";
+  // Indicateur + délai maximal (issue #105) : la réponse apparaît dans ce
+  // panneau (#game-analysis-coach-status et le rapport ci-dessous), pas
+  // dans le chat coach — chatBubble: false, pas de bulle dans #coach-history.
+  if (typeof coachWaitBegin === "function") {
+    _analyseChoixWait = coachWaitBegin({
+      kind: "analyse",
+      chatBubble: false,
+      mobileText: "Le coach analyse la partie...",
+      // NE PAS remettre _analyseChoixWait à null ici — voir le commentaire
+      // détaillé équivalent sur _coachAskWait (board.js, _coachSendAsk) :
+      // isTimedOut() doit rester vrai sur ce contrôleur pour qu'une réponse
+      // tardive soit ignorée par analyse_choix_coach_response/_error.
+      onTimeout: () => {
+        _gameAnalysisShowChoixTimeout();
+      },
+    });
+  }
   // white/black (issue #56) : en-têtes PGN de la partie en revue (board.js
   // parsePgn), pour que le serveur déduise le camp d'Alain (pseudo
   // athanatos123 ou nom "Alain") — sans cette info, le coach ne sait pas qui
@@ -412,7 +473,24 @@ function demanderExplicationsCoach() {
 function demanderExplicationCoup(m) {
   if (_coachExplicationEnCours[m._idx]) return;
   _coachExplicationEnCours[m._idx] = true;
+  delete _coachExplicationTimeoutParIdx[m._idx];
   renderGameAnalysisReport();
+  if (typeof coachWaitBegin === "function") {
+    _coachExplicationWaitParIdx[m._idx] = coachWaitBegin({
+      kind: "analyse",
+      chatBubble: false,
+      mobileText: "Le coach analyse ce coup...",
+      // NE PAS supprimer _coachExplicationWaitParIdx[m._idx] ici — même
+      // raison que _coachAskWait (board.js, _coachSendAsk) : il doit rester
+      // consultable (isTimedOut() vrai) pour qu'une réponse tardive pour ce
+      // coup soit ignorée plutôt qu'affichée.
+      onTimeout: () => {
+        delete _coachExplicationEnCours[m._idx];
+        _coachExplicationTimeoutParIdx[m._idx] = true;
+        renderGameAnalysisReport();
+      },
+    });
+  }
   socket.emit("analyse_expliquer_coup", {
     idx: m._idx,
     fen_avant: m.fen_avant,
@@ -666,6 +744,15 @@ if (typeof socket !== "undefined") {
   // Étape 1 (issue #42 point 1) : sélection des coups décisifs par le coach,
   // en un seul appel pour l'ensemble des coups flagués.
   socket.on("analyse_choix_coach_response", (data) => {
+    if (_analyseChoixWait) {
+      if (_analyseChoixWait.isTimedOut()) {
+        console.warn("[analyse de partie] réponse tardive ignorée (délai déjà dépassé)", data);
+        _analyseChoixWait = null;
+        return;
+      }
+      _analyseChoixWait.finish();
+      _analyseChoixWait = null;
+    }
     const coachStatus = document.getElementById("game-analysis-coach-status");
     const choix = (data && data.choix) || [];
     _coachChoixParIdx = {};
@@ -683,8 +770,24 @@ if (typeof socket !== "undefined") {
   });
 
   socket.on("analyse_choix_coach_error", (data) => {
+    if (_analyseChoixWait) {
+      if (_analyseChoixWait.isTimedOut()) {
+        console.warn("[analyse de partie] erreur tardive ignorée (délai déjà dépassé)", data);
+        _analyseChoixWait = null;
+        return;
+      }
+      _analyseChoixWait.finish();
+      _analyseChoixWait = null;
+    }
     const coachStatus = document.getElementById("game-analysis-coach-status");
     const err = data && data.error;
+    if (err === "timeout") {
+      // Issue #105 : même message + bouton "Réessayer" que si c'est le
+      // minuteur de garde du navigateur qui avait tranché le premier.
+      _gameAnalysisShowChoixTimeout();
+      console.warn("[analyse de partie] sélection du coach échouée (timeout)", data);
+      return;
+    }
     const msg = (err === "credit_insuffisant")
       ? "Crédit de l'API Claude épuisé — rechargez sur la Console (lien \"Coût API\" en haut de la page)."
       : "Sélection du coach indisponible.";
@@ -696,6 +799,15 @@ if (typeof socket !== "undefined") {
   socket.on("analyse_expliquer_coup_response", (data) => {
     const idx = data && data.idx;
     if (idx === undefined || idx === null) return;
+    const wait = _coachExplicationWaitParIdx[idx];
+    if (wait) {
+      delete _coachExplicationWaitParIdx[idx];
+      if (wait.isTimedOut()) {
+        console.warn("[analyse de partie] explication tardive ignorée (délai déjà dépassé)", data);
+        return;
+      }
+      wait.finish();
+    }
     delete _coachExplicationEnCours[idx];
     _coachExplicationsParIdx[idx] = data.text;
     _coachLogIdParIdx[idx] = data.log_id;
@@ -705,9 +817,20 @@ if (typeof socket !== "undefined") {
   socket.on("analyse_expliquer_coup_error", (data) => {
     const idx = data && data.idx;
     if (idx !== undefined && idx !== null) {
+      const wait = _coachExplicationWaitParIdx[idx];
+      if (wait) {
+        delete _coachExplicationWaitParIdx[idx];
+        if (wait.isTimedOut()) {
+          console.warn("[analyse de partie] erreur tardive ignorée (délai déjà dépassé)", data);
+          return;
+        }
+        wait.finish();
+      }
       delete _coachExplicationEnCours[idx];
       if (data && data.error === "credit_insuffisant") {
         _coachExplicationsParIdx[idx] = "Crédit de l'API Claude épuisé — rechargez sur la Console (lien \"Coût API\" en haut de la page).";
+      } else if (data && data.error === "timeout") {
+        _coachExplicationTimeoutParIdx[idx] = true;
       }
     }
     console.warn("[analyse de partie] explication à la demande échouée", data);

@@ -24,6 +24,10 @@ let pedagogicWaiting    = false; // coup en cours de traitement côté serveur
 let pedagogicGameOver   = false; // fin de partie détectée côté serveur (issue #11) ou abandon (issue #52)
 let pedagogicAbandonne  = false; // fin de partie spécifiquement par "Abandonner" (issue #52, cf. coachBuildContext)
 let pedagogicFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
+// Commentaire automatique du coup qui vient d'être joué (issue #105) — voir
+// le commentaire équivalent dans opening.js (_openingCommentPending).
+let _pedagogicCommentPending = false;
+let _pedagogicCommentWait    = null;
 
 // ── Boutons "Jouer les Blancs/Noirs" déplacés avant le plateau sur mobile
 // (issue #65 point 6) ─────────────────────────────────────────────────────
@@ -262,10 +266,12 @@ function onPedagogicBoardClick(e) {
   // Masqué dans le chat sur mobile (issue #69 point 3) — purement présentationnel,
   // cf. commentaire de _coachRenderBubble (board.js).
   _coachRenderBubble("user", `Partie pédagogique — je joue ${move.san}`, false, "coach-bubble-auto-move");
+  const commenter = pedagogicCommenterChaqueCoup();
+  _pedagogicCommentPending = commenter;
   socket.emit("pedagogic_move", {
     fen_avant: fenAvant,
     uci: move.from + move.to + (move.promotion || ""),
-    commenter: pedagogicCommenterChaqueCoup(),
+    commenter,
   });
 }
 
@@ -279,6 +285,8 @@ if (typeof socket !== "undefined") {
     pedagogicGameOver  = false;
     pedagogicAbandonne = false;
     pedagogicCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
+    _pedagogicCommentPending = false;
+    if (_pedagogicCommentWait) { _pedagogicCommentWait.finish(); _pedagogicCommentWait = null; }
     setActiveMode("pedagogic");
     // Issue #65 point 6 : la partie démarre — les boutons "Jouer les
     // Blancs/Noirs" reprennent leur emplacement d'origine sur mobile.
@@ -300,6 +308,10 @@ if (typeof socket !== "undefined") {
 
   socket.on("pedagogic_stockfish_move", (data) => {
     pedagogicWaiting = false;
+    // Capturé puis effacé ICI (issue #105) — voir le commentaire équivalent
+    // dans opening.js, socket.on("opening_stockfish_move").
+    const commentPending = _pedagogicCommentPending;
+    _pedagogicCommentPending = false;
     if (!pedagogicActive || !pedagogicGame || !data) return;
 
     if (data.uci) {
@@ -322,9 +334,31 @@ if (typeof socket !== "undefined") {
       return;
     }
     updatePedagogicStatus();
+    // Indicateur + délai maximal pour le commentaire automatique (issue
+    // #105) — voir le commentaire équivalent dans opening.js.
+    if (commentPending && typeof coachWaitBegin === "function") {
+      _pedagogicCommentWait = coachWaitBegin({
+        kind: "reponse",
+        // NE PAS remettre _pedagogicCommentWait à null ici — voir le
+        // commentaire détaillé équivalent sur _coachAskWait (board.js,
+        // _coachSendAsk).
+        onTimeout: () => {
+          _coachRenderTimeoutBubble(() => askCoachOnDemand(pedagogicGame.fen(), null, pedagogicCampAlain));
+        },
+      });
+    }
   });
 
   socket.on("pedagogic_comment", (data) => {
+    if (_pedagogicCommentWait) {
+      if (_pedagogicCommentWait.isTimedOut()) {
+        console.warn("[partie pédagogique] commentaire tardif ignoré (délai déjà dépassé)", data);
+        _pedagogicCommentWait = null;
+        return;
+      }
+      _pedagogicCommentWait.finish();
+      _pedagogicCommentWait = null;
+    }
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
       _coachRenderBubble("assistant", text, false, undefined, data && data.fiabilite, data && {
@@ -339,10 +373,24 @@ if (typeof socket !== "undefined") {
 
   socket.on("pedagogic_error", (data) => {
     pedagogicWaiting = false;
+    if (_pedagogicCommentWait) {
+      if (_pedagogicCommentWait.isTimedOut()) {
+        console.warn("[partie pédagogique] erreur tardive ignorée (délai déjà dépassé)", data);
+        _pedagogicCommentWait = null;
+        return;
+      }
+      _pedagogicCommentWait.finish();
+      _pedagogicCommentWait = null;
+    }
     const err = data && data.error;
     if (err === "credit_insuffisant") {
       if (typeof _coachRenderCreditInsuffisant === "function") _coachRenderCreditInsuffisant();
       console.warn("[partie pédagogique]", "credit_insuffisant", data);
+      return;
+    }
+    if (err === "timeout") {
+      _coachRenderTimeoutBubble(() => askCoachOnDemand(pedagogicGame.fen(), null, pedagogicCampAlain));
+      console.warn("[partie pédagogique] commentaire échoué (timeout)", data);
       return;
     }
     const msg = (err === "stockfish_indisponible")

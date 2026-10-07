@@ -499,6 +499,12 @@ function _materialDiffFromFenBoard(fenBoard) {
 }
 
 function updateGameStatusLine() {
+  // Issue #105 : ne jamais écraser l'indicateur "Le coach réfléchit..."
+  // pendant une attente en cours (ex. un coup vient d'être rendu par
+  // renderHistory() juste avant la fin de l'attente) — _mobileStatusClearCoachThinking
+  // rappelle cette fonction une fois l'attente terminée pour revenir à
+  // l'affichage normal.
+  if (_coachThinkingMobileActive) return;
   const moveEl  = document.getElementById("game-status-move");
   const rightEl = document.getElementById("game-status-right");
   if (!moveEl) return;
@@ -1173,6 +1179,171 @@ function _coachRenderCreditInsuffisant() {
   _coachScrollReveal(history, bubble, false);
 }
 
+// ── Attente du coach : indicateur + délai maximal (issue #105) ─────────────
+// Mécanisme partagé par tous les appels à l'API du coach pilotés depuis ce
+// fichier (coach_ask, coach_comment_on_demand, training_program_build) et
+// réutilisé tel quel par les autres modes (exercise.js, opening.js,
+// pedagogic.js, finales.js, game_analysis.js) — board.js charge avant tous
+// ces fichiers (cf. templates/index.html), ces fonctions sont donc déjà
+// définies au moment où ils s'exécutent. Le mode "Exercice" garde son propre
+// minuteur de garde dédié (EXERCISE_ANALYSIS_TIMEOUT_MS, exercise.js, issue
+// #79) : il couvre tout le recalcul Stockfish, pas seulement l'appel au
+// coach, et son bouton "Réessayer" existant répond déjà au besoin — il
+// réutilise seulement les fonctions d'AFFICHAGE ci-dessous (_coachThinkingStart),
+// jamais coachWaitBegin (qui ajouterait un second minuteur concurrent).
+//
+// Délai serveur (config.py COACH_TIMEOUT_REPONSE_S/COACH_TIMEOUT_ANALYSE_S,
+// SEUL endroit à modifier pour changer la durée réelle avant que le serveur
+// n'abandonne l'appel à l'API Claude) exposé par le gabarit dans
+// window.COACH_SERVER_TIMEOUT_MS (templates/index.html) : le minuteur de
+// garde du navigateur ajoute une marge à cette même valeur plutôt que de
+// dupliquer un nombre, pour se déclencher TOUJOURS après le serveur, sauf
+// si celui-ci ne répond plus du tout (seul cas où le navigateur tranche
+// alors seul). 60000/150000 ci-dessous ne sont qu'un repli si le gabarit n'a
+// pas pu fournir window.COACH_SERVER_TIMEOUT_MS.
+const COACH_WAIT_GUARD_MARGIN_MS = 15000;
+const COACH_WAIT_ELAPSED_SHOW_MS = 10000;
+
+function _coachWaitGuardMs(kind) {
+  const table = window.COACH_SERVER_TIMEOUT_MS || {};
+  const base = table[kind] || (kind === "analyse" ? 150000 : 60000);
+  return base + COACH_WAIT_GUARD_MARGIN_MS;
+}
+
+// Bulle "Le coach réfléchit..." insérée dans l'historique du chat, à
+// l'endroit où la réponse apparaîtra (issue #105, point 1) — distincte de
+// _coachRenderBubble : pas de rôle utilisateur/assistant, pas de pastille de
+// fiabilité, pas de bouton "Signaler".
+function _coachRenderThinkingBubble() {
+  const history = document.getElementById("coach-history");
+  if (!history) return null;
+  const empty = document.getElementById("coach-empty");
+  if (empty) empty.style.display = "none";
+  const bubble = document.createElement("div");
+  bubble.className = "coach-bubble assistant coach-bubble-thinking";
+  const label = document.createElement("span");
+  label.className = "coach-thinking-label";
+  label.textContent = "Le coach réfléchit";
+  bubble.appendChild(label);
+  const dots = document.createElement("span");
+  dots.className = "coach-thinking-dots";
+  dots.innerHTML = "<span>.</span><span>.</span><span>.</span>";
+  bubble.appendChild(dots);
+  history.appendChild(bubble);
+  _coachScrollReveal(history, bubble, false);
+  return bubble;
+}
+
+// Ajoute le temps écoulé après COACH_WAIT_ELAPSED_SHOW_MS (issue #105, point
+// 1 : "Le coach réfléchit... 12 s") — pas avant, pour ne pas surcharger une
+// réponse qui arrive vite.
+function _coachUpdateThinkingBubbleElapsed(bubble, elapsedMs) {
+  if (!bubble) return;
+  const label = bubble.querySelector(".coach-thinking-label");
+  if (!label || elapsedMs < COACH_WAIT_ELAPSED_SHOW_MS) return;
+  label.textContent = `Le coach réfléchit... ${Math.round(elapsedMs / 1000)} s`;
+}
+
+// Message clair + bouton "Réessayer" (issue #105, point 2) en cas de délai
+// dépassé — même famille visuelle que _coachRenderCreditInsuffisant
+// ci-dessus (bulle .error dédiée, pas _coachRenderBubble : jamais de bouton
+// "Signaler" sous un message de délai dépassé, cf. issue #105 point 3).
+// `retryFn` (optionnel) renvoie exactement la même demande au clic.
+function _coachRenderTimeoutBubble(retryFn) {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  const empty = document.getElementById("coach-empty");
+  if (empty) empty.style.display = "none";
+  const bubble = document.createElement("div");
+  bubble.className = "coach-bubble error";
+  const p = document.createElement("div");
+  p.textContent = "Le coach n'a pas répondu à temps.";
+  bubble.appendChild(p);
+  if (typeof retryFn === "function") {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "coach-retry-btn";
+    btn.textContent = "Réessayer";
+    btn.addEventListener("click", () => {
+      bubble.remove();
+      retryFn();
+    });
+    bubble.appendChild(btn);
+  }
+  history.appendChild(bubble);
+  _coachScrollReveal(history, bubble, false);
+}
+
+// Indicateur court dans la ligne d'état du plateau (issue #105, point 1) —
+// #game-status-line n'est visible QUE sur mobile (templates/index.html,
+// body.mobile-game-active), le chat n'y étant pas toujours à l'écran. Ne
+// réduit jamais le plateau ni ne déclenche de bulle de toast au centre
+// (aucun appel à showBoardToast/_mobileGameOnCoachMessage ici).
+let _coachThinkingMobileActive = false;
+function _mobileStatusShowCoachThinking(text) {
+  _coachThinkingMobileActive = true;
+  const moveEl = document.getElementById("game-status-move");
+  if (moveEl) moveEl.textContent = text || "Le coach réfléchit...";
+  const rightEl = document.getElementById("game-status-right");
+  if (rightEl) rightEl.innerHTML = "";
+}
+function _mobileStatusClearCoachThinking() {
+  _coachThinkingMobileActive = false;
+  if (typeof updateGameStatusLine === "function") updateGameStatusLine();
+}
+
+// Partie "affichage" seule (bulle de chat + ligne d'état mobile + mise à
+// jour du temps écoulé), SANS minuteur de garde — réutilisée par le mode
+// Exercice (exercise.js), qui garde son propre minuteur de 30s existant
+// (issue #79). `wantChatBubble` (défaut true) à false pour les appels dont
+// la réponse n'apparaît pas dans le chat coach (ex. "Analyser cette
+// partie", qui a son propre texte de statut, cf. game_analysis.js).
+function _coachThinkingStart(mobileText, wantChatBubble) {
+  const bubble = (wantChatBubble !== false) ? _coachRenderThinkingBubble() : null;
+  _mobileStatusShowCoachThinking(mobileText);
+  const startedAt = Date.now();
+  const intervalId = setInterval(() => {
+    _coachUpdateThinkingBubbleElapsed(bubble, Date.now() - startedAt);
+  }, 1000);
+  return {
+    finish() {
+      clearInterval(intervalId);
+      if (bubble && bubble.isConnected) bubble.remove();
+      _mobileStatusClearCoachThinking();
+    },
+  };
+}
+
+// Contrôleur complet (issue #105) : indicateur ci-dessus + minuteur de garde
+// qui déclenche `onTimeout` si ni la réponse ni l'erreur ne sont arrivées à
+// temps. `opts.kind` ("reponse" ou "analyse") sélectionne le délai serveur
+// de référence (cf. _coachWaitGuardMs). `opts.onTimeout` DOIT réactiver la
+// saisie/les boutons propres à l'appelant (cette fonction ne le fait pas,
+// chaque appelant a son propre état "busy") et afficher un message clair
+// (typiquement _coachRenderTimeoutBubble ci-dessus, ou un texte de statut
+// dédié). Retourne un contrôleur `{isTimedOut(), finish()}` : `finish()`
+// DOIT être appelée dès la réponse/l'erreur réelle reçue (succès ou échec),
+// `isTimedOut()` DOIT être vérifiée avant de traiter cette réponse/erreur —
+// une réponse arrivée après expiration du délai de garde doit être ignorée
+// (issue #105, point 2 : "réponse tardive après expiration").
+function coachWaitBegin(opts) {
+  opts = opts || {};
+  const thinking = _coachThinkingStart(opts.mobileText, opts.chatBubble);
+  let timedOut = false;
+  const guardTimeoutId = setTimeout(() => {
+    timedOut = true;
+    thinking.finish();
+    if (typeof opts.onTimeout === "function") opts.onTimeout();
+  }, _coachWaitGuardMs(opts.kind || "reponse"));
+  return {
+    isTimedOut() { return timedOut; },
+    finish() {
+      clearTimeout(guardTimeoutId);
+      thinking.finish();
+    },
+  };
+}
+
 // Point de coupure d'un nouveau segment de conversation (issue #64) : appelé
 // au démarrage effectif d'une nouvelle partie/exercice (partie libre,
 // pédagogique, ouverture, finales, exercice) ou au chargement d'une autre
@@ -1210,6 +1381,16 @@ function coachClear() {
   if (history) history.innerHTML = '<div id="coach-empty" style="color:#778; font-size:0.82rem; text-align:center; padding:20px 8px;">Posez une question sur la position affichée.</div>';
 }
 
+// Contrôleur d'attente actif pour coach_ask (issue #105), null si aucune
+// requête en cours — vérifié par les listeners coach_response/coach_error
+// ci-dessous pour ignorer une réponse arrivée après expiration du délai de
+// garde (point 2 : "réponse tardive après expiration"). _coachAskRetry :
+// renvoie exactement la dernière demande — utilisé par le bouton
+// "Réessayer", que le délai dépassé soit détecté localement (minuteur de
+// garde) ou par un code d'erreur "timeout" reçu du serveur en premier.
+let _coachAskWait = null;
+let _coachAskRetry = null;
+
 function coachSend() {
   if (_coachBusy) return;
   // Issue #79, point 4a : défense en profondeur — le champ/bouton sont déjà
@@ -1226,19 +1407,41 @@ function coachSend() {
   _coachHistory.push({ role: "user", content: question });
   _coachRenderBubble("user", question);
 
-  _coachBusy = true;
-  const sendBtn = document.getElementById("coach-send-btn");
-  if (sendBtn) sendBtn.disabled = true;
-  const spinner = document.getElementById("coach-spinner");
-  if (spinner) spinner.style.display = "flex";
-
-  socket.emit("coach_ask", {
+  // Payload figé ici (issue #105) : le bouton "Réessayer" d'un éventuel
+  // délai dépassé renvoie EXACTEMENT cette même demande, pas une reconstruction
+  // à partir de l'état courant (qui pourrait avoir changé entre-temps).
+  const payload = {
     // Seuls les messages du segment courant (issue #64) — pas tout
     // _coachHistory, qui garde à l'écran les échanges des parties/exercices
     // précédents jusqu'au prochain "Effacer".
     messages: _coachHistory.slice(_coachSegmentStart),
     context: coachBuildContext(),
+  };
+  _coachSendAsk(payload);
+}
+
+function _coachSendAsk(payload) {
+  _coachBusy = true;
+  const sendBtn = document.getElementById("coach-send-btn");
+  if (sendBtn) sendBtn.disabled = true;
+  const spinner = document.getElementById("coach-spinner");
+  if (spinner) spinner.style.display = "flex";
+  _coachAskRetry = () => _coachSendAsk(payload);
+  _coachAskWait = coachWaitBegin({
+    kind: "reponse",
+    // NE PAS remettre _coachAskWait à null ici (issue #105, bug trouvé aux
+    // tests) : isTimedOut() reste vrai sur CE contrôleur, c'est ce qui
+    // permet au prochain socket.on("coach_response"/"coach_error") d'ignorer
+    // une réponse tardive pour CETTE demande plutôt que de l'afficher comme
+    // si elle était fraîche. _coachAskWait n'est réaffecté qu'au prochain
+    // véritable envoi (ci-dessus, à la prochaine frappe sur "Réessayer" ou
+    // "Envoyer"), qui écrase alors cette référence par un nouveau contrôleur.
+    onTimeout: () => {
+      _coachDone();
+      _coachRenderTimeoutBubble(_coachAskRetry);
+    },
   });
+  socket.emit("coach_ask", payload);
 }
 
 function _coachDone() {
@@ -1251,6 +1454,20 @@ function _coachDone() {
 
 if (typeof socket !== "undefined") {
   socket.on("coach_response", (data) => {
+    // Issue #105, point 2 : une réponse arrivée après que le minuteur de
+    // garde a déjà affiché le message de délai dépassé est ignorée (elle
+    // porterait sur la demande d'origine, pas sur un éventuel "Réessayer"
+    // déjà relancé par Alain) — jamais affichée par-dessus l'état déjà
+    // réactivé de l'interface.
+    if (_coachAskWait) {
+      if (_coachAskWait.isTimedOut()) {
+        console.warn("[coach] réponse tardive ignorée (délai déjà dépassé)", data);
+        _coachAskWait = null;
+        return;
+      }
+      _coachAskWait.finish();
+      _coachAskWait = null;
+    }
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
       _coachHistory.push({ role: "assistant", content: text });
@@ -1280,9 +1497,24 @@ if (typeof socket !== "undefined") {
   });
 
   socket.on("coach_error", (data) => {
+    if (_coachAskWait) {
+      if (_coachAskWait.isTimedOut()) {
+        console.warn("[coach] erreur tardive ignorée (délai déjà dépassé)", data);
+        _coachAskWait = null;
+        return;
+      }
+      _coachAskWait.finish();
+      _coachAskWait = null;
+    }
     const err = data && data.error;
     if (err === "credit_insuffisant") {
       _coachRenderCreditInsuffisant();
+    } else if (err === "timeout") {
+      // Issue #105, point 2/3 : le serveur a lui-même abandonné l'appel à
+      // l'API Claude (délai configuré dépassé, config.COACH_TIMEOUT_REPONSE_S)
+      // — même message et même bouton "Réessayer" que si c'est le minuteur
+      // de garde du navigateur qui avait tranché le premier.
+      _coachRenderTimeoutBubble(_coachAskRetry);
     } else {
       const msg = (err === "no_api_key")
         ? "Clé API Claude manquante — configurez-la dans les paramètres."
@@ -1324,16 +1556,43 @@ function renderTrainingProgram(objectifs) {
   });
 }
 
+// Contrôleur d'attente (issue #105) — pas de bulle de chat (chatBubble:
+// false) : la réponse apparaît dans le panneau dédié (#training-program-status/
+// #training-program-list), pas dans le chat coach. Pas de bouton
+// "Réessayer" dédié non plus : recliquer le même bouton suffit (déjà
+// réactivé par onTimeout), comme pour toute autre erreur de ce bouton.
+let _trainingProgramWait = null;
+
 function buildTrainingProgram() {
   const btn = document.getElementById("training-program-btn");
   if (btn) btn.disabled = true;
   const status = document.getElementById("training-program-status");
   if (status) status.textContent = "Génération du programme en cours...";
+  _trainingProgramWait = coachWaitBegin({
+    kind: "analyse",
+    chatBubble: false,
+    mobileText: "Le coach prépare le programme...",
+    // NE PAS remettre _trainingProgramWait à null ici — voir le commentaire
+    // détaillé équivalent sur _coachAskWait (_coachSendAsk ci-dessus).
+    onTimeout: () => {
+      if (btn) btn.disabled = false;
+      if (status) status.textContent = "Le coach n'a pas répondu à temps — cliquez à nouveau pour réessayer.";
+    },
+  });
   socket.emit("training_program_build", {});
 }
 
 if (typeof socket !== "undefined") {
   socket.on("training_program_response", (data) => {
+    if (_trainingProgramWait) {
+      if (_trainingProgramWait.isTimedOut()) {
+        console.warn("[programme entrainement] réponse tardive ignorée (délai déjà dépassé)", data);
+        _trainingProgramWait = null;
+        return;
+      }
+      _trainingProgramWait.finish();
+      _trainingProgramWait = null;
+    }
     const btn = document.getElementById("training-program-btn");
     if (btn) btn.disabled = false;
     const status = document.getElementById("training-program-status");
@@ -1342,6 +1601,15 @@ if (typeof socket !== "undefined") {
   });
 
   socket.on("training_program_error", (data) => {
+    if (_trainingProgramWait) {
+      if (_trainingProgramWait.isTimedOut()) {
+        console.warn("[programme entrainement] erreur tardive ignorée (délai déjà dépassé)", data);
+        _trainingProgramWait = null;
+        return;
+      }
+      _trainingProgramWait.finish();
+      _trainingProgramWait = null;
+    }
     const btn = document.getElementById("training-program-btn");
     if (btn) btn.disabled = false;
     const err = data && data.error;
@@ -1351,6 +1619,8 @@ if (typeof socket !== "undefined") {
       ? "Clé API Claude manquante — configurez-la dans les paramètres."
       : (err === "donnees_insuffisantes")
       ? "Pas encore assez de données (erreurs/ouvertures) pour établir un programme."
+      : (err === "timeout")
+      ? "Le coach n'a pas répondu à temps — cliquez à nouveau pour réessayer."
       : "Le programme n'a pas pu être établi, réessayez.";
     const status = document.getElementById("training-program-status");
     if (status) status.textContent = msg;
@@ -1364,6 +1634,11 @@ if (typeof socket !== "undefined") {
 // aller-retour SocketIO mode-agnostique (coach_comment_on_demand côté
 // serveur), réutilisé par les trois modes plutôt que dupliqué.
 
+// Contrôleur d'attente + renvoi de la même demande (issue #105) — mêmes
+// conventions que _coachAskWait/_coachAskRetry ci-dessus.
+let _coachOnDemandWait = null;
+let _coachOnDemandRetry = null;
+
 function askCoachOnDemand(fen, themeFinale, campAlain, extraContext) {
   // extraContext (issue #75, point 5) : complément de contexte propre à un
   // mode (ex. exerciseChatContextExtra() pendant un exercice — position de
@@ -1372,11 +1647,27 @@ function askCoachOnDemand(fen, themeFinale, campAlain, extraContext) {
   // ci-dessous. Absent pour les autres modes (pédagogique/ouverture/
   // finales), qui gardent leur comportement inchangé.
   if (!fen) return;
-  setCoachOnDemandButtonsDisabled(true);
   const modeOrigine = (typeof activeMode !== "undefined" && _MODE_ORIGINE_LABELS[activeMode]) || "chat_libre";
-  socket.emit("coach_comment_on_demand", Object.assign({
+  const payload = Object.assign({
     fen, theme_finale: themeFinale || "", camp_alain: campAlain || "", mode_origine: modeOrigine,
-  }, extraContext || {}));
+  }, extraContext || {});
+  _coachSendOnDemand(payload);
+}
+
+function _coachSendOnDemand(payload) {
+  setCoachOnDemandButtonsDisabled(true);
+  _coachOnDemandRetry = () => _coachSendOnDemand(payload);
+  _coachOnDemandWait = coachWaitBegin({
+    kind: "reponse",
+    // NE PAS remettre _coachOnDemandWait à null ici — voir le commentaire
+    // détaillé équivalent sur _coachAskWait (_coachSendAsk ci-dessus).
+    onTimeout: () => {
+      setCoachOnDemandButtonsDisabled(false);
+      if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+      _coachRenderTimeoutBubble(_coachOnDemandRetry);
+    },
+  });
+  socket.emit("coach_comment_on_demand", payload);
 }
 
 function setCoachOnDemandButtonsDisabled(disabled) {
@@ -1393,6 +1684,15 @@ function setCoachOnDemandButtonsDisabled(disabled) {
 
 if (typeof socket !== "undefined") {
   socket.on("coach_on_demand_response", (data) => {
+    if (_coachOnDemandWait) {
+      if (_coachOnDemandWait.isTimedOut()) {
+        console.warn("[coach à la demande] réponse tardive ignorée (délai déjà dépassé)", data);
+        _coachOnDemandWait = null;
+        return;
+      }
+      _coachOnDemandWait.finish();
+      _coachOnDemandWait = null;
+    }
     setCoachOnDemandButtonsDisabled(false);
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
@@ -1407,6 +1707,15 @@ if (typeof socket !== "undefined") {
   });
 
   socket.on("coach_on_demand_error", (data) => {
+    if (_coachOnDemandWait) {
+      if (_coachOnDemandWait.isTimedOut()) {
+        console.warn("[coach à la demande] erreur tardive ignorée (délai déjà dépassé)", data);
+        _coachOnDemandWait = null;
+        return;
+      }
+      _coachOnDemandWait.finish();
+      _coachOnDemandWait = null;
+    }
     setCoachOnDemandButtonsDisabled(false);
     // Issue #79 : réapplique l'état réel (ex. bouton redésactivé si
     // exerciseVerdictObtenu est toujours faux) après le ré-activation
@@ -1416,6 +1725,12 @@ if (typeof socket !== "undefined") {
     const err = data && data.error;
     if (err === "credit_insuffisant") {
       _coachRenderCreditInsuffisant();
+      return;
+    }
+    if (err === "timeout") {
+      // Issue #105, point 2/3 : voir le commentaire équivalent de
+      // socket.on("coach_error") ci-dessus.
+      _coachRenderTimeoutBubble(_coachOnDemandRetry);
       return;
     }
     const msg = (err === "partie_terminee")

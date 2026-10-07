@@ -165,6 +165,32 @@ def set_llm_model(model_id: str) -> bool:
         pass
     return True
 
+# Délai maximal d'une réponse du coach (issue #105) — valeurs à modifier ICI,
+# en un seul endroit, pour changer le comportement de TOUS les appels au
+# coach : passées en secondes à urllib.request.urlopen (paramètre timeout=)
+# dans llm_coach._call_claude, donc une vraie coupure côté serveur de l'appel
+# à l'API Claude, pas une simple alerte visuelle côté interface. Le minuteur
+# de garde côté navigateur (static/board.js, coachWaitBegin) reprend ces
+# mêmes valeurs (converties en ms et exposées via window.COACH_SERVER_TIMEOUT_MS,
+# cf. templates/index.html/app.py index()) en y ajoutant une marge, pour se
+# déclencher TOUJOURS après le serveur sauf si celui-ci ne répond plus du
+# tout (seul cas où le navigateur tranche alors seul).
+#
+# La relance automatique de fiabilité (llm_coach.get_coach_response, après
+# une première réponse jugée incohérente par coach_reliability) réutilise
+# EXACTEMENT ce même délai pour son propre appel à l'API — un délai dépassé
+# à ce stade compte donc dans le délai total vu par l'interface, qui peut
+# (cas rare) friser près du double de cette valeur avant que le serveur ne
+# tranche définitivement.
+COACH_TIMEOUT_REPONSE_S = 60
+
+# Délai plus long pour les appels portant sur une partie entière plutôt
+# qu'un seul coup (analyse de partie : sélection des coups décisifs et
+# explication d'un coup flagué ; programme d'entraînement) — contexte plus
+# volumineux transmis à l'API, latence réelle plus élevée que pour une
+# réponse ponctuelle.
+COACH_TIMEOUT_ANALYSE_S = 150
+
 # Mode debug Flask/Werkzeug (débogueur interactif + rechargement automatique
 # du code) — désactivé par défaut (issue #51) car le débogueur expose une
 # console web joignable avant le filtre d'accès distant. Réactivable pour le

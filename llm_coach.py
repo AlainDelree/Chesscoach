@@ -54,6 +54,25 @@ class ModeleIndisponibleError(Exception):
     un message clair dans le chat plutôt qu'une erreur technique générique."""
     pass
 
+
+def _erreur_label(e: Exception) -> str:
+    """Normalise une exception réseau de _call_claude en code d'erreur stable
+    (issue #105) : "timeout" si le délai configuré (timeout_s de _call_claude,
+    cf. config.COACH_TIMEOUT_REPONSE_S/COACH_TIMEOUT_ANALYSE_S) a été dépassé
+    — qu'il s'agisse d'un délai de connexion (urllib.error.URLError
+    enveloppant un TimeoutError) ou d'un délai de lecture de la réponse
+    (TimeoutError levée directement par urlopen) — message brut de
+    l'exception sinon (comportement inchangé pour toute autre panne réseau).
+    Utilisée aux quatre points d'appel de _call_claude pour que
+    coach_calls.log et les événements socket *_error reçoivent un code
+    distinct et stable plutôt qu'un message d'exception imprévisible."""
+    if isinstance(e, TimeoutError):
+        return "timeout"
+    if isinstance(e, urllib.error.URLError) and isinstance(e.reason, TimeoutError):
+        return "timeout"
+    return str(e)
+
+
 _SYSTEM_PROMPT = (
     "Tu es un coach d'échecs personnel. Tu aides un joueur à analyser une "
     "partie qu'il vient de jouer, en te basant sur la position, le coup "
@@ -978,8 +997,9 @@ def get_move_explanations(flagged_moves, camp_alain, config):
     # pour tout l'appel, qui aurait mélangé plusieurs coups sous un seul
     # "fen"/"move".
     log_path = (config or {}).get("coach_log_path")
+    timeout_s = (config or {}).get("coach_timeout_s") or 90
     try:
-        raw = _call_claude(_MOVE_SELECTION_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path)
+        raw = _call_claude(_MOVE_SELECTION_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path, timeout_s=timeout_s)
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) : crédit épuisé : {e}")
         _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, data_obj, prompt_user,
@@ -992,9 +1012,10 @@ def get_move_explanations(flagged_moves, camp_alain, config):
         return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (sélection de coups décisifs) échoué : {e}")
+        erreur = _erreur_label(e)
         _log_coach_call(log_path, _MOVE_SELECTION_SYSTEM_PROMPT, data_obj, prompt_user,
-                         "analyse_partie", model=model, erreur=str(e))
-        return None, str(e)
+                         "analyse_partie", model=model, erreur=erreur)
+        return None, erreur
 
     text = (raw or "").strip()
     if text.startswith("```"):
@@ -1860,7 +1881,8 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
         return None
 
 
-def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path=None) -> str:
+def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path=None,
+                  timeout_s: int = 90) -> str:
     """messages : liste de {"role": "user"|"assistant", "content": str}, ou une
     simple chaîne (raccourci équivalent à [{"role": "user", "content": messages}]).
 
@@ -1871,7 +1893,16 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
     Relève aussi les tokens
     consommés (usage.input_tokens/output_tokens/cache_*) depuis la réponse et
     les cumule dans usage_path si fourni — aucun appel API supplémentaire,
-    ces informations sont déjà présentes dans la réponse normale (issue #54)."""
+    ces informations sont déjà présentes dans la réponse normale (issue #54).
+
+    timeout_s (issue #105) : délai maximal de cet appel HTTP, transmis par
+    chaque fonction publique de ce module depuis config.COACH_TIMEOUT_REPONSE_S/
+    COACH_TIMEOUT_ANALYSE_S (via config["coach_timeout_s"], assemblé par
+    app.py) — 90s par défaut si un appelant interne omet ce paramètre, pour
+    ne jamais réduire silencieusement le délai d'un chemin non encore mis à
+    jour. Un dépassement lève TimeoutError (ou URLError l'enveloppant si la
+    connexion elle-même échoue à s'établir à temps), reconnu par
+    _erreur_label ci-dessus."""
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
     body = json.dumps({
@@ -1920,10 +1951,14 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
     # sont transmis (Bibliothèque/Revue), surtout depuis le passage à
     # claude-sonnet-5 (latence un peu supérieure à Haiku) — timeout "the read
     # operation timed out" observé même sur une question triviale (issue #45).
-    # 90s laisse une marge large sans bloquer indéfiniment l'interface en cas
-    # de vrai problème réseau.
+    # Valeur désormais pilotée par l'appelant (timeout_s, issue #105 :
+    # config.COACH_TIMEOUT_REPONSE_S/COACH_TIMEOUT_ANALYSE_S, SEUL endroit à
+    # modifier pour changer ce délai) plutôt que fixée en dur à 90 — c'est ce
+    # paramètre qui réalise la coupure "côté serveur" demandée par l'issue
+    # #105 : au-delà, le socket est abandonné, pas seulement une alerte
+    # visuelle côté interface.
     try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         # Solde de crédit épuisé (issue #54, détection élargie issue #60) :
@@ -2026,9 +2061,10 @@ def get_opening_moves(opening_name: str, config):
     # l'entraînement d'ouverture lui-même (cf. on_opening_move).
     log_path = (config or {}).get("coach_log_path")
     contexte_log = {"opening_name": opening_name}
+    timeout_s = (config or {}).get("coach_timeout_s") or 90
 
     try:
-        raw = _call_claude(_OPENING_SYSTEM_PROMPT, opening_name, api_key, model, usage_path)
+        raw = _call_claude(_OPENING_SYSTEM_PROMPT, opening_name, api_key, model, usage_path, timeout_s=timeout_s)
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (ouverture) : crédit épuisé : {e}")
         _log_coach_call(log_path, _OPENING_SYSTEM_PROMPT, contexte_log, opening_name,
@@ -2041,9 +2077,10 @@ def get_opening_moves(opening_name: str, config):
         return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (ouverture) échoué : {e}")
+        erreur = _erreur_label(e)
         _log_coach_call(log_path, _OPENING_SYSTEM_PROMPT, contexte_log, opening_name,
-                         "ouverture_coups", model=model, erreur=str(e))
-        return None, str(e)
+                         "ouverture_coups", model=model, erreur=erreur)
+        return None, erreur
 
     usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
     _log_coach_call(log_path, _OPENING_SYSTEM_PROMPT, contexte_log, opening_name,
@@ -2111,9 +2148,10 @@ def get_training_program(patterns_erreurs, repertoire_ouvertures, config):
         "patterns_erreurs": patterns_erreurs or {},
         "repertoire_ouvertures": repertoire_ouvertures or {},
     }
+    timeout_s = (config or {}).get("coach_timeout_s") or 90
 
     try:
-        raw = _call_claude(_TRAINING_PROGRAM_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path)
+        raw = _call_claude(_TRAINING_PROGRAM_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path, timeout_s=timeout_s)
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) : crédit épuisé : {e}")
         _log_coach_call(log_path, _TRAINING_PROGRAM_SYSTEM_PROMPT, contexte_log, prompt_user,
@@ -2126,9 +2164,10 @@ def get_training_program(patterns_erreurs, repertoire_ouvertures, config):
         return None, "modele_indisponible"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude (programme d'entraînement) échoué : {e}")
+        erreur = _erreur_label(e)
         _log_coach_call(log_path, _TRAINING_PROGRAM_SYSTEM_PROMPT, contexte_log, prompt_user,
-                         "programme_entrainement", model=model, erreur=str(e))
-        return None, str(e)
+                         "programme_entrainement", model=model, erreur=erreur)
+        return None, erreur
 
     usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
     _log_coach_call(log_path, _TRAINING_PROGRAM_SYSTEM_PROMPT, contexte_log, prompt_user,
@@ -2290,8 +2329,14 @@ def get_coach_response(messages, context, coach_memory, config):
     # du coach n'apparaissait donc jamais dans coach_calls.log, obligeant à
     # se fier à un copier-coller manuel d'Alain pour diagnostiquer une
     # affirmation erronée.
+    # timeout_s (issue #105) : config.COACH_TIMEOUT_REPONSE_S par défaut
+    # (90s si absent du dict config — appelant non mis à jour), assemblé par
+    # app.py dans chaque llm_config (clé "coach_timeout_s"). Repris tel quel
+    # pour la relance automatique de fiabilité ci-dessous : elle compte donc
+    # dans le délai total vu par l'interface.
+    timeout_s = (config or {}).get("coach_timeout_s") or 90
     try:
-        response = _call_claude(prompt_sys, clean_messages, api_key, model, usage_path)
+        response = _call_claude(prompt_sys, clean_messages, api_key, model, usage_path, timeout_s=timeout_s)
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude : crédit épuisé : {e}")
         _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="credit_insuffisant")
@@ -2302,8 +2347,9 @@ def get_coach_response(messages, context, coach_memory, config):
         return None, "modele_indisponible", None, None
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude échoué : {e}")
-        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur=str(e))
-        return None, str(e), None, None
+        erreur = _erreur_label(e)
+        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur=erreur)
+        return None, erreur, None, None
 
     response = (response or "").strip()
 
@@ -2406,7 +2452,7 @@ def get_coach_response(messages, context, coach_memory, config):
             # pas de boucle possible. Une panne ici (API, réseau) ne doit
             # JAMAIS remonter à Alain : la première réponse, déjà obtenue
             # avec succès, reste celle retournée.
-            response2 = _call_claude(prompt_sys, messages_relance, api_key, model, usage_path)
+            response2 = _call_claude(prompt_sys, messages_relance, api_key, model, usage_path, timeout_s=timeout_s)
             response2 = (response2 or "").strip()
             fiabilite2 = coach_reliability.evaluer_fiabilite(
                 response2, fen_reference, fen_reference2,

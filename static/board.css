@@ -404,6 +404,47 @@
 }
 .coach-bubble.error a { color: #5a1a1a; text-decoration: underline; display: inline-block; margin-top: 4px; }
 
+/* Bulle "Le coach réfléchit..." (issue #105, point 1) : même emplacement et
+   même forme qu'une bulle .assistant normale (pour n'occuper QUE la place de
+   la future réponse, sans décaler le reste du chat quand elle disparaît),
+   avec trois points animés en guise d'ellipse plutôt qu'un caractère "…"
+   figé. display:flex + gap pour garder le texte et les points sur une seule
+   ligne quel que soit la largeur de viewport (390px/360px compris). */
+.coach-bubble-thinking {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  color: var(--cc-text-muted);
+  font-style: italic;
+}
+.coach-thinking-dots span {
+  animation: coach-thinking-blink 1.4s infinite both;
+}
+.coach-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.coach-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes coach-thinking-blink {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+
+/* Bouton "Réessayer" sous le message de délai dépassé (issue #105, point 2)
+   — même forme pleine que .coach-signaler-send-btn (action principale de la
+   bulle, pas un lien discret comme .coach-signaler-btn). */
+.coach-retry-btn {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 6px 16px;
+  border: none;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-accent);
+  color: var(--cc-bg);
+  font-family: var(--cc-font-body);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.coach-retry-btn:hover { background: var(--cc-accent-hover); }
+
 /* Pastille de fiabilité (issue #87, point 5) : résultat des contrôles
    déterministes exécutés après chaque réponse du coach (coach_reliability.py)
    — vert = aucune incohérence détectée (PAS "réponse vérifiée juste", cf. le

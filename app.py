@@ -290,6 +290,13 @@ def index():
         lichess_categories_triees=sorted(lichess_puzzles.CATEGORIES.items(), key=lambda kv: kv[1]),
         eval_breakdown_disponible=eval_breakdown_disponible,
         eval_breakdown_message=_eval_breakdown_message(eval_breakdown_disponible, _version_affichee),
+        # Délais serveur du coach (issue #105), en millisecondes, pour que le
+        # minuteur de garde côté navigateur (static/board.js, coachWaitBegin)
+        # se cale sur la même source de vérité que le serveur
+        # (config.COACH_TIMEOUT_REPONSE_S/COACH_TIMEOUT_ANALYSE_S) plutôt que
+        # de dupliquer ces valeurs en dur dans le JS.
+        coach_timeout_reponse_ms=config.COACH_TIMEOUT_REPONSE_S * 1000,
+        coach_timeout_analyse_ms=config.COACH_TIMEOUT_ANALYSE_S * 1000,
     )
 
 
@@ -862,6 +869,7 @@ def on_analyse_choisir_coups_decisifs(data):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_ANALYSE_S,
     }
     choix, error = llm_coach.get_move_explanations(prepared, camp_alain, llm_config)
     _emit_usage_update()
@@ -971,6 +979,7 @@ def on_analyse_expliquer_coup(data):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_ANALYSE_S,
     }
 
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
@@ -1105,6 +1114,7 @@ def on_coach_comment_on_demand(data):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
@@ -1478,6 +1488,7 @@ def on_coach_ask(data):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
@@ -1516,6 +1527,7 @@ def on_training_program_build(_data=None):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_ANALYSE_S,
     }
     objectifs, error = llm_coach.get_training_program(
         coach_memory.get("patterns_erreurs", {}),
@@ -2106,6 +2118,7 @@ def on_exercise_answer(data):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
@@ -2425,6 +2438,7 @@ def _on_exercise_answer_lichess(uci: str) -> None:
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
@@ -2617,6 +2631,7 @@ def on_pedagogic_move(data):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
@@ -2702,6 +2717,7 @@ def on_opening_start(data):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
     moves_san, error = llm_coach.get_opening_moves(opening_name, llm_config)
     _emit_usage_update()
@@ -2926,6 +2942,7 @@ def on_opening_move(data):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
@@ -3408,6 +3425,7 @@ def on_finale_move(data):
         "llm_model": config.LLM_MODEL,
         "coach_log_path": config.COACH_CALLS_LOG_PATH,
         "usage_path": config.USAGE_TOKENS_PATH,
+        "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
