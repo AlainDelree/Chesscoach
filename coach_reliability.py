@@ -161,6 +161,26 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
     vérifié pour cette occurrence (faux négatif assumé, même philosophie que
     le reste du module) — la vérification de "équilibré(e)" (symétrique,
     aucun camp nécessaire) est inchangée.
+  - un sixième ajout (issue #106, signalement d'Alain, 7 octobre 2026, mode
+    Exercice, « Confusion autour de la dame noire » : "ton cavalier en c6
+    est bien défendu par ce pion", alors que le cavalier en c6 est BLANC et
+    Alain joue les Noirs — ni couleur ni mot "adverse" explicite dans la
+    phrase, donc hors de portée de detecter_possessif_incoherent ci-dessous,
+    qui n'exige justement que l'un des deux) : detecter_possessif_case_
+    incoherent vérifie la couleur de la pièce RÉELLEMENT présente sur la
+    case citée juste après un possessif "ton"/"ta"/"tes" (ou "mon"/"ma"/
+    "mes") accolé à un nom de pièce, dans les mêmes positions que
+    detecter_case_piece_incoherente (position de départ, position actuelle,
+    `candidats`, suites citées dans le texte) — signalé seulement si TOUTES
+    les lectures où ce type de pièce occupe cette case donnent la pièce de
+    l'ADVERSAIRE d'Alain ; une seule lecture où elle lui appartient (ou une
+    case vide/d'un autre type partout, laissée à detecter_case_piece_
+    incoherente) ne déclenche rien. Gravité "orange", "rouge" si un
+    connecteur de justification de verdict suit à proximité ou si la même
+    paire pièce+case se répète (même heuristique que detecter_attaque_
+    defense_incoherente). Sans `camp_alain` connu, ce contrôle reste
+    totalement inactif (contrairement à detecter_possessif_incoherent, qui
+    peut encore signaler "ton"+"adverse" sans connaître le camp).
   - trois ajouts (issue #103, série de 20 appels après la fusion des issues
     #94 à #102, cas réel re3, essai 1 : "Le bon coup était Re8 ! Il force
     Qxe8 ... et après Qxe8, ta dame en a8 capture la dame noire en e8"
@@ -2172,6 +2192,115 @@ def detecter_possessif_incoherent(texte: str, camp_alain: str = "") -> list:
     return alertes
 
 
+# Possessif "ton"/"ta"/"tes" (ou "mon"/"ma"/"mes", si le texte parle à la
+# première personne — même traitement, cf. docstring ci-dessous) accolé
+# (apposition courte d'un seul mot tolérée, ex. "ton propre cavalier") à un
+# nom de pièce SUIVI DIRECTEMENT D'UNE CASE, SANS couleur ni mot "adverse"
+# explicite entre les deux (issue #106) : la négation ci-après exclut
+# justement le cas déjà couvert par _POSSESSIF_PIECE_COULEUR_RE ci-dessus
+# (detecter_possessif_incoherent), pour ne jamais dupliquer ce contrôle —
+# ici, c'est la case elle-même, pas un mot de couleur, qui tranche à qui
+# appartient la pièce citée.
+_POSSESSIF_PIECE_CASE_RE = re.compile(
+    r"\b(ton|ta|tes|mon|ma|mes)\b(?:\s+\w+)?\s+"
+    r"(dames?|tours?|fous?|cavaliers?|pions?|rois?)\b"
+    r"(?!\s+(?:blancs?|blanches?|noirs?|noires?|adverses?)\b)"
+    r"\s*(?:(?:en|sur)\s+)?([a-h][1-8])\b",
+    re.IGNORECASE,
+)
+
+
+def detecter_possessif_case_incoherent(texte: str, camp_alain: str, boards_reference: list,
+                                        candidats: list = None) -> list:
+    """Détecte un possessif "ton"/"ta"/"tes" (ou "mon"/"ma"/"mes" — le texte
+    parlerait alors à la première personne, traité identiquement : les deux
+    formes désignent par construction une pièce d'ALAIN, jamais celle de
+    son adversaire) accolé à un nom de pièce suivi directement d'une case
+    (_POSSESSIF_PIECE_CASE_RE ci-dessus, issue #106 — cas réel : "ton
+    cavalier en c6 est bien défendu par ce pion", alors que le cavalier en
+    c6 est BLANC et Alain joue les Noirs ; ni couleur ni mot "adverse"
+    explicite dans la phrase, donc hors de portée de detecter_possessif_
+    incoherent ci-dessus, qui n'exige justement que l'un des deux).
+
+    Vérifie la COULEUR de la pièce RÉELLEMENT présente sur cette case dans
+    les mêmes positions que detecter_case_piece_incoherente (position de
+    départ, position actuelle, chaque position de `candidats` — lignes
+    principales et trait inversé compris — et chaque position atteinte en
+    jouant les suites de coups citées dans le texte lui-même, coup
+    précédent cité et demi-coup caché compris, cf. _extraire_suites/
+    _rassembler_lectures, jamais recalculés ici : même pool de positions,
+    aucune règle de lecture dupliquée).
+
+    Sans `camp_alain` connu ("" ou couleur non reconnue), ce contrôle reste
+    totalement inactif (contrairement à detecter_possessif_incoherent, qui
+    peut encore signaler "ton"+"adverse" sans connaître le camp) : "ton"
+    ne désigne une pièce d'Alain qu'en connaissant son camp, rien ne permet
+    sinon de juger à qui appartient la pièce trouvée sur la case citée.
+
+    Une incohérence n'est signalée que si, dans TOUTES les lectures où une
+    pièce de ce TYPE se trouve sur cette case (toutes couleurs confondues),
+    cette pièce appartient à l'ADVERSAIRE d'Alain — une seule lecture où
+    elle lui appartient suffit à ne rien signaler (même tolérance que le
+    reste du module ; couvre en particulier une pièce qui change de camp
+    d'une lecture à l'autre, typiquement après une prise citée dans une
+    suite). Si la case ne contient ce type de pièce dans AUCUNE lecture
+    (case vide ou autre type de pièce partout), rien n'est signalé non
+    plus : c'est alors detecter_case_piece_incoherente qui a vocation à
+    couvrir cette case (si une couleur y est explicitement citée).
+
+    Gravité "orange" par défaut, "rouge" si un connecteur de justification
+    de verdict suit à proximité ou si la même paire (type de pièce, case)
+    se répète dans le texte — même heuristique approximative que
+    detecter_attaque_defense_incoherente (_CONNECTEUR_VERDICT_RE/
+    _FENETRE_CONNECTEUR_VERDICT, définis plus haut, jamais dupliqués).
+
+    Retourne une liste de dicts {"type": "possessif_case_incoherent",
+    "gravite": "orange"|"rouge", "detail": str}."""
+    camp_alain_couleur = _camp_alain_chess(camp_alain)
+    if camp_alain_couleur is None:
+        return []
+    candidats = candidats or []
+    positions_citees = []
+    for suite in _extraire_suites(texte):
+        for _avant, apres in _rassembler_lectures(suite, candidats):
+            positions_citees.append(apres)
+    tous_boards = list(boards_reference) + [b for _label, b in candidats] + positions_citees
+    if not tous_boards:
+        return []
+    alertes = []
+    compte_repetition = {}
+    for m in _POSSESSIF_PIECE_CASE_RE.finditer(texte):
+        piece_type = _NOM_PIECE_TYPE[m.group(2).lower()]
+        case = chess.parse_square(m.group(3).lower())
+        couleurs_lues = [
+            b.piece_at(case).color for b in tous_boards
+            if b.piece_at(case) is not None and b.piece_at(case).piece_type == piece_type
+        ]
+        if not couleurs_lues or any(c == camp_alain_couleur for c in couleurs_lues):
+            continue
+        nom = _NOM_PIECE_AFFICHAGE[piece_type]
+        fenetre_connecteur = texte[m.end():m.end() + _FENETRE_CONNECTEUR_VERDICT]
+        central = bool(_CONNECTEUR_VERDICT_RE.search(fenetre_connecteur))
+        cle_repetition = (piece_type, case)
+        compte_repetition[cle_repetition] = compte_repetition.get(cle_repetition, 0) + 1
+        alertes.append({
+            "type": "possessif_case_incoherent",
+            "detail": (
+                f"\"{m.group(0).strip()}\" associe le possessif "
+                f"\"{m.group(1)}\" (une pièce d'Alain) au {nom} en "
+                f"{m.group(3)}, qui appartient à l'adversaire dans les "
+                f"{len(couleurs_lues)} lecture(s) connue(s) de cette case"
+            ),
+            "_central": central,
+            "_cle_repetition": cle_repetition,
+        })
+    for a in alertes:
+        repetee = compte_repetition[a["_cle_repetition"]] >= 2
+        a["gravite"] = "rouge" if (a.pop("_central") or repetee) else "orange"
+        a.pop("_cle_repetition")
+    return alertes
+
+
 def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str = "",
                        analyse_indisponible: bool = False, verdict_partiel: bool = False,
                        coup_propose: str = "", coup_reel: str = "", meilleur_coup: str = "",
@@ -2313,6 +2442,18 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "noir\" quand Alain joue les Blancs, \"ton fou adverse\") — gravité "
         "\"orange\" (limite : sans camp d'Alain connu, seule la combinaison "
         "\"ton\"+\"adverse\" est signalée)",
+        "possessif contredit par la case (issue #106) : \"ton\"/\"ta\"/"
+        "\"tes\" (ou \"mon\"/\"ma\"/\"mes\") directement accolé à un nom de "
+        "pièce suivi d'une case, SANS couleur ni mot \"adverse\" explicite "
+        "(\"ton cavalier en c6\"), comparé à la pièce RÉELLEMENT présente "
+        "sur cette case (position de départ, position actuelle, "
+        "`candidats`, suites citées) — signalé seulement si TOUTES les "
+        "lectures où ce type de pièce occupe cette case donnent la pièce "
+        "de l'adversaire d'Alain ; gravité \"orange\", \"rouge\" si un "
+        "connecteur de justification de verdict suit à proximité ou si la "
+        "même paire pièce+case se répète (limite : nécessite `camp_alain` "
+        "connu, sinon inactif ; une case vide ou d'un autre type partout "
+        "reste couverte par le contrôle de case ci-dessus, pas par celui-ci)",
     ]
 
     boards_reference = []
@@ -2347,6 +2488,7 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
     )
     if boards_reference:
         alertes += detecter_case_piece_incoherente(texte, boards_reference, candidats_suites)
+        alertes += detecter_possessif_case_incoherent(texte, camp_alain, boards_reference, candidats_suites)
     alertes += detecter_suites_illegales(texte, candidats_suites)
     alertes += detecter_echanges_mal_qualifies(texte, candidats_suites, camp_alain)
     alertes += detecter_clouage_errone(texte, boards_reference, candidats_suites)

@@ -1,0 +1,42 @@
+# Cas de non-régression — voir tests/cas_coach/README.md pour le format.
+id: dame_noire_c6_possessif_case
+description: Signalement d'Alain (7 octobre 2026, mode Exercice, « Confusion autour de la dame noire ») — à la question « La dame noire reprend ? Le cavalier ? Il est protégé par le pion », le coach a répondu « ... ton cavalier en c6 est bien défendu par ce pion », alors que le cavalier en c6 est BLANC (celui de l'adversaire) et Alain joue les Noirs. Le fond était juste (Qxc6 dxc6 perd la dame contre un cavalier, environ +6,7 pour les Blancs), mais le contrôle des possessifs contradictoires existant (issue #103) n'exige qu'une couleur explicite ou le mot « adverse » dans la phrase — ni l'un ni l'autre ici, donc aucune alerte à l'époque (issue #106).
+source: mes_erreurs — conversation réelle avec le coach (exercice ChessCoach, 7 octobre 2026)
+fen: r1b2r1k/5ppp/2Nqpn2/p2P4/P2P4/3BP3/4QPPP/R4RK1 b - - 2 19
+camp_alain: noirs
+coup_propose: Qxc6
+meilleur_coup: Nxd5|exd5
+
+faits_attendus:
+  # Cas réel ayant motivé l'issue #106 : "ton" attribue à Alain (Noirs) le
+  # cavalier en c6, qui est BLANC dans la position de départ ET la position
+  # actuelle (aucune lecture ne le rend noir) — doit être signalé.
+  reponse_simulee_signalee: Oui, c'est exact : si Qxc6, le pion d5 reprend immédiatement en d5xc6 — ton cavalier en c6 est bien défendu par ce pion.
+  # Même fait, dit avec "adverse" à la place de "ton" (déjà couvert par
+  # detecter_possessif_incoherent côté "adverse" seul, mais aucun possessif
+  # "ton"/"ta"/"tes" ici) : ne doit déclencher aucune alerte de ce nouveau
+  # contrôle (pas de possessif contradictoire par construction).
+  reponse_simulee_verte: Oui, c'est exact : si Qxc6, le pion d5 reprend immédiatement en d5xc6 — le cavalier adverse en c6 est bien défendu par ce pion.
+  # Possessif cohérent avec la case (issue #106) : le cavalier en f6 est
+  # bien NOIR, donc bien celui d'Alain — ne doit jamais être signalé.
+  reponse_simulee_verte: Ton cavalier en f6 surveille bien la case e4.
+  # Possessif juste avec une autre pièce et une autre case (issue #106) :
+  # la dame noire en d6 est bien celle d'Alain.
+  reponse_simulee_verte: Ta dame en d6 n'est pour l'instant pas attaquée.
+  # Case vide (issue #106) : aucun cavalier (d'aucune couleur) en h5 dans
+  # la position de départ ni actuelle — laissé au contrôle de case existant
+  # (qui exige une couleur explicite, absente ici), jamais signalé par ce
+  # nouveau contrôle.
+  reponse_simulee_verte: Ton cavalier en h5 serait idéalement placé.
+  # Négation (issue #106) : la négation casse l'adjacence pièce+case
+  # exigée par la regex (même principe que le reste du module) — jamais
+  # signalé, quel que soit le fond.
+  reponse_simulee_verte: Ton cavalier n'est pas en c6, rassure-toi.
+  # Possessif contradictoire DÉJÀ couvert par l'issue #103 (couleur
+  # explicite) — non-régression : toujours signalé après cet ajout.
+  reponse_simulee_signalee: Ton cavalier blanc en c6 est bien défendu par ce pion.
+
+motifs_attendus:
+  dxc6
+
+pastille_attendue: vert

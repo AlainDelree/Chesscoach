@@ -2394,6 +2394,14 @@ def get_coach_response(messages, context, coach_memory, config):
                 "camp d'Alain : jamais \"ton\"/\"ta\"/\"tes\" devant une "
                 "pièce de la couleur adverse, ni devant le mot \"adverse\""
             )
+        if "possessif_case_incoherent" in types_alertes:
+            consignes_ciblees.append(
+                "avant d'employer \"ton\"/\"ta\"/\"tes\" devant une pièce "
+                "suivie d'une case, vérifie la couleur de la pièce "
+                "RÉELLEMENT présente sur cette case : \"ton\"/\"ta\"/\"tes\" "
+                "ne désigne jamais la pièce de l'adversaire, même sans mot "
+                "de couleur explicite"
+            )
         if consignes_ciblees:
             rappel += " Attention en particulier : " + " ; ".join(consignes_ciblees) + "."
         messages_relance = clean_messages + [
