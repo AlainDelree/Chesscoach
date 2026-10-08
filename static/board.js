@@ -1091,6 +1091,66 @@ function showBoardToast(text) {
   }, CC_TOAST_DURATION_MS);
 }
 
+// ── Cercle d'attente centré sur le plateau (issue #107) ────────────────────
+// Affiché au centre du plateau pendant TOUTE attente d'une réponse pilotée
+// par le mécanisme central d'attente existant (issue #105 : coachWaitBegin/
+// _coachThinkingStart, ci-dessous) — réponse du coach (question, commentaire,
+// réponse d'exercice, ouverture, finale, analyse, programme d'entraînement)
+// ET attente du verdict Stockfish en exercice (exercise.js appelle
+// _coachThinkingStart directement, sans passer par coachWaitBegin, cf.
+// commentaire en tête de la section "Attente du coach" ci-dessous — ce
+// cercle est donc couvert par le même point d'accroche, jamais un second
+// minuteur). N'apparaît qu'après CC_SPINNER_SHOW_DELAY_MS pour ne pas
+// clignoter sur une réponse rapide (coachSpinnerBegin ci-dessous, appelé
+// depuis _coachThinkingStart) ; disparaît immédiatement à .finish() (réponse,
+// erreur, délai dépassé) — jamais laissé affiché au-delà. #board-spinner vit
+// dans #board-file-column, en frère de #board-wrapper (templates/index.html),
+// pour la même raison que #board-toast (overflow:hidden de #board-wrapper,
+// qui le rognerait sur les plus petits plateaux mobiles).
+const CC_SPINNER_SHOW_DELAY_MS = 400;
+
+function coachSpinnerBegin() {
+  const spinner = document.getElementById("board-spinner");
+  let cancelled = false;
+  let waitForToastId = null;
+  const showTimerId = setTimeout(() => {
+    // Issue #107, point 3 : si la bulle temporaire (ex. fin de théorie) est
+    // affichée en même temps, ne pas superposer les deux de façon illisible
+    // — on attend qu'elle se termine plutôt que de la décaler (elle a une
+    // durée courte et connue, CC_TOAST_DURATION_MS). Jamais bloqué pour
+    // autant : finish() ci-dessous annule ce sondage à tout moment.
+    const waitThenShow = () => {
+      if (cancelled) return;
+      const toast = document.getElementById("board-toast");
+      if (toast && toast.classList.contains("show")) {
+        waitForToastId = setTimeout(waitThenShow, 150);
+        return;
+      }
+      if (spinner) spinner.classList.add("show");
+    };
+    waitThenShow();
+  }, CC_SPINNER_SHOW_DELAY_MS);
+  return {
+    finish() {
+      cancelled = true;
+      clearTimeout(showTimerId);
+      clearTimeout(waitForToastId);
+      if (spinner) spinner.classList.remove("show");
+    },
+  };
+}
+
+// Retrait immédiat et inconditionnel du cercle (issue #107, point 1 :
+// "jamais bloqué à l'écran") — appelé depuis coachNewSegment()/coachClear()
+// ci-dessous (changement de mode, nouvelle partie, nouvel exercice) en plus
+// du retrait normal via .finish() : ces points de coupure réinitialisent la
+// conversation du coach indépendamment de l'attente réseau éventuellement
+// encore en cours, le cercle ne doit donc jamais rester affiché après eux.
+function _ccSpinnerForceHide() {
+  const spinner = document.getElementById("board-spinner");
+  if (spinner) spinner.classList.remove("show");
+}
+
 // `allowPageScroll` (issue #67, défaut false) : à ne passer à true que pour
 // les réponses qu'Alain attend activement (réponse à une question tapée,
 // réponse à "Demander l'avis du coach") — pas pour les messages automatiques
@@ -1301,6 +1361,10 @@ function _mobileStatusClearCoachThinking() {
 function _coachThinkingStart(mobileText, wantChatBubble) {
   const bubble = (wantChatBubble !== false) ? _coachRenderThinkingBubble() : null;
   _mobileStatusShowCoachThinking(mobileText);
+  // Issue #107 : cercle d'attente au centre du plateau, même point
+  // d'accroche que la bulle de chat et l'indicateur mobile ci-dessus — pas
+  // un second minuteur (cf. commentaire détaillé sur coachSpinnerBegin).
+  const spinner = (typeof coachSpinnerBegin === "function") ? coachSpinnerBegin() : null;
   const startedAt = Date.now();
   const intervalId = setInterval(() => {
     _coachUpdateThinkingBubbleElapsed(bubble, Date.now() - startedAt);
@@ -1310,6 +1374,7 @@ function _coachThinkingStart(mobileText, wantChatBubble) {
       clearInterval(intervalId);
       if (bubble && bubble.isConnected) bubble.remove();
       _mobileStatusClearCoachThinking();
+      if (spinner) spinner.finish();
     },
   };
 }
@@ -1353,6 +1418,10 @@ function coachWaitBegin(opts) {
 // segment précédent — pas de séparateur vide au tout premier segment, ni de
 // séparateurs empilés si aucune question n'a été posée depuis le précédent.
 function coachNewSegment(label) {
+  // Issue #107, point 1 : nouvelle partie/exercice pendant une attente en
+  // cours — le cercle au centre du plateau ne doit jamais rester affiché
+  // après ce point de coupure (cf. _ccSpinnerForceHide).
+  if (typeof _ccSpinnerForceHide === "function") _ccSpinnerForceHide();
   if (_coachHistory.length > _coachSegmentStart) {
     const history = document.getElementById("coach-history");
     if (history) {
@@ -1374,6 +1443,10 @@ function coachNewSegment(label) {
 }
 
 function coachClear() {
+  // Issue #107, point 1 : changement de mode/onglet pendant une attente en
+  // cours (coachClear() est appelé par switchModeTab, controls.js) — même
+  // raison que dans coachNewSegment ci-dessus.
+  if (typeof _ccSpinnerForceHide === "function") _ccSpinnerForceHide();
   _coachHistory = [];
   _coachSegmentStart     = 0;
   _coachSegmentStartedAt = null;

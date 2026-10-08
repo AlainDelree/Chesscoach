@@ -1709,6 +1709,28 @@
               <div id="board-toast" class="board-toast" role="status" aria-live="polite">
                 <div id="board-toast-bubble" class="board-toast-bubble"></div>
               </div>
+              <!-- Cercle d'attente centré sur le plateau (issue #107) :
+                   affiché pendant toute attente d'une réponse du coach ou du
+                   verdict Stockfish en exercice — réutilise le mécanisme
+                   d'attente central existant (coachWaitBegin/
+                   _coachThinkingStart, issue #105, board.js), pas un second
+                   minuteur. Posé ICI, en frère de #board-wrapper (comme
+                   #board-toast ci-dessus, même raison : #board-wrapper a
+                   overflow:hidden et le rognerait sur les plus petits
+                   plateaux mobiles). Masqué par défaut (pas de classe
+                   "show") ; montré après un court délai puis caché par
+                   coachSpinnerBegin()/.finish() (board.js) — jamais par un
+                   second minuteur ni par CSS seul. pointer-events:none à
+                   tous les niveaux (board.css) : ne bloque jamais un
+                   toucher/clic sur le plateau, ne déplace rien, ne réduit
+                   pas le plateau (position:absolute, aucun impact sur le
+                   flux de la page). role="status" + aria-live="polite" :
+                   annonce discrète "Le coach réfléchit" aux lecteurs
+                   d'écran (texte masqué visuellement, cf. board.css). -->
+              <div id="board-spinner" class="board-spinner" role="status" aria-live="polite">
+                <div class="board-spinner-ring"></div>
+                <span class="board-spinner-sr-text">Le coach réfléchit</span>
+              </div>
               <div id="coord-file"></div>
             </div>
           </div>

@@ -128,6 +128,84 @@
   box-shadow: var(--cc-shadow-lg);
 }
 
+/* Cercle d'attente centré sur le plateau (issue #107) — même raison de
+   placement que .board-toast ci-dessus (frère de #board-wrapper, jamais
+   dedans : overflow:hidden le rognerait sur les plus petits plateaux
+   mobiles). pointer-events:none à tous les niveaux : ne bloque jamais un
+   toucher/clic sur le plateau pendant l'attente, et ne modifie ni le flux
+   de la page ni la taille du plateau (position:absolute, comme .board-toast).
+   48px (fourchette 44-56px demandée) : taille fixe indépendante de celle du
+   plateau, pour rester lisible même sur le plus petit plateau mobile (~170-
+   260px de côté) sans gêner sur grand écran. Fond semi-transparent assombri
+   (color-mix sur --cc-neutral-800, même famille que .board-toast-bubble,
+   mais à 68% plutôt que 82% : pas de texte à faire ressortir ici, juste de
+   quoi distinguer l'anneau clair des cases claires ET foncées dessous).
+   Jamais --cc-accent (terracotta) : rien n'y est cliquable (cf. en-tête de
+   ce fichier). */
+.board-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 48px;
+  height: 48px;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.board-spinner.show { opacity: 1; }
+.board-spinner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--cc-neutral-800) 68%, transparent);
+  box-shadow: var(--cc-shadow-lg);
+}
+.board-spinner-ring {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid color-mix(in srgb, #fff 30%, transparent);
+  border-top-color: #fff;
+  animation: cc-spinner-rotate 0.9s linear infinite;
+}
+@keyframes cc-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+/* Texte alternatif pour lecteurs d'écran (issue #107, point 2) — masqué
+   visuellement (même technique que .sr-only usuelle), jamais affiché à
+   l'écran : l'anneau seul porte l'information visuelle, role="status" +
+   aria-live="polite" (templates/index.html) portent l'annonce vocale. */
+.board-spinner-sr-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Préférence système "moins d'animations" (issue #107, point 2) : remplace
+   la rotation continue par un anneau fixe (pas de segment plus clair qui
+   suggérerait un mouvement) et un clignotement lent — reste un indicateur
+   d'attente visible sans animation continue de type rotation. */
+@media (prefers-reduced-motion: reduce) {
+  .board-spinner-ring {
+    animation: cc-spinner-blink 1.6s ease-in-out infinite;
+    border-top-color: color-mix(in srgb, #fff 30%, transparent);
+  }
+}
+@keyframes cc-spinner-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .square {
   display: flex;
   align-items: center;
