@@ -2413,6 +2413,20 @@
     // évite un flash "—" avant la première connexion Socket.IO. Le tojson de
     // Flask échappe correctement pour un contexte <script>.
     const USAGE_SUMMARY_INITIAL = {{ usage_summary | tojson }};
+    // Délais serveur du coach (issue #105, config.py COACH_TIMEOUT_REPONSE_S/
+    // COACH_TIMEOUT_ANALYSE_S, SEUL endroit à modifier côté serveur) — lus
+    // par coachWaitBegin (board.js) pour que le minuteur de garde du
+    // navigateur se déclenche TOUJOURS après le délai serveur réel, jamais
+    // une valeur dupliquée en dur ici.
+    // Assignation directe à window (pas de "const" top-level) : board.js lit
+    // explicitement window.COACH_SERVER_TIMEOUT_MS (plusieurs <script> non-
+    // module), un "const"/"let" de portée globale n'étant PAS exposé comme
+    // propriété de window, contrairement à "socket" ci-dessus qui n'est
+    // jamais consulté via window.socket.
+    window.COACH_SERVER_TIMEOUT_MS = {
+      reponse: {{ coach_timeout_reponse_ms | tojson }},
+      analyse: {{ coach_timeout_analyse_ms | tojson }},
+    };
   </script>
   <script src="{{ url_for('static', filename='vendor/chess.js/chess.min.js') }}"></script>
   <script src="{{ url_for('static', filename='board.js') }}"></script>

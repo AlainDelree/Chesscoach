@@ -43,6 +43,13 @@ let exerciseLastSubmittedUci = null;
 // coach réfléchit...".
 let exerciseAnalysisTimeoutId = null;
 const EXERCISE_ANALYSIS_TIMEOUT_MS = 30000;
+// Indicateur "Le coach réfléchit..." (issue #105, point 1) : réutilise les
+// fonctions d'affichage partagées de board.js (_coachThinkingStart), SANS le
+// minuteur de garde intégré de coachWaitBegin — celui-ci resterait concurrent
+// du minuteur de 30s ci-dessus, qui couvre tout le recalcul Stockfish, pas
+// seulement l'appel au coach, et dont le bouton "Réessayer" existant répond
+// déjà au besoin.
+let _exerciseThinking = null;
 let exerciseLastMove   = null; // { from, to } (cases algébriques) du dernier coup joué/exploré
 
 // État de la tentative en cours, transmis au chat libre pendant l'exercice
@@ -976,6 +983,9 @@ function submitExerciseAnswer(move) {
   }
   exerciseLastSubmittedUci = move.from + move.to + (move.promotion || "");
   _exerciseStartAnalysisWatchdog();
+  if (typeof _coachThinkingStart === "function") {
+    _exerciseThinking = _coachThinkingStart("Le coach réfléchit...");
+  }
   socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci });
 }
 
@@ -983,6 +993,17 @@ function _exerciseClearAnalysisWatchdog() {
   if (exerciseAnalysisTimeoutId !== null) {
     clearTimeout(exerciseAnalysisTimeoutId);
     exerciseAnalysisTimeoutId = null;
+  }
+}
+
+// Retire la bulle "Le coach réfléchit..." et l'indicateur mobile (issue
+// #105) — appelée dès qu'une issue réelle est connue pour cette tentative
+// (verdict, erreur, ou minuteur de 30s déjà déclenché), jamais laissée
+// affichée après coup.
+function _exerciseClearThinking() {
+  if (_exerciseThinking) {
+    _exerciseThinking.finish();
+    _exerciseThinking = null;
   }
 }
 
@@ -1001,6 +1022,7 @@ function _exerciseShowAnalysisIndisponible() {
   // qu'aucun vrai verdict n'est arrivé, le champ de question/les boutons du
   // coach restent désactivés (issue #79, point 4a).
   exerciseAnalysisTimeoutId = null;
+  _exerciseClearThinking();
   const statusEl = document.getElementById("exercise-status");
   if (statusEl) statusEl.textContent = "L'analyse Stockfish est indisponible.";
   const retryBtn = document.getElementById("exercise-retry-btn");
@@ -1019,6 +1041,9 @@ function exerciseRetryAnalysis() {
   // suivant (exercise_error/watchdog), jamais laissé à false entre-temps.
   exerciseExploring = false;
   _exerciseStartAnalysisWatchdog();
+  if (typeof _coachThinkingStart === "function") {
+    _exerciseThinking = _coachThinkingStart("Le coach réfléchit...");
+  }
   socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci });
 }
 
@@ -1099,6 +1124,7 @@ if (typeof socket !== "undefined") {
     // garde ni du bouton "Réessayer" affiché par un échec précédent (ex.
     // panne transitoire suivie d'un "Réessayer" réussi).
     _exerciseClearAnalysisWatchdog();
+    _exerciseClearThinking();
     const retryBtnOk = document.getElementById("exercise-retry-btn");
     if (retryBtnOk) retryBtnOk.style.display = "none";
     // Verdict rendu : le plateau devient librement explorable (issue #21),
@@ -1175,6 +1201,7 @@ if (typeof socket !== "undefined") {
 
   socket.on("exercise_error", (data) => {
     _exerciseClearAnalysisWatchdog();
+    _exerciseClearThinking();
     const statusEl = document.getElementById("exercise-status");
     const err = data && data.error;
     // Issue #79, point 3 : un échec pendant exercise_answer (coup déjà joué
@@ -1215,6 +1242,12 @@ if (typeof socket !== "undefined") {
       // illégale, ou déjà mat/pat.
       : (err === "fen_invalide")
       ? ((data && data.message) || "FEN invalide.")
+      // timeout (issue #105) : le serveur a lui-même abandonné l'appel à
+      // l'API Claude (config.COACH_TIMEOUT_REPONSE_S) — le bouton
+      // "Réessayer" ci-dessus (déjà affiché pour toute erreur à ce stade)
+      // répond au besoin, pas de mécanisme supplémentaire nécessaire ici.
+      : (err === "timeout")
+      ? "Le coach n'a pas répondu à temps."
       : "Le coach n'a pas pu répondre, réessayez.";
     if (statusEl) statusEl.textContent = msg;
     console.warn("[exercice]", msg, data);

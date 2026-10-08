@@ -40,6 +40,12 @@ let finaleGameOver   = false; // fin de partie détectée côté serveur (issue 
 let finaleAbandonne  = false; // fin de partie spécifiquement par "Abandonner" (issue #52, cf. coachBuildContext)
 let finaleList       = [];    // bibliothèque reçue du serveur (finale_list_response)
 let finaleFenAvantCoup = null; // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
+// Commentaire automatique du coup qui vient d'être joué (issue #105) — voir
+// le commentaire équivalent dans opening.js (_openingCommentPending).
+// Jamais utilisé pour les coups de démonstration (finale_demo_move/
+// finale_demo_stopped, qui n'appellent jamais le coach).
+let _finaleCommentPending = false;
+let _finaleCommentWait    = null;
 let finaleDemoActive  = false; // démonstration en cours (issue #28) : Stockfish joue les deux camps
 let finaleKingRestrictedSquares = []; // cases algébriques hachurées (issue #28)
 let finaleDemoCoupsJoues = 0; // nombre de demi-coups joués dans la démonstration en cours (issue #29, contexte coach)
@@ -428,10 +434,12 @@ function onFinaleBoardClick(e) {
   // Masqué dans le chat sur mobile (issue #69 point 3) — purement présentationnel,
   // cf. commentaire de _coachRenderBubble (board.js).
   _coachRenderBubble("user", `Travail de finales — je joue ${move.san}`, false, "coach-bubble-auto-move");
+  const commenter = finaleCommenterChaqueCoup();
+  _finaleCommentPending = commenter;
   socket.emit("finale_move", {
     fen_avant: fenAvant,
     uci: move.from + move.to + (move.promotion || ""),
-    commenter: finaleCommenterChaqueCoup(),
+    commenter,
   });
 }
 
@@ -450,6 +458,8 @@ if (typeof socket !== "undefined") {
     finaleGameOver  = false;
     finaleAbandonne = false;
     finaleDemoActive = false;
+    _finaleCommentPending = false;
+    if (_finaleCommentWait) { _finaleCommentWait.finish(); _finaleCommentWait = null; }
     finaleCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     finaleKingRestrictedSquares = data.king_restricted_squares || [];
     updateFinaleDemoNextButton();
@@ -522,6 +532,10 @@ if (typeof socket !== "undefined") {
 
   socket.on("finale_stockfish_move", (data) => {
     finaleWaiting = false;
+    // Capturé puis effacé ICI (issue #105) — voir le commentaire équivalent
+    // dans opening.js, socket.on("opening_stockfish_move").
+    const commentPending = _finaleCommentPending;
+    _finaleCommentPending = false;
     if (!finaleActive || !finaleGame || !data) return;
 
     finaleKingRestrictedSquares = data.king_restricted_squares || [];
@@ -544,6 +558,22 @@ if (typeof socket !== "undefined") {
       return;
     }
     updateFinaleStatus();
+    // Indicateur + délai maximal pour le commentaire automatique (issue
+    // #105) — voir le commentaire équivalent dans opening.js.
+    if (commentPending && typeof coachWaitBegin === "function") {
+      const descEl = document.getElementById("finale-description");
+      _finaleCommentWait = coachWaitBegin({
+        kind: "reponse",
+        // NE PAS remettre _finaleCommentWait à null ici — voir le
+        // commentaire détaillé équivalent sur _coachAskWait (board.js,
+        // _coachSendAsk).
+        onTimeout: () => {
+          _coachRenderTimeoutBubble(() => askCoachOnDemand(
+            finaleGame.fen(), descEl ? descEl.textContent : "", finaleCampAlain,
+          ));
+        },
+      });
+    }
   });
 
   socket.on("finale_demo_move", (data) => {
@@ -616,6 +646,15 @@ if (typeof socket !== "undefined") {
   });
 
   socket.on("finale_comment", (data) => {
+    if (_finaleCommentWait) {
+      if (_finaleCommentWait.isTimedOut()) {
+        console.warn("[travail de finales] commentaire tardif ignoré (délai déjà dépassé)", data);
+        _finaleCommentWait = null;
+        return;
+      }
+      _finaleCommentWait.finish();
+      _finaleCommentWait = null;
+    }
     const text = stripMarkdownForChat((data && data.text) || "");
     if (text) {
       _coachRenderBubble("assistant", text, false, undefined, data && data.fiabilite, data && {
@@ -630,10 +669,27 @@ if (typeof socket !== "undefined") {
 
   socket.on("finale_error", (data) => {
     finaleWaiting = false;
+    if (_finaleCommentWait) {
+      if (_finaleCommentWait.isTimedOut()) {
+        console.warn("[travail de finales] erreur tardive ignorée (délai déjà dépassé)", data);
+        _finaleCommentWait = null;
+        return;
+      }
+      _finaleCommentWait.finish();
+      _finaleCommentWait = null;
+    }
     const err = data && data.error;
     if (err === "credit_insuffisant") {
       if (typeof _coachRenderCreditInsuffisant === "function") _coachRenderCreditInsuffisant();
       console.warn("[travail de finales]", "credit_insuffisant", data);
+      return;
+    }
+    if (err === "timeout") {
+      const descEl = document.getElementById("finale-description");
+      _coachRenderTimeoutBubble(() => askCoachOnDemand(
+        finaleGame.fen(), descEl ? descEl.textContent : "", finaleCampAlain,
+      ));
+      console.warn("[travail de finales] commentaire échoué (timeout)", data);
       return;
     }
     const msg = (err === "stockfish_indisponible")

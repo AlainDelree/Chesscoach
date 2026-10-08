@@ -25,6 +25,14 @@ let openingAbandonne  = false; // fin de partie spécifiquement par "Abandonner"
 let openingFenAvantCoup     = null;  // FEN juste avant le dernier coup d'Alain (issue #13, "Reprendre mon coup")
 let openingInBookAvantCoup  = false; // valeur de openingInBook avant ce même coup
 let openingTheoryEndAnnounced = false; // message "Fin de la théorie" déjà affiché pour cette partie (issue #100, point 2)
+// Commentaire automatique du coup qui vient d'être joué (issue #105) : la
+// case "Commenter chaque coup" cochée au moment de l'envoi d'opening_move
+// (openingWaiting redevient faux dès opening_stockfish_move, AVANT que le
+// commentaire du coach n'arrive — ce drapeau couvre spécifiquement cette
+// seconde attente, pas visible dans openingWaiting). _openingCommentWait :
+// contrôleur coachWaitBegin actif pour ce commentaire, null sinon.
+let _openingCommentPending = false;
+let _openingCommentWait    = null;
 
 // ── Liste déroulante des ouvertures (issue #95, point 4) ────────────────────
 // Remplace la saisie libre du nom d'ouverture — même principe que
@@ -351,10 +359,12 @@ function onOpeningBoardClick(e) {
   // Masqué dans le chat sur mobile (issue #69 point 3) — purement présentationnel,
   // cf. commentaire de _coachRenderBubble (board.js).
   _coachRenderBubble("user", `Travail d'ouverture — je joue ${move.san}`, false, "coach-bubble-auto-move");
+  const commenter = openingCommenterChaqueCoup();
+  _openingCommentPending = commenter;
   socket.emit("opening_move", {
     fen_avant: fenAvant,
     uci: move.from + move.to + (move.promotion || ""),
-    commenter: openingCommenterChaqueCoup(),
+    commenter,
   });
 }
 
@@ -371,6 +381,8 @@ if (typeof socket !== "undefined") {
     openingSelected  = null;
     openingGameOver  = false;
     openingAbandonne = false;
+    _openingCommentPending = false;
+    if (_openingCommentWait) { _openingCommentWait.finish(); _openingCommentWait = null; }
     openingCampAlain = data.camp_alain === "noirs" ? "noirs" : "blancs";
     openingInBook    = !!data.in_book;
     openingTheoryEndAnnounced = false;
@@ -400,6 +412,13 @@ if (typeof socket !== "undefined") {
 
   socket.on("opening_stockfish_move", (data) => {
     openingWaiting = false;
+    // Capturé puis effacé ICI (issue #105), quelle que soit la branche
+    // prise ensuite : openingWaiting redevient faux dès ce message, AVANT
+    // le commentaire éventuel du coach — _openingCommentPending doit donc
+    // être consommé une seule fois par ce coup-ci, jamais laissé actif pour
+    // le coup suivant.
+    const commentPending = _openingCommentPending;
+    _openingCommentPending = false;
     if (!openingActive || !openingGame || !data) return;
     // Transition "dans le livre" -> "hors du livre" détectée ici (issue #100,
     // point 2) : wasInBook capturé AVANT d'écraser openingInBook avec la
@@ -436,9 +455,39 @@ if (typeof socket !== "undefined") {
     }
     updateOpeningStatus();
     if (sortieDeLivre) _announceOpeningTheoryEnd();
+    // Indicateur + délai maximal pour le commentaire automatique (issue
+    // #105) — seulement si la case "Commenter chaque coup" était cochée au
+    // moment de ce coup (sinon le serveur n'appelle jamais le coach pour
+    // lui, cf. app.py on_opening_move, aucune réponse/erreur ne viendrait
+    // jamais clore un minuteur de garde démarré ici).
+    if (commentPending && typeof coachWaitBegin === "function") {
+      _openingCommentWait = coachWaitBegin({
+        kind: "reponse",
+        // NE PAS remettre _openingCommentWait à null ici — voir le
+        // commentaire détaillé équivalent sur _coachAskWait (board.js,
+        // _coachSendAsk).
+        onTimeout: () => {
+          // Retry : pas de contexte spécialisé ("dans le livre"/popularité)
+          // à portée du client pour relancer EXACTEMENT le même commentaire
+          // — on retombe sur l'équivalent générique "Demander l'avis du
+          // coach" sur la position actuelle (déjà sûr à renvoyer, lecture
+          // seule), limite documentée dans le rapport de clôture.
+          _coachRenderTimeoutBubble(() => askCoachOnDemand(openingGame.fen(), null, openingCampAlain));
+        },
+      });
+    }
   });
 
   socket.on("opening_comment", (data) => {
+    if (_openingCommentWait) {
+      if (_openingCommentWait.isTimedOut()) {
+        console.warn("[travail d'ouverture] commentaire tardif ignoré (délai déjà dépassé)", data);
+        _openingCommentWait = null;
+        return;
+      }
+      _openingCommentWait.finish();
+      _openingCommentWait = null;
+    }
     let text = stripMarkdownForChat((data && data.text) || "");
     if (data && data.dans_le_livre && data.popularite_pct !== null && data.popularite_pct !== undefined) {
       text += `\n\n(Popularité dans le livre : ${data.popularite_pct}%)`;
@@ -458,10 +507,43 @@ if (typeof socket !== "undefined") {
 
   socket.on("opening_error", (data) => {
     openingWaiting = false;
+    // Capturé AVANT de remettre _openingCommentWait à null ci-dessous — sert
+    // à distinguer un délai dépassé sur le commentaire d'un coup (position
+    // de jeu en cours, repli sur askCoachOnDemand) de celui sur la
+    // recherche des coups caractéristiques d'une ouverture nommée
+    // (opening_start, avant toute partie — cf. branche "timeout" plus bas).
+    const wasCommentWait = !!_openingCommentWait;
+    if (_openingCommentWait) {
+      if (_openingCommentWait.isTimedOut()) {
+        console.warn("[travail d'ouverture] erreur tardive ignorée (délai déjà dépassé)", data);
+        _openingCommentWait = null;
+        return;
+      }
+      _openingCommentWait.finish();
+      _openingCommentWait = null;
+    }
     const err = data && data.error;
     if (err === "credit_insuffisant") {
       if (typeof _coachRenderCreditInsuffisant === "function") _coachRenderCreditInsuffisant();
       console.warn("[travail d'ouverture]", "credit_insuffisant", data);
+      return;
+    }
+    if (err === "timeout") {
+      if (wasCommentWait && openingGame) {
+        // Commentaire automatique d'un coup : même repli que si c'était le
+        // minuteur de garde du navigateur qui avait tranché le premier
+        // (voir le commentaire équivalent de opening_stockfish_move
+        // ci-dessus).
+        _coachRenderTimeoutBubble(() => askCoachOnDemand(openingGame.fen(), null, openingCampAlain));
+      } else {
+        // Ce délai dépassé porte sur la recherche des coups caractéristiques
+        // de l'ouverture nommée (opening_start, avant tout début de partie)
+        // — pas de position à renvoyer au coach ; recliquer "Commencer"
+        // relance la même requête.
+        const statusEl = document.getElementById("opening-status");
+        if (statusEl) statusEl.textContent = "Le coach n'a pas répondu à temps — cliquez à nouveau sur \"Commencer\" pour réessayer.";
+      }
+      console.warn("[travail d'ouverture] appel au coach échoué (timeout)", data);
       return;
     }
     const msg = (err === "stockfish_indisponible")
