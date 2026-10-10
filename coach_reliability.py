@@ -213,6 +213,29 @@ Limites assumées (volontairement documentées, cf. evaluer_fiabilite) :
         même limite de prudence que le reste du module : sans `camp_alain`
         connu, seule la combinaison "ton"+"adverse" (contradictoire quel que
         soit le camp) est signalée, jamais une couleur seule.
+  - deux ajouts (issue #108, fiabilité 13, signalement d'Alain du 10 octobre
+    2026, mode Exercice : une ligne mélangeant la ligne du meilleur coup et
+    celle du coup proposé, "bxa6 Nxc4 Nxc4 Qa4+", acceptée à tort par
+    detecter_suites_illegales via un demi-coup noir caché inséré devant
+    "Qa4+") :
+    (1) detecter_ligne_absente_lignes_fournies (nouveau) compare toute
+        suite d'au moins trois coups citée (hors "si...") aux lignes
+        RÉELLEMENT fournies par Stockfish (pv_coup_propose/pv_meilleur_coup)
+        — portion continue ou prolongement légal d'au plus deux coups,
+        SANS AUCUN demi-coup caché quelconque (plus strict que le contrôle
+        de légalité ci-dessus, délibérément, cf. docstring complète plus
+        bas) : une suite légale mais ABSENTE des deux lignes fournies est
+        désormais signalée, même quand detecter_suites_illegales ne la
+        signale pas ;
+    (2) detecter_reprises_phrase reconnaît désormais, en plus des reprises
+        de phrase (issue #103), une catégorie "aveu_incertitude" (champ
+        "categorie" de chaque alerte) : des tournures qui avouent ne pas
+        connaître l'ordre ou le contenu d'une ligne ("je ne veux pas
+        improviser", "que je ne te donne pas avec certitude", "je ne suis
+        pas sûr de l'ordre", "fie-toi au fait que") alors qu'elle figure
+        dans les lignes fournies — même liste réglable _MARQUEURS_REPRISE,
+        même prudence (tournures assez univoques pour ne pas se déclencher
+        sur un usage courant sans rapport).
 """
 
 import logging
@@ -928,6 +951,163 @@ def detecter_suites_illegales(texte: str, candidats: list) -> list:
             "detail": detail,
             "coups_cites": suite["coups"],
             "positions_essayees": labels_essayes,
+        })
+    return alertes
+
+
+# ── Lignes citées comparées aux lignes réellement fournies (issue #108,
+# fiabilité 13) ──────────────────────────────────────────────────────────
+# Constat ayant motivé cet ajout (signalement d'Alain, 10 octobre 2026, mode
+# Exercice) : la ligne du meilleur coup fournie au coach était "bxa6 Nxc4
+# Qa4+ Bd7 Qxc4 Qb8", celle du coup proposé "O-O Nxc4 Nxc4 Ne7 Qc2 O-O" —
+# deux lignes DISTINCTES, jamais destinées à être mélangées. Le coach a
+# pourtant cité "bxa6 (toi), Nxc4 (Noirs), Nxc4 (toi), puis Qa4+", une
+# séquence qui emprunte "bxa6" à la première ligne et "Nxc4 Nxc4" à la
+# seconde, absente des deux lignes en tant que PORTION CONTINUE — et
+# `detecter_suites_illegales` ci-dessus ne l'a pourtant signalée ni comme
+# suite illégale (elle redevient "légale" dès qu'un coup noir caché
+# quelconque est inséré avant "Qa4+", cf. _lectures_demi_coup_cache), ni par
+# aucun autre contrôle de ce module : aucun d'eux ne compare jamais une
+# suite citée aux lignes RÉELLEMENT fournies par Stockfish, seulement à sa
+# légalité pure. Ce contrôle ferme cet angle mort, indépendamment de la
+# légalité : une suite peut être parfaitement légale sur l'échiquier tout en
+# étant absente des lignes fournies (preuve que le coach l'a improvisée au
+# lieu de la recopier).
+
+# Prolongement toléré au-delà de la fin d'une ligne fournie (issue #108,
+# "le coach ajoute un ou deux coups au bout") — réglable en ce seul endroit.
+_PROLONGEMENT_LIGNE_FOURNIE_MAX_COUPS = 2
+
+
+def _normaliser_coup_pour_comparaison(san: str) -> str:
+    """Un coup cité, débarrassé de +/#/!/? (issue #108, consigne explicite :
+    "en ignorant +, #, !, ? et les numéros de coup" — les numéros sont déjà
+    exclus par construction, `_extraire_suites`/`_SAN_RE` ne les capturent
+    jamais comme un coup)."""
+    return san.rstrip("+#!?")
+
+
+def _lignes_fournies_normalisees(pv_coup_propose: str, pv_meilleur_coup: str) -> list:
+    """Retourne [(label, [coups normalisés]), ...] pour chaque ligne NON
+    VIDE parmi `pv_coup_propose`/`pv_meilleur_coup` — mêmes libellés que
+    `_construire_candidats` ("ligne du coup proposé"/"ligne du meilleur
+    coup"), pour pouvoir retrouver la position d'arrivée déjà calculée dans
+    `candidats` (libellés "<label>, après N coup(s)") sans la recalculer."""
+    lignes = []
+    for label, pv in (("ligne du coup proposé", pv_coup_propose), ("ligne du meilleur coup", pv_meilleur_coup)):
+        pv = (pv or "").strip()
+        if not pv:
+            continue
+        lignes.append((label, [_normaliser_coup_pour_comparaison(c) for c in pv.split()]))
+    return lignes
+
+
+def _board_candidat(candidats: list, label: str):
+    """Position candidate dont le libellé est EXACTEMENT `label`, None si
+    absente de `candidats` (ligne illisible plus tôt que ce point, cf.
+    `_construire_candidats`)."""
+    for lbl, board in candidats:
+        if lbl == label:
+            return board
+    return None
+
+
+def detecter_ligne_absente_lignes_fournies(texte: str, candidats: list,
+                                            pv_coup_propose: str = "", pv_meilleur_coup: str = "") -> list:
+    """Détecte une suite d'AU MOINS TROIS coups citée par le coach (hors
+    suite introduite par "si", cf. suite["si_hypothetique"]) qui ne
+    correspond à AUCUNE portion continue des lignes RÉELLEMENT fournies par
+    Stockfish (`pv_coup_propose`/`pv_meilleur_coup`, en ignorant +/#/!/? et
+    les numéros de coup) — indépendamment de sa légalité pure, déjà couverte
+    par `detecter_suites_illegales` (issue #108, fiabilité 13 ; cf. l'en-tête
+    de section ci-dessus pour le cas réel).
+
+    Lectures tolérées pour chaque ligne fournie, AUCUNE AUTRE (délibérément
+    plus strict que `detecter_suites_illegales` : jamais de demi-coup caché
+    quelconque, même pour une suite de seulement trois coups) : la suite
+    telle que citée, et, si un coup précédent a été cité juste avant elle
+    dans le texte (`suite["coup_precedent"]`, même extraction que les autres
+    contrôles de ce module), la même suite précédée de ce coup — cf.
+    `_variantes_coups`. Une suite qui correspond à une portion continue
+    d'UNE SEULE de ces deux lectures, dans UNE SEULE des deux lignes
+    fournies, n'est jamais signalée.
+
+    Prudence supplémentaire (prolongement légal toléré) : si la suite citée
+    correspond à une ligne fournie jusqu'à SA FIN, puis ajoute
+    `_PROLONGEMENT_LIGNE_FOURNIE_MAX_COUPS` coups (1 ou 2) au-delà, ces
+    coups supplémentaires sont vérifiés comme un coup cité isolé (légalité
+    pure depuis la position d'arrivée de la ligne fournie, SANS demi-coup
+    caché) — légaux, rien n'est signalé ; illégaux, la suite reste absente
+    des lignes fournies et est signalée ; ambigus/invalides, prudence (rien
+    n'est signalé, comme pour `detecter_suites_illegales`).
+
+    Hors de portée par construction (faux négatif assumé, même philosophie
+    que le reste du module) : aucune ligne fournie du tout (pv_coup_propose
+    ET pv_meilleur_coup vides) désactive totalement ce contrôle ; une suite
+    qui part d'une position différente de celles des deux lignes fournies
+    (ex. une ligne hypothétique sur un coup jamais proposé) reste hors de
+    portée.
+
+    Retourne une liste de dicts {"type": "ligne_absente_lignes_fournies",
+    "gravite": "orange", "detail": str, "coups_cites": list}."""
+    lignes = _lignes_fournies_normalisees(pv_coup_propose, pv_meilleur_coup)
+    if not lignes:
+        return []
+    alertes = []
+    deja_vues = set()
+    for suite in _extraire_suites(texte):
+        if len(suite["coups"]) < 3 or suite["si_hypothetique"]:
+            continue
+        cle = tuple(suite["coups"])
+        if cle in deja_vues:
+            continue
+        deja_vues.add(cle)
+
+        trouvee = False
+        doute = False
+        for variante in _variantes_coups(suite):
+            coups_norm = [_normaliser_coup_pour_comparaison(c) for c in variante]
+            n = len(coups_norm)
+            for _label, ligne_norm in lignes:
+                if n <= len(ligne_norm) and any(
+                    ligne_norm[i:i + n] == coups_norm for i in range(len(ligne_norm) - n + 1)
+                ):
+                    trouvee = True
+                    break
+            if trouvee:
+                break
+            for label, ligne_norm in lignes:
+                for overlap in range(min(len(ligne_norm), n), 0, -1):
+                    if coups_norm[:overlap] != ligne_norm[-overlap:]:
+                        continue
+                    extra = variante[overlap:]
+                    if not extra or len(extra) > _PROLONGEMENT_LIGNE_FOURNIE_MAX_COUPS:
+                        continue
+                    board_ligne = _board_candidat(candidats, f"{label}, après {len(ligne_norm)} coup(s)")
+                    if board_ligne is None:
+                        continue
+                    statut = _tenter_suite(extra, board_ligne)
+                    if statut == "ok":
+                        trouvee = True
+                    elif statut in ("ambigu", "invalide"):
+                        doute = True
+                if trouvee:
+                    break
+            if trouvee:
+                break
+        if trouvee or doute:
+            continue
+        alertes.append({
+            "type": "ligne_absente_lignes_fournies",
+            "gravite": "orange",
+            "detail": (
+                f"suite de coups citée \"{suite['texte']}\" absente des "
+                "lignes réellement fournies par Stockfish, ni comme portion "
+                "continue ni comme prolongement légal d'au plus "
+                f"{_PROLONGEMENT_LIGNE_FOURNIE_MAX_COUPS} coup(s) — ne pas "
+                "mélanger les coups de deux lignes différentes"
+            ),
+            "coups_cites": suite["coups"],
         })
     return alertes
 
@@ -2056,62 +2236,101 @@ def detecter_attaque_defense_incoherente(texte: str, candidats: list, camp_alain
 # explicite contradictoire plutôt que le mot "adverse").
 
 # Marques de reprise/correction en cours de réponse — liste COURTE et
-# RÉGLABLE EN CE SEUL ENDROIT (ajouter/retirer un tuple (nom, regex) pour
-# changer la détection, cf. evaluer_fiabilite qui l'utilise sans aucune
-# autre dépendance). Chaque motif est volontairement restreint à un
-# contexte qui signale une interruption RÉELLE (points de suspension "...",
-# tiret "—", début de proposition) plutôt qu'au mot seul : "pardon" et "ou
-# plutôt" ont un usage courant qui n'a rien d'une correction ("sans pardon
-# pour les erreurs", "ou plutôt" au sens de préférence, ex. "Nf3, ou plutôt
-# Nc3 si tu préfères un jeu plus actif") — en cas de doute, cf. consigne de
-# l'issue, rien n'est signalé. Les trois derniers motifs ("excuse-moi", "je
-# me corrige", "je me reprends") sont au contraire des signaux jugés
-# suffisamment univoques pour être reconnus sans cette même prudence.
+# RÉGLABLE EN CE SEUL ENDROIT (ajouter/retirer un tuple (nom, regex,
+# categorie) pour changer la détection, cf. evaluer_fiabilite qui l'utilise
+# sans aucune autre dépendance). Chaque motif est volontairement restreint à
+# un contexte qui signale une interruption RÉELLE (points de suspension
+# "...", tiret "—", début de proposition) plutôt qu'au mot seul : "pardon"
+# et "ou plutôt" ont un usage courant qui n'a rien d'une correction ("sans
+# pardon pour les erreurs", "ou plutôt" au sens de préférence, ex. "Nf3, ou
+# plutôt Nc3 si tu préfères un jeu plus actif") — en cas de doute, cf.
+# consigne de l'issue, rien n'est signalé. Les trois derniers motifs
+# ("excuse-moi", "je me corrige", "je me reprends") sont au contraire des
+# signaux jugés suffisamment univoques pour être reconnus sans cette même
+# prudence.
+#
+# Catégorie "aveu_incertitude" (issue #108, fiabilité 13) : marques
+# distinctes des reprises ci-dessus — pas une correction en cours de
+# phrase, mais un AVEU explicite de ne pas connaître une donnée (l'ordre des
+# coups, un coup intermédiaire...) alors qu'elle figure dans les lignes
+# fournies au contexte (cas réel ayant motivé cet ajout : "après un coup "
+# "noir intermédiaire que je ne te donne pas avec certitude ici", "Je ne "
+# "veux pas improviser l'ordre exact" — la ligne du meilleur coup donnait
+# pourtant déjà cet ordre). Même prudence que les autres marques : chaque
+# motif est une tournure assez univoque pour ne pas déclencher sur un usage
+# courant sans rapport (ex. "je ne suis pas sûr" seul, seul "de l'ordre" en
+# plus rend la tournure spécifique à un aveu sur une ligne de coups).
 _MARQUEURS_REPRISE = [
     ("pardon", re.compile(
-        r"(?:\.{3}|…|—)\s*pardon\b|\bpardon\b\s*(?:\.{3}|…|—)", re.IGNORECASE)),
+        r"(?:\.{3}|…|—)\s*pardon\b|\bpardon\b\s*(?:\.{3}|…|—)", re.IGNORECASE),
+     "reprise"),
     ("excuse-moi / excusez-moi", re.compile(
-        r"\bexcuse[sz]?[\s-]?moi\b", re.IGNORECASE)),
+        r"\bexcuse[sz]?[\s-]?moi\b", re.IGNORECASE),
+     "reprise"),
     ("ou plutôt (reprise)", re.compile(
-        r"(?:\.{3}|…|—)\s*ou\s+plut[oô]t\b", re.IGNORECASE)),
-    ("je me corrige", re.compile(r"\bje\s+me\s+corrige\b", re.IGNORECASE)),
-    ("je me reprends", re.compile(r"\bje\s+me\s+reprends\b", re.IGNORECASE)),
+        r"(?:\.{3}|…|—)\s*ou\s+plut[oô]t\b", re.IGNORECASE),
+     "reprise"),
+    ("je me corrige", re.compile(r"\bje\s+me\s+corrige\b", re.IGNORECASE),
+     "reprise"),
+    ("je me reprends", re.compile(r"\bje\s+me\s+reprends\b", re.IGNORECASE),
+     "reprise"),
     ("enfin, (début de proposition)", re.compile(
-        r"(?:^|[.\n!?]\s*|[,;:]\s*)enfin\s*,", re.IGNORECASE)),
+        r"(?:^|[.\n!?]\s*|[,;:]\s*)enfin\s*,", re.IGNORECASE),
+     "reprise"),
     ("non, (après tiret ou points de suspension)", re.compile(
-        r"(?:\.{3}|…|—)\s*non\s*,", re.IGNORECASE)),
+        r"(?:\.{3}|…|—)\s*non\s*,", re.IGNORECASE),
+     "reprise"),
+    ("je ne veux pas improviser", re.compile(
+        r"\bje\s+ne\s+veux\s+pas\s+improviser\b", re.IGNORECASE),
+     "aveu_incertitude"),
+    ("que je ne te donne pas avec certitude", re.compile(
+        r"\bje\s+ne\s+(?:te\s+)?donne\s+pas\s+.{0,20}?avec\s+certitude\b", re.IGNORECASE),
+     "aveu_incertitude"),
+    ("je ne suis pas sûr de l'ordre", re.compile(
+        r"\bje\s+ne\s+suis\s+pas\s+s[uû]r\s+de\s+l['’]ordre\b", re.IGNORECASE),
+     "aveu_incertitude"),
+    ("fie-toi au fait que", re.compile(
+        r"\bfie[\s-]?toi\s+au\s+fait\s+que\b", re.IGNORECASE),
+     "aveu_incertitude"),
 ]
 
 
 def detecter_reprises_phrase(texte: str) -> list:
-    """Détecte, dans `texte`, une marque de reprise ou de correction en
-    cours de réponse (issue #103, tâche 2 ; liste _MARQUEURS_REPRISE
-    ci-dessus) — interdite par la consigne de prompt ("pas de reprise ni de
-    correction en cours de réponse"), mais qu'aucun contrôle déterministe ne
-    détectait jusqu'ici (cf. cas réel ci-dessus). Chaque occurrence trouvée
-    déclenche une alerte de gravité "orange" — cette gravité ne change rien
-    au déclenchement de la relance automatique (évaluée uniquement sur
+    """Détecte, dans `texte`, une marque de reprise/correction en cours de
+    réponse OU un aveu d'incertitude sur une donnée pourtant fournie (issue
+    #103, tâche 2 ; étendu par l'issue #108, fiabilité 13 — liste
+    _MARQUEURS_REPRISE ci-dessus, champ "categorie") — interdits par la
+    consigne de prompt, mais qu'aucun contrôle déterministe ne détectait
+    jusqu'ici (cf. cas réels ci-dessus). Chaque occurrence trouvée déclenche
+    une alerte de gravité "orange" — cette gravité ne change rien au
+    déclenchement de la relance automatique (évaluée uniquement sur
     `fiabilite["alertes"]` dans son ensemble, cf.
     llm_coach.get_coach_response), seulement à la couleur finale affichée
     si c'est la SEULE famille d'alerte présente.
 
     Retourne une liste de dicts {"type": "reprise_phrase", "gravite":
-    "orange", "detail": str, "motif": str} — "motif" (nom du marqueur
-    reconnu) sert au journal (consigne explicite de l'issue : "journaliser
-    le motif détecté")."""
+    "orange", "detail": str, "motif": str, "categorie": "reprise"|
+    "aveu_incertitude"} — "motif" (nom du marqueur reconnu) sert au journal
+    (consigne explicite de l'issue #103 : "journaliser le motif détecté") ;
+    "categorie" permet à l'appelant (llm_coach.get_coach_response) de
+    cibler sa consigne de relance automatique différemment pour un aveu
+    d'incertitude (utiliser les lignes fournies) que pour une reprise de
+    phrase (ne pas se corriger en cours de réponse)."""
     alertes = []
-    for nom, regex in _MARQUEURS_REPRISE:
+    for nom, regex, categorie in _MARQUEURS_REPRISE:
         for m in regex.finditer(texte):
             alertes.append({
                 "type": "reprise_phrase",
                 "gravite": "orange",
                 "detail": (
-                    f"reprise/correction en cours de réponse détectée "
-                    f"(\"{m.group(0).strip()}\", motif \"{nom}\") — la "
-                    "consigne du prompt interdit toute reprise ou "
-                    "correction en cours de réponse"
+                    f"reprise/correction ou aveu d'incertitude en cours de "
+                    f"réponse détecté (\"{m.group(0).strip()}\", motif "
+                    f"\"{nom}\") — la consigne du prompt interdit toute "
+                    "reprise, correction ou aveu de ce type en cours de "
+                    "réponse"
                 ),
                 "motif": nom,
+                "categorie": categorie,
             })
     return alertes
 
@@ -2454,6 +2673,18 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "même paire pièce+case se répète (limite : nécessite `camp_alain` "
         "connu, sinon inactif ; une case vide ou d'un autre type partout "
         "reste couverte par le contrôle de case ci-dessus, pas par celui-ci)",
+        "ligne citée absente des lignes fournies (issue #108, fiabilité "
+        "13) : une suite d'au moins trois coups citée (hors suite "
+        "introduite par \"si\") est comparée aux lignes RÉELLEMENT "
+        "fournies par Stockfish (pv_coup_propose/pv_meilleur_coup, en "
+        "ignorant +/#/!/? et les numéros de coup), comme portion continue "
+        "ou comme prolongement légal d'au plus deux coups ajoutés à la "
+        "fin — AUCUN demi-coup caché quelconque toléré (plus strict que "
+        "le contrôle de légalité ci-dessus), seuls le coup précédent cité "
+        "juste avant et les lignes fournies servent de lecture (limite : "
+        "désactivé si aucune ligne n'est fournie ; une suite partant d'une "
+        "position différente des deux lignes fournies reste hors de "
+        "portée, faux négatif assumé)",
     ]
 
     boards_reference = []
@@ -2490,6 +2721,7 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         alertes += detecter_case_piece_incoherente(texte, boards_reference, candidats_suites)
         alertes += detecter_possessif_case_incoherent(texte, camp_alain, boards_reference, candidats_suites)
     alertes += detecter_suites_illegales(texte, candidats_suites)
+    alertes += detecter_ligne_absente_lignes_fournies(texte, candidats_suites, pv_coup_propose, pv_meilleur_coup)
     alertes += detecter_echanges_mal_qualifies(texte, candidats_suites, camp_alain)
     alertes += detecter_clouage_errone(texte, boards_reference, candidats_suites)
     alertes += detecter_echange_type_incoherent(texte, candidats_suites)

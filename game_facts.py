@@ -1280,6 +1280,90 @@ def format_pv_with_balance(label: str, pv_descriptions: list[dict]) -> str:
     return "\n".join(lignes)
 
 
+def describe_trait_camp(fen: str) -> str:
+    """Camp au trait sur `fen` ("Blancs"/"Noirs"), "" si `fen` est vide ou
+    illisible (issue #108) — utilisé pour dire explicitement au coach quel
+    camp joue sur la position ACTUELLEMENT affichée et sur la position de
+    DÉPART d'un exercice, afin qu'il ne confonde plus les deux (constat réel
+    ayant motivé cet ajout : Alain, voyant l'échiquier Noirs au trait après
+    son coup, a objecté à tort sur un coup de la ligne du meilleur coup qui
+    part, lui, de la position AVANT son coup, Blancs au trait)."""
+    fen = (fen or "").strip()
+    if not fen:
+        return ""
+    try:
+        return "Blancs" if chess.Board(fen).turn == chess.WHITE else "Noirs"
+    except Exception:
+        return ""
+
+
+def describe_pv_numerotee(fen_depart: str, pv_text: str, camp_alain: str = "") -> dict:
+    """Reformate une ligne (PV) Stockfish en ajoutant la numérotation des
+    coups et le camp de chacun entre crochets (issue #108, fiabilité 13) :
+    constat réel ayant motivé cet ajout — la ligne du meilleur coup, fournie
+    au coach en notation brute ("bxa6 Nxc4 Qa4+ Bd7 Qxc4 Qb8"), partait de la
+    position AVANT le coup d'Alain, alors que l'échiquier affiché montrait
+    déjà la position APRÈS son coup ; sans numéro de coup ni camp explicite,
+    le coach a cru Qa4+ (3e coup de CETTE ligne, donc toujours un coup
+    d'Alain puisque la ligne alterne à partir de son propre trait) illégal
+    pour Alain et a inventé une séquence mélangeant cette ligne avec celle du
+    coup proposé pour se justifier.
+
+    `fen_depart` est la position de DÉPART de la ligne elle-même (son
+    PREMIER coup, `pv_text.split()[0]`, est joué depuis cette position) —
+    PAS forcément la position actuellement affichée à Alain (cf.
+    fen_depart_exercice vs fen dans _build_context_text, llm_coach.py).
+    `camp_alain` ("blancs"/"noirs") sert à étiqueter chaque coup "[toi]"
+    (même camp que celui au trait sur `fen_depart`, donc celui d'Alain
+    puisque coup_propose/meilleur_coup lui appartiennent toujours) ou
+    "[adversaire]" ; sans lui, aucune étiquette n'est ajoutée.
+
+    Retourne {} si fen_depart/pv_text sont vides ou illisibles, ou dès le
+    premier coup de `pv_text` impossible à jouer depuis `fen_depart`
+    (jamais de ligne numérotée partiellement tronquée, qui serait plus
+    trompeuse qu'utile) — sinon {"ligne": str (ex. "10. bxa6 [toi] Nxc4 "
+    "[adversaire] 11. Qa4+ [toi] Bd7 [adversaire] ..."), "camp_depart": "
+    "Blancs"|"Noirs", "numero_depart": int}."""
+    fen_depart = (fen_depart or "").strip()
+    pv_text = (pv_text or "").strip()
+    if not fen_depart or not pv_text:
+        return {}
+    try:
+        board = chess.Board(fen_depart)
+    except Exception:
+        return {}
+    camp_depart_txt = "Blancs" if board.turn == chess.WHITE else "Noirs"
+    numero_depart = board.fullmove_number
+    couleur_alain = (
+        chess.WHITE if camp_alain == "blancs"
+        else (chess.BLACK if camp_alain == "noirs" else None)
+    )
+    morceaux = []
+    for i, san in enumerate(pv_text.split()):
+        numero = board.fullmove_number
+        mover_blanc = board.turn == chess.WHITE
+        try:
+            move = board.parse_san(san)
+        except Exception:
+            return {}
+        if mover_blanc:
+            prefixe = f"{numero}. "
+        elif i == 0:
+            prefixe = f"{numero}... "
+        else:
+            prefixe = ""
+        etiquette = ""
+        if couleur_alain is not None:
+            etiquette = " [toi]" if board.turn == couleur_alain else " [adversaire]"
+        morceaux.append(f"{prefixe}{san}{etiquette}")
+        board.push(move)
+    return {
+        "ligne": " ".join(morceaux),
+        "camp_depart": camp_depart_txt,
+        "numero_depart": numero_depart,
+    }
+
+
 def describe_eval_alain_cp_clause(eval_alain_cp) -> str:
     """Phrase complète décrivant l'évaluation Stockfish réelle d'une position,
     du point de vue d'Alain (issue #75, point 1) — en mots dès que la

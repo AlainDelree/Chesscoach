@@ -1,0 +1,48 @@
+# Cas de non-régression — voir tests/cas_coach/README.md pour le format.
+id: qa4_ligne_depart
+description: signalement d'Alain du 10 octobre 2026 (mode Exercice) — la ligne du meilleur coup ("bxa6 Nxc4 Qa4+ Bd7 Qxc4 Qb8") part de la position AVANT le coup d'Alain (Blancs au trait), alors que l'échiquier affiché montre la position APRÈS son coup proposé O-O (Noirs au trait). Alain, voyant les Noirs au trait, a objecté à tort que Qa4+ ne pouvait pas être un coup de sa dame ("c'est aux noirs de jouer"). Le coach lui a donné raison sans vérifier, a mélangé les deux lignes fournies en une suite illégale ("bxa6 Nxc4 Nxc4 puis Qa4+"), a avoué ne pas connaître l'ordre exact ("je ne veux pas improviser") et a inventé un solde matériel absent des données. Issue #108 : lignes numérotées avec camp et position de départ, interdiction de donner raison sans vérifier, contrôle des lignes citées contre les lignes fournies, détection des aveux d'incertitude.
+source: signalement du 10 octobre 2026 (mode Exercice)
+fen: r1bqk1nr/2p2ppp/pn2p3/1P6/2BP4/4PN2/1P1N1PPP/R2QK2R w KQkq - 1 10
+camp_alain: blancs
+coup_propose: O-O
+meilleur_coup: bxa6
+question: ça ne peut pas être ma dame, c'est aux noirs de jouer
+
+faits_attendus:
+  # Issue #108, tâche 1 : la ligne du meilleur coup est désormais numérotée,
+  # avec le camp de chaque coup entre crochets, et explicitement rattachée
+  # à la position AVANT le coup d'Alain (pas la position affichée).
+  texte_contient: Ligne du meilleur coup, à partir de la position AVANT ton coup (Blancs au trait, coup 10)
+  texte_contient: 10. bxa6 [toi] Nxc4 [adversaire] 11. Qa4+ [toi] Bd7 [adversaire] 12. Qxc4 [toi] Qb8 [adversaire]
+  texte_contient: Ligne après ton coup proposé, à partir de la position AVANT ce coup (Blancs au trait, coup 10)
+  texte_contient: 10. O-O [toi] Nxc4 [adversaire]
+  # Phrase explicite sur la position affichée vs la position de départ des
+  # lignes (issue #108, tâche 1).
+  texte_contient: L'échiquier montre la position après ton coup proposé (Noirs au trait)
+
+motifs_interdits_stricts:
+  # "tu as raison" sans vérification, en tout début de réponse (issue #108,
+  # tâche 2b) — motif jugé assez grave pour ne jamais tolérer qu'il ait
+  # seulement été corrigé après coup par la relance automatique.
+  regex:^\s*tu\s+as\s+raison\b
+
+motifs_interdits:
+  regex:^\s*tu\s+as\s+raison\b
+  # Séquence mélangeant la ligne du coup proposé ("Nxc4 Nxc4", issue #108
+  # — ces deux coups se suivent dans la ligne du coup proposé, pas dans
+  # celle du meilleur coup) avec "Qa4+" (3e coup de la ligne du meilleur
+  # coup) dans la même phrase — exactement la séquence inventée par le
+  # signalement.
+  regex:Nxc4[\s,]*Nxc4[^.\n]{0,80}Qa4\+
+  # Aveu d'incertitude (issue #108, tâche 4) alors que l'ordre figure dans
+  # la ligne numérotée fournie.
+  je ne veux pas improviser
+
+motifs_attendus:
+  # Référence explicite à la position AVANT le coup d'Alain (issue #108,
+  # tâche 2a/2b) — pour expliquer pourquoi Qa4+ reste bien son propre coup.
+  regex:avant\s+ton\s+coup|position\s+de\s+d[ée]part|Blancs\s+au\s+trait
+  # Qa4+ attribué correctement à Alain ("ta dame"/"ton coup"), pas à l'adversaire.
+  ta dame|ton coup
+
+pastille_attendue: vert

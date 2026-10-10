@@ -589,6 +589,15 @@ def _verifier_fait(directive: str, cas: dict, extras: dict) -> tuple:
         # s'assurer que la tolérance des lectures multiples (coach_
         # reliability._rassembler_lectures) n'a pas affaibli un contrôle au
         # point de manquer une vraie incohérence déjà couverte.
+        #
+        # Note (issue #108) : volontairement SANS pv_coup_propose/
+        # pv_meilleur_coup ici, comme reponse_simulee_verte ci-dessus — le
+        # nouveau contrôle detecter_ligne_absente_lignes_fournies, qui en
+        # dépend, signalerait alors à tort "Nxh7 Nxh7 Kxh7" (cas
+        # bxh7_coup_interroge, ligne sans rapport avec les lignes réelles de
+        # CE cas, g6/Re8) ; ce contrôle reste donc hors de portée de
+        # reponse_simulee_verte/signalee, testé séparément (cf.
+        # tests/cas_coach/README.md et le rapport de clôture de l'issue).
         fiabilite = coach_reliability.evaluer_fiabilite(
             arg, extras["fen_avant"], extras["fen_apres"],
             coup_propose=cas["coup_propose"], meilleur_coup=extras["meilleur_coup_calcule"],

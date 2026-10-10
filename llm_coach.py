@@ -164,6 +164,48 @@ _ANTI_INVENTION_ADDENDUM = (
     "réel sur la case exacte d'une pièce, décris la situation sans donner "
     "de case précise plutôt que d'en affirmer une qui n'est pas vérifiée "
     "contre le FEN."
+    "\n\n"
+    "Citer une ligne sans la mélanger avec une autre (issue #108) : quand "
+    "tu cites une ligne fournie dans le contexte (\"Ligne après ton coup "
+    "proposé...\"/\"Ligne du meilleur coup...\"), recopie-la TELLE QUE "
+    "fournie, coup après coup et dans l'ordre donné — ne la mélange JAMAIS "
+    "avec les coups d'une AUTRE ligne, même si les deux partagent certains "
+    "coups en commun. Précise toujours de quelle position elle part (la "
+    "position de départ indiquée juste avant la ligne, pas forcément la "
+    "position actuellement affichée) et quel camp joue son premier coup : "
+    "ce premier coup, et tous les coups qui lui sont étiquetés \"[toi]\", "
+    "sont les tiens, même si l'échiquier affiché à Alain montre, lui, "
+    "l'AUTRE camp au trait (constat réel ayant motivé cette consigne : la "
+    "ligne du meilleur coup part de la position AVANT le coup d'Alain, "
+    "alors que l'échiquier affiché montre déjà la position APRÈS ce coup — "
+    "un coup de cette ligne étiqueté \"[toi]\" reste un coup d'Alain, "
+    "jamais un coup adverse, quel que soit le trait affiché à l'écran)."
+    "\n\n"
+    "Vérifier une objection avant d'y donner raison (issue #108) : quand "
+    "Alain objecte sur le trait, un coup ou une ligne (par exemple \"ça ne "
+    "peut pas être ma dame, c'est aux Noirs de jouer\"), vérifie D'ABORD "
+    "son objection contre les lignes numérotées et le camp au trait fournis "
+    "dans le contexte, avant de répondre quoi que ce soit. Ne commence "
+    "JAMAIS une réponse par \"tu as raison\" (ou équivalent) sans avoir fait "
+    "cette vérification explicite. Si Alain se trompe, dis-le poliment et "
+    "explique pourquoi (par exemple que la ligne part de la position AVANT "
+    "son coup, pas de la position affichée) plutôt que de lui donner raison "
+    "pour ne pas le contredire — une correction polie et exacte est "
+    "toujours préférable à un acquiescement qui invente ensuite une "
+    "séquence pour se justifier."
+    "\n\n"
+    "Admettre une donnée manquante sans l'inventer (issue #108) : si une "
+    "information qu'Alain demande (l'ordre exact des coups, un coup "
+    "intermédiaire, un solde matériel...) n'apparaît pas dans les données "
+    "du contexte, dis-le en UNE phrase simple et honnête (par exemple \"je "
+    "n'ai pas cette information dans les données fournies\") — n'invente "
+    "JAMAIS un coup, un camp ou un chiffre pour combler ce vide, et ne "
+    "demande JAMAIS à Alain de \"se fier\" à un résultat ou une conclusion "
+    "que tu ne lui as pas réellement donnée. Si l'information EST dans les "
+    "données fournies (ligne numérotée, description mécanique...), "
+    "utilise-la directement au lieu de dire que tu ne veux pas improviser "
+    "ou que tu n'es pas sûr de l'ordre : une donnée déjà fournie n'est "
+    "jamais une donnée manquante."
 )
 
 # Complément de system prompt pour une position issue d'une démonstration
@@ -1500,6 +1542,23 @@ def _build_context_text(context) -> str:
     if fen:
         lines.append(f"Position ACTUELLEMENT affichée sur l'échiquier (FEN) : {fen}")
     if fen_depart_exercice and fen and fen_depart_exercice != fen:
+        # Camps au trait explicites (issue #108, fiabilité 13) : cas réel
+        # ayant motivé cet ajout — Alain, voyant l'échiquier Noirs au trait
+        # après son coup proposé, a objecté à tort sur un coup de la ligne du
+        # meilleur coup qui part, elle, de la position AVANT son coup,
+        # Blancs au trait ; sans cette précision explicite, rien dans le
+        # contexte ne distinguait le trait de la position affichée de celui
+        # de la position de départ des lignes ci-dessous.
+        camp_affiche_txt = game_facts.describe_trait_camp(fen)
+        camp_depart_txt = game_facts.describe_trait_camp(fen_depart_exercice)
+        precision_trait = (
+            f" L'échiquier montre la position après ton coup proposé "
+            f"({camp_affiche_txt} au trait) ; les lignes du coup proposé et "
+            f"du meilleur coup ci-dessous partent, elles, de la position de "
+            f"DÉPART, AVANT ce coup ({camp_depart_txt} au trait) — ne "
+            "confonds jamais le trait de l'une avec celui de l'autre."
+            if camp_affiche_txt and camp_depart_txt else ""
+        )
         lines.append(
             "La position de départ et la position actuelle ci-dessus sont "
             "DIFFÉRENTES (le coup proposé a déjà été joué sur l'échiquier, ou "
@@ -1508,7 +1567,7 @@ def _build_context_text(context) -> str:
             "description mécanique (calculée sur la position de départ), "
             "jamais à ce que tu observes sur la position actuelle — ne "
             "conclus jamais qu'une pièce \"n'existe pas\" ou \"n'est pas là\" "
-            "sans comparer explicitement les deux positions."
+            "sans comparer explicitement les deux positions." + precision_trait
         )
     if pieces_depart_texte:
         lines.append(
@@ -1543,11 +1602,29 @@ def _build_context_text(context) -> str:
                 f"position de départ) : {coup_propose_description_mecanique}"
             )
         if pv_coup_propose:
-            lines.append(
-                "Suite réellement calculée par Stockfish après ce coup proposé "
-                f"(à utiliser comme seule base pour expliquer les menaces ou la "
-                f"suite tactique, pas une généralité inventée) : {pv_coup_propose}"
-            )
+            # Ligne numérotée, avec le camp de chaque coup entre crochets et
+            # la position de départ explicite (issue #108, fiabilité 13) :
+            # cf. docstring de game_facts.describe_pv_numerotee — remplace la
+            # simple notation brute par un texte qui ne peut plus être
+            # confondu avec une autre ligne ni avec la position affichée.
+            pv_num = game_facts.describe_pv_numerotee(fen_depart_exercice, pv_coup_propose, camp_alain)
+            if pv_num:
+                lines.append(
+                    "Ligne après ton coup proposé, à partir de la position "
+                    f"AVANT ce coup ({pv_num['camp_depart']} au trait, coup "
+                    f"{pv_num['numero_depart']}), numérotée avec le camp de "
+                    "chaque coup entre crochets ([toi]/[adversaire]) — à "
+                    "recopier telle quelle si tu la cites, sans la mélanger "
+                    "avec la ligne du meilleur coup ci-dessous, et à "
+                    "utiliser comme seule base pour expliquer les menaces ou "
+                    f"la suite tactique, pas une généralité inventée : {pv_num['ligne']}"
+                )
+            else:
+                lines.append(
+                    "Suite réellement calculée par Stockfish après ce coup proposé "
+                    f"(à utiliser comme seule base pour expliquer les menaces ou la "
+                    f"suite tactique, pas une généralité inventée) : {pv_coup_propose}"
+                )
         if pv_coup_propose_detail:
             lines.append(pv_coup_propose_detail)
         if reponse_adverse_coup_propose_texte:
@@ -1576,11 +1653,27 @@ def _build_context_text(context) -> str:
                 f"position de départ) : {meilleur_coup_description_mecanique}"
             )
         if pv_meilleur_coup:
-            lines.append(
-                "Suite réellement calculée par Stockfish pour ce meilleur coup "
-                f"(à utiliser comme seule base pour expliquer les menaces ou le "
-                f"plan qu'il prépare, pas une généralité inventée) : {pv_meilleur_coup}"
-            )
+            # Même numérotation/étiquetage que pour pv_coup_propose ci-dessus
+            # (issue #108, fiabilité 13) — c'est précisément la ligne qui a
+            # motivé cette issue (Qa4+ confondu avec un coup adverse).
+            pv_num = game_facts.describe_pv_numerotee(fen_depart_exercice, pv_meilleur_coup, camp_alain)
+            if pv_num:
+                lines.append(
+                    "Ligne du meilleur coup, à partir de la position AVANT "
+                    f"ton coup ({pv_num['camp_depart']} au trait, coup "
+                    f"{pv_num['numero_depart']}), numérotée avec le camp de "
+                    "chaque coup entre crochets ([toi]/[adversaire]) — à "
+                    "recopier telle quelle si tu la cites, sans la mélanger "
+                    "avec la ligne du coup proposé ci-dessus, et à utiliser "
+                    "comme seule base pour expliquer les menaces ou le plan "
+                    f"qu'il prépare, pas une généralité inventée : {pv_num['ligne']}"
+                )
+            else:
+                lines.append(
+                    "Suite réellement calculée par Stockfish pour ce meilleur coup "
+                    f"(à utiliser comme seule base pour expliquer les menaces ou le "
+                    f"plan qu'il prépare, pas une généralité inventée) : {pv_meilleur_coup}"
+                )
         if pv_meilleur_coup_detail:
             lines.append(pv_meilleur_coup_detail)
         if reponse_adverse_meilleur_coup_texte:
@@ -2426,13 +2519,38 @@ def get_coach_response(messages, context, coach_memory, config):
         # générique seul laisserait trop de latitude au coach pour
         # réintroduire le même défaut sous une autre forme.
         types_alertes = {a.get("type") for a in fiabilite["alertes"]}
+        # Catégories d'alerte "reprise_phrase" (issue #108) : une reprise de
+        # phrase et un aveu d'incertitude ne se corrigent pas de la même
+        # façon (cf. coach_reliability.detecter_reprises_phrase, champ
+        # "categorie" de chaque alerte) — deux consignes ciblées distinctes
+        # plutôt qu'une seule, génériques pour les deux à la fois.
+        categories_reprise = {
+            a.get("categorie") for a in fiabilite["alertes"] if a.get("type") == "reprise_phrase"
+        }
         consignes_ciblees = []
-        if "reprise_phrase" in types_alertes:
+        if "reprise" in categories_reprise:
             consignes_ciblees.append(
                 "ne reprends ni ne corrige jamais une phrase en cours de "
                 "réponse (aucun \"pardon\", \"ou plutôt\", \"je me "
                 "corrige\"... — écris directement la bonne affirmation, "
                 "sans laisser de trace d'une hésitation précédente)"
+            )
+        if "aveu_incertitude" in categories_reprise:
+            consignes_ciblees.append(
+                "n'avoue jamais ignorer l'ordre ou le contenu d'une ligne "
+                "(aucun \"je ne veux pas improviser\", \"je ne suis pas sûr "
+                "de l'ordre\"...) ni ne demande à Alain de se fier à un "
+                "résultat que tu ne lui as pas donné : relis les lignes "
+                "numérotées fournies dans le contexte et utilise-les "
+                "directement, l'information y figure déjà"
+            )
+        if "ligne_absente_lignes_fournies" in types_alertes:
+            consignes_ciblees.append(
+                "recopie une des lignes numérotées fournies dans le "
+                "contexte (ligne du coup proposé ou ligne du meilleur "
+                "coup) TELLE QUELLE, sans mélanger les coups de l'une avec "
+                "ceux de l'autre ni en inventer un prolongement de plus de "
+                "deux coups"
             )
         if "possessif_incoherent" in types_alertes:
             consignes_ciblees.append(

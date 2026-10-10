@@ -256,6 +256,17 @@ le commentaire) et `pastille_attendue`, puis à supprimer le commentaire.
   loin dans le texte sans parenthèses, ne doit déclencher aucune alerte —
   le coup précédent cité ("Bxh7+") doit être retrouvé et inséré devant la
   suite, même hors parenthèses.
+- `qa4_ligne_depart` — signalement du 10 octobre 2026 (issue #108) : la
+  ligne du meilleur coup part de la position AVANT le coup d'Alain (Blancs
+  au trait), alors que l'échiquier affiché montre la position APRÈS son
+  coup proposé O-O (Noirs au trait) ; Alain objecte à tort que Qa4+ (3e
+  coup de cette ligne) ne peut pas être sa dame. Vérifie que les lignes
+  transmises au coach sont numérotées avec le camp de chaque coup et leur
+  position de départ, et (motifs `--api`) que le coach ne donne jamais
+  raison sans vérifier, ne mélange jamais deux lignes différentes
+  ("Nxc4 Nxc4" puis "Qa4+", empruntés à deux lignes distinctes) et n'avoue
+  jamais ignorer un ordre de coups ("je ne veux pas improviser") figurant
+  pourtant dans les données fournies.
 
 Deux cas supplémentaires, tirés de `parties_test_coach.pgn` (parties sans
 erreur connue, pour avoir aussi des cas de référence « tout va bien »),
