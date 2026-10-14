@@ -429,6 +429,43 @@ _CASE_PIECE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "le/la/les/un/une <pièce> <case>" ou un possessif ("ton"/"ta"/"tes"/"mon"/
+# "ma"/"mes"/"son"/"sa"/"ses"/"notre"/"nos"/"votre"/"vos"/"leur"/"leurs")
+# directement accolé à un nom de pièce puis à une case, SANS "en"/"sur" entre
+# les deux (issue #110 — cas réel : "prépare à peser sur le pion d4", alors
+# que d4 porte un cavalier noir). Volontairement exclusif de _CASE_PIECE_RE :
+# le `\s+` entre le nom de pièce (et la couleur optionnelle) et la case
+# n'accepte que des espaces, jamais le mot "en"/"sur" lui-même — une citation
+# avec préposition échoue donc toujours à ce motif-ci et reste traitée par
+# _CASE_PIECE_RE seul, jamais les deux à la fois (consigne explicite de
+# l'issue #110 : ne pas dupliquer le contrôle existant).
+_CASE_PIECE_SANS_PREP_RE = re.compile(
+    r"\b(?:le|la|les|un|une|du|des|mon|ma|mes|ton|ta|tes|son|sa|ses|notre|nos|"
+    r"votre|vos|leur|leurs)\s+"
+    r"(dames?|tours?|fous?|cavaliers?|pions?|rois?)\b"
+    # "blancs?|blanches?" en deux alternatives distinctes (jamais "blanche?s?"
+    # — un seul radical ne couvrirait jamais le masculin "blanc"/"blancs",
+    # qui n'a pas de "h" final, contrairement au féminin "blanche"/
+    # "blanches" ; même forme correcte que _PIECE_COULEUR_ADJ_RE plus haut).
+    r"(?:\s+(blancs?|blanches?|noirs?|noires?))?"
+    r"\s+([a-h][1-8])\b",
+    re.IGNORECASE,
+)
+
+# Prudence (issue #110, point 2) : une occurrence précédée d'une négation,
+# d'un "si" hypothétique (réutilise _SI_HYPOTHETIQUE_RE, défini plus bas) ou
+# d'un verbe qui fait manifestement de la case une DESTINATION proposée
+# plutôt qu'une pièce déjà présente ("pousser le pion d4", "jouer le
+# cavalier f6") n'est jamais signalée — "en cas de doute, ne rien signaler".
+_NEGATION_SANS_PREP_RE = re.compile(r"\b(pas|jamais|aucun\w*|ni|non)\s*$", re.IGNORECASE)
+_VERBE_COUP_AVANT_RE = re.compile(
+    r"\b(pousser|poussant|avancer|avan[cç]ant|jouer|jouant|proposer|"
+    r"proposant|mettre|mets|placer|pla[cç]ant|d[ée]placer|d[ée]pla[cç]ant|"
+    r"amener|amenant)\s*$",
+    re.IGNORECASE,
+)
+_FENETRE_SANS_PREP_AVANT = 30
+
 
 def detecter_case_piece_incoherente(texte: str, boards_reference: list, candidats: list = None) -> list:
     """Détecte une citation \"<pièce> [<couleur>] en/sur <case>\" (issue #87,
@@ -493,6 +530,103 @@ def detecter_case_piece_incoherente(texte: str, boards_reference: list, candidat
                     f"texte, {len(tous_boards)} position(s) comparée(s))"
                 ),
             })
+    return alertes
+
+
+def detecter_case_piece_sans_preposition_incoherente(texte: str, boards_reference: list,
+                                                      candidats: list = None) -> list:
+    """Détecte une citation "<déterminant ou possessif> <type de pièce>
+    <case>" SANS préposition ("en"/"sur") entre la pièce et la case (issue
+    #110 — cas réel : "prépare à peser sur le pion d4", alors que d4 porte
+    un CAVALIER NOIR) — formulation qui échappait entièrement à
+    detecter_case_piece_incoherente ci-dessus, lequel exige "en"/"sur"
+    (_CASE_PIECE_RE).
+
+    Même pool de positions et même tolérance que detecter_case_piece_
+    incoherente (position de départ, position actuelle, `candidats` —
+    lignes principales et trait inversé compris — et chaque position
+    atteinte en rejouant une suite de coups citée dans le texte lui-même,
+    coup précédent cité et demi-coup caché compris) : une citation
+    cohérente avec AU MOINS UNE de ces positions n'est jamais signalée.
+
+    Contrairement à detecter_case_piece_incoherente, la couleur n'a PAS
+    besoin d'être explicite : seul le TYPE de pièce compte ("quelle que
+    soit sa couleur", issue #110) — "le pion d4" est contrôlé même sans
+    aucun mot de couleur. Si une couleur est malgré tout citée ("le
+    cavalier noir d4"), elle est comparée EN PLUS du type, comme
+    detecter_case_piece_incoherente.
+
+    Volontairement prudent ("en cas de doute, ne rien signaler", issue
+    #110) : une occurrence précédée, à moins de _FENETRE_SANS_PREP_AVANT
+    caractères, d'une négation ("pas"/"jamais"/"aucun..."/"ni"/"non"), d'un
+    "si" hypothétique, ou d'un verbe qui fait manifestement de la case une
+    DESTINATION proposée plutôt qu'une pièce déjà présente
+    ("pousser"/"jouer"/"avancer"/"mettre"/"placer"/"déplacer"/"amener"
+    juste avant, ex. "pousser le pion d4") n'est jamais contrôlée. Une
+    simple mention de la case elle-même ("la case d4") ou d'un coup noté
+    ("le coup d4", "Qd4") ne déclenche jamais ce contrôle par construction
+    (aucun nom de pièce directement accolé à la case dans ces tournures).
+
+    Le message d'alerte indique la pièce RÉELLEMENT présente sur la case
+    dans les positions connues (type et couleur), ou son absence (case
+    vide), pour qu'une relance automatique cite précisément la case, la
+    pièce annoncée et la pièce réellement présente (issue #110, point 3).
+
+    Gravité toujours "orange" (issue #110 — contrairement à d'autres
+    contrôles de ce module, aucune heuristique de connecteur de verdict ou
+    de répétition n'élève ici la gravité à "rouge").
+
+    Retourne une liste de dicts {"type": "case_piece_sans_preposition_
+    incoherente", "gravite": "orange", "detail": str}.
+
+    Limite assumée, comme pour _CASE_PIECE_RE : une pièce suivie d'un
+    adjectif avant la case ("le petit pion d4"), ou un déterminant hors de
+    la liste reconnue (_CASE_PIECE_SANS_PREP_RE), échappe à ce contrôle —
+    faux négatif assumé plutôt que risquer un faux positif sur une
+    tournure imprévue."""
+    if not boards_reference:
+        return []
+    candidats = candidats or []
+    positions_citees = []
+    for suite in _extraire_suites(texte):
+        for _avant, apres in _rassembler_lectures(suite, candidats):
+            positions_citees.append(apres)
+    tous_boards = list(boards_reference) + [b for _label, b in candidats] + positions_citees
+    alertes = []
+    for m in _CASE_PIECE_SANS_PREP_RE.finditer(texte):
+        avant = texte[max(0, m.start() - _FENETRE_SANS_PREP_AVANT):m.start()]
+        if (_NEGATION_SANS_PREP_RE.search(avant) or _SI_HYPOTHETIQUE_RE.search(avant)
+                or _VERBE_COUP_AVANT_RE.search(avant)):
+            continue
+        piece_type = _NOM_PIECE_TYPE[m.group(1).lower()]
+        couleur_citee = _couleur_depuis_mot(m.group(2)) if m.group(2) else None
+        case = chess.parse_square(m.group(3).lower())
+        coherente_quelque_part = any(
+            (p := b.piece_at(case)) is not None and p.piece_type == piece_type
+            and (couleur_citee is None or p.color == couleur_citee)
+            for b in tous_boards
+        )
+        if coherente_quelque_part:
+            continue
+        occupant = next((b.piece_at(case) for b in tous_boards if b.piece_at(case) is not None), None)
+        if occupant is not None:
+            occ_camp = "blanc" if occupant.color == chess.WHITE else "noir"
+            description = f"un {_NOM_PIECE_AFFICHAGE[occupant.piece_type]} {occ_camp}"
+        else:
+            description = "aucune pièce (case vide)"
+        nom = _NOM_PIECE_AFFICHAGE[piece_type]
+        alertes.append({
+            "type": "case_piece_sans_preposition_incoherente",
+            "gravite": "orange",
+            "detail": (
+                f"\"{m.group(0).strip()}\" annonce un {nom} en {m.group(3)} "
+                f"sans préposition (\"en\"/\"sur\"), alors que {m.group(3)} "
+                f"porte {description} — jamais de {nom} — dans aucune des "
+                f"{len(tous_boards)} position(s) connue(s) (position de "
+                "départ, position actuelle, lignes principales, suites de "
+                "coups citées)"
+            ),
+        })
     return alertes
 
 
@@ -2576,6 +2710,20 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
         "(limite : une case d'une ligne hypothétique peut être signalée à "
         "tort, ou une vraie erreur sur une position intermédiaire peut "
         "passer inaperçue)",
+        "présence du TYPE de pièce cité sur la case, SANS préposition (issue "
+        "#110) : \"le\"/\"la\"/\"les\"/\"un\"/\"une\" (ou un possessif "
+        "\"ton\"/\"ta\"/\"tes\"/\"mon\"/\"ma\"/\"mes\"/\"son\"/\"sa\"/\"ses\"...) "
+        "directement accolé à un nom de pièce puis à une case, sans "
+        "\"en\"/\"sur\" entre les deux (\"le pion d4\"), comparé au type de "
+        "la pièce RÉELLEMENT présente sur cette case, quelle que soit sa "
+        "couleur (position de départ, position actuelle, candidats, suites "
+        "de coups citées) — signalé seulement si ce type n'y figure JAMAIS ; "
+        "gravité toujours \"orange\" (limite : ignore une occurrence "
+        "précédée d'une négation, d'un \"si\" hypothétique ou d'un verbe de "
+        "mise en jeu — \"pousser\"/\"jouer\"/\"avancer\"... — pour ne jamais "
+        "confondre un coup proposé avec une pièce déjà présente ; les "
+        "formulations avec \"en\"/\"sur\" restent traitées par le contrôle "
+        "ci-dessus, jamais dupliquées)",
         "légalité des SUITES de coups cités à la suite les uns des autres "
         "(issue #90) : rejouées dans l'ordre depuis la position de départ, "
         "la position actuelle, après le coup proposé/réel/meilleur, et "
@@ -2719,6 +2867,7 @@ def evaluer_fiabilite(texte: str, fen_reference: str = "", fen_reference2: str =
     )
     if boards_reference:
         alertes += detecter_case_piece_incoherente(texte, boards_reference, candidats_suites)
+        alertes += detecter_case_piece_sans_preposition_incoherente(texte, boards_reference, candidats_suites)
         alertes += detecter_possessif_case_incoherent(texte, camp_alain, boards_reference, candidats_suites)
     alertes += detecter_suites_illegales(texte, candidats_suites)
     alertes += detecter_ligne_absente_lignes_fournies(texte, candidats_suites, pv_coup_propose, pv_meilleur_coup)

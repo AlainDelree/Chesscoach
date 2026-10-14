@@ -1,0 +1,56 @@
+# Cas de non-régression — voir tests/cas_coach/README.md pour le format.
+id: rd1_cavalier_d4
+description: Signalement d'Alain (14 octobre 2026, mode Exercice, « pas de pion d4 »). FEN 3r1rk1/pppq1ppp/4pn2/4R3/2Bn4/2NQB3/PP3PPP/R5K1 w - - 3 15, Alain joue les Blancs, coup proposé Rd1 (meilleur coup, +3,53 selon Stockfish 16 — vérifié localement, +3,57 à la profondeur 18). La case d4 porte un CAVALIER NOIR (attaqué par la dame d3 et le fou e3, défendu par la dame d7 — vérifié avec python-chess). Réponse réelle du coach : « ... il place la tour sur la colonne d, où elle double les pièces sur le dossier avec ta dame et prépare à peser sur le pion d4/la colonne centrale. » Il n'y a pas de pion en d4 : pastille verte à tort, aucun contrôle déclenché — le contrôle « pièce présente sur la case » (detecter_case_piece_incoherente, issue #87/#103) ne reconnaît que « pion en/sur d4 », pas « le pion d4 » (nom de pièce directement suivi de la case, sans préposition). Motive le nouveau contrôle detecter_case_piece_sans_preposition_incoherente (issue #110).
+source: mes_erreurs — conversation réelle avec le coach (14 octobre 2026)
+fen: 3r1rk1/pppq1ppp/4pn2/4R3/2Bn4/2NQB3/PP3PPP/R5K1 w - - 3 15
+camp_alain: blancs
+coup_propose: Rd1
+meilleur_coup: Rd1
+
+faits_attendus:
+  # Fait brut ayant motivé l'issue #110 (vérifié avec python-chess) : d4
+  # porte un cavalier NOIR, pas un pion.
+  texte_contient: cavalier
+
+  # Phrase réelle du signalement, verbatim (issue #110) : doit être signalée
+  # par le nouveau contrôle, avec la pièce réellement présente ("cavalier
+  # noir") dans le message.
+  reponse_simulee_signalee: Rd1 met ta tour en jeu sur la colonne centrale ; il place la tour sur la colonne d, où elle double les pièces sur le dossier avec ta dame et prépare à peser sur le pion d4/la colonne centrale.
+  # Même idée, type de pièce correct cette fois (cavalier au lieu de pion) —
+  # ne doit jamais être signalée.
+  reponse_simulee_verte: Rd1 double les pièces sur la colonne d avec ta dame et prépare à peser sur le cavalier d4/la colonne centrale.
+  # Un coup noté ("pousser d4"), jamais une pièce sur une case — aucun nom
+  # de pièce directement accolé ici, donc hors de portée par construction.
+  reponse_simulee_verte: Les Blancs pourraient envisager de pousser d4 plus tard dans la partie.
+  # Simple mention de la case elle-même, jamais une pièce — "case" n'est pas
+  # un nom de pièce reconnu par le contrôle.
+  reponse_simulee_verte: Rd1 renforce aussi le contrôle de la case d4.
+  # Verbe de mise en jeu juste avant ("pousser le pion d4") : manifestement
+  # un coup proposé, pas une pièce déjà présente — jamais signalé (prudence,
+  # issue #110, point 2).
+  reponse_simulee_verte: Les Noirs pourraient un jour pousser le pion d4 plus avant, mais ce n'est pas le sujet ici.
+  # Négation directement collée au déterminant — casse l'adjacence, jamais
+  # signalé (même principe que les autres contrôles du module).
+  reponse_simulee_verte: Il n'y a pas le pion d4 que tu crois voir, c'est un cavalier noir.
+  # Couleur explicite correcte (noir) — le type ET la couleur collent à la
+  # position réelle, jamais signalé.
+  reponse_simulee_verte: Rd1 prépare à peser sur le cavalier noir d4.
+  # Couleur explicite incorrecte (blanc, alors que le cavalier d4 est noir)
+  # — signalé, type ET couleur contredits.
+  reponse_simulee_signalee: Rd1 prépare à peser sur le cavalier blanc d4.
+  # Non-régression du contrôle existant (issue #87/#103, avec préposition
+  # "en" et couleur explicite, seule forme qu'il reconnaît) : ce contrôle-ci
+  # reste inchangé, jamais dupliqué par le nouveau (type pion contredit par
+  # le cavalier noir réellement présent).
+  reponse_simulee_signalee: Rd1 prépare à peser sur le pion noir en d4.
+  # Plusieurs mentions dans le même texte, et pièce qui change de camp après
+  # une capture citée (issue #110, variantes demandées) : après Qxd4 Qxd4,
+  # la dame NOIRE recapture et occupe réellement d4 (vérifié avec
+  # python-chess) — "la dame d4" (type seul, sans couleur) colle à cette
+  # lecture, jamais signalé, malgré deux mentions.
+  reponse_simulee_verte: Après Qxd4 Qxd4, la dame d4 recapture immédiatement et la dame d4 reste bien centralisée.
+
+motifs_attendus:
+  cavalier
+
+pastille_attendue: vert

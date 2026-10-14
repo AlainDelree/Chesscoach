@@ -268,6 +268,21 @@ le commentaire) et `pastille_attendue`, puis à supprimer le commentaire.
   jamais ignorer un ordre de coups ("je ne veux pas improviser") figurant
   pourtant dans les données fournies.
 
+- `rd1_cavalier_d4` — signalement du 14 octobre 2026 (issue #110) : « ...
+  prépare à peser sur le pion d4... » alors que la case d4 porte un CAVALIER
+  NOIR — le contrôle « pièce présente sur la case » existant (issue #87/
+  #103) ne reconnaît que les formulations avec préposition (« pion en/sur
+  d4 »), jamais « le pion d4 » (nom de pièce directement suivi de la case).
+  Vérifie que le nouveau contrôle `detecter_case_piece_sans_preposition_
+  incoherente` signale cette formulation précise (message citant le
+  cavalier noir réellement présent), reste vert sur le type correct, sur un
+  coup noté (« pousser d4 »), sur la case seule, sur une négation, sur une
+  couleur explicite correcte, et ne duplique jamais le contrôle existant
+  (couleur explicite incorrecte avec « en », toujours signalé par
+  l'ancien contrôle) ; reste vert aussi sur plusieurs mentions dans le même
+  texte référant à une pièce qui change de camp après une suite de coups
+  citée (« Qxd4 Qxd4 »).
+
 Deux cas supplémentaires, tirés de `parties_test_coach.pgn` (parties sans
 erreur connue, pour avoir aussi des cas de référence « tout va bien »),
 étaient prévus par l'issue #93 mais n'ont pas pu être créés : ce fichier
