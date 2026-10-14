@@ -50,6 +50,37 @@ faits_attendus:
   # lecture, jamais signalé, malgré deux mentions.
   reponse_simulee_verte: Après Qxd4 Qxd4, la dame d4 recapture immédiatement et la dame d4 reste bien centralisée.
 
+  # Issue #111 : le motif de couleur de detecter_case_piece_incoherente/
+  # detecter_clouage_errone (_CASE_PIECE_RE, forme AVEC préposition
+  # "en"/"sur") ne reconnaissait, pour les Blancs, que "blanche"/"blanches"
+  # (jamais "blanc"/"blancs", faute de "h" final) — un défaut préexistant,
+  # distinct de celui de l'issue #110 sur _CASE_PIECE_SANS_PREP_RE (déjà
+  # corrigé, cf. ligne "cavalier blanc d4" plus haut, SANS préposition).
+  # Aucun fou, d'aucune couleur, en e5 (occupée par une tour blanche) —
+  # signalé.
+  reponse_simulee_signalee: Remarque que le fou blanc en e5 contrôle la diagonale a1-h8.
+  # d4 porte bien un cavalier noir — jamais signalé, forme masculine "noir"
+  # (déjà reconnue avant ce correctif, "noire?s?" couvrant aussi "noir").
+  reponse_simulee_verte: Remarque que le cavalier noir en d4 est actif au centre.
+  # a1 porte bien une tour blanche — jamais signalé (forme féminine,
+  # non-régression).
+  reponse_simulee_verte: Remarque que la tour blanche en a1 soutient l'aile dame.
+  # d4 porte un cavalier noir, pas un fou blanc — signalé, type ET couleur
+  # contredits (même case que le cas "cavalier blanc d4" plus haut, mais
+  # avec préposition "en" et un autre type de pièce).
+  reponse_simulee_signalee: Remarque que le fou blanc en d4 est actif au centre.
+  # Variantes plurielles de la forme masculine ("blancs"), jusque-là
+  # jamais reconnues par ce motif : même verdict que leurs équivalents
+  # singuliers ci-dessus.
+  reponse_simulee_signalee: Remarque que les fous blancs en e5 contrôlent la diagonale.
+  reponse_simulee_verte: Remarque que les cavaliers noirs en d4 sont actifs au centre.
+  reponse_simulee_verte: Remarque que les tours blanches en a1 soutiennent l'aile dame.
+  reponse_simulee_signalee: Remarque que les fous blancs en d4 sont actifs au centre.
+  # "Blancs"/"Noirs" employé comme NOM (le camp, sujet de la phrase), sans
+  # nom de pièce juste avant : hors de portée du motif par construction
+  # (pas de faux positif introduit par ce correctif).
+  reponse_simulee_verte: Les Blancs jouent ensuite une suite tranquille, le trait reste aux Blancs après l'échange.
+
 motifs_attendus:
   cavalier
 

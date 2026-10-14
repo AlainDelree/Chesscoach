@@ -281,7 +281,17 @@ le commentaire) et `pastille_attendue`, puis à supprimer le commentaire.
   (couleur explicite incorrecte avec « en », toujours signalé par
   l'ancien contrôle) ; reste vert aussi sur plusieurs mentions dans le même
   texte référant à une pièce qui change de camp après une suite de coups
-  citée (« Qxd4 Qxd4 »).
+  citée (« Qxd4 Qxd4 »). Étendu par l'issue #111 : le motif de couleur AVEC
+  préposition (« le fou blanc en e5 »), utilisé par le contrôle existant
+  `detecter_case_piece_incoherente` (issue #87/#103) et par
+  `detecter_clouage_errone` (issue #92), ne reconnaissait pour les Blancs
+  que « blanche »/« blanches » (jamais « blanc »/« blancs ») — un défaut
+  distinct de celui de l'issue #110 ci-dessus (qui portait sur la forme
+  SANS préposition). Vérifie « le fou blanc en e5 » (aucun fou en e5,
+  signalé), « le cavalier noir en d4 » et « la tour blanche en a1 » (vrais,
+  verts), « le fou blanc en d4 » (faux, signalé), leurs variantes
+  plurielles masculines, et l'absence de faux positif sur « Blancs »/
+  « Noirs » employé comme nom de camp.
 
 Deux cas supplémentaires, tirés de `parties_test_coach.pgn` (parties sans
 erreur connue, pour avoir aussi des cas de référence « tout va bien »),

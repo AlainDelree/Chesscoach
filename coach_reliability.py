@@ -424,7 +424,12 @@ def detecter_echange_impossible(texte: str, board: "chess.Board") -> list:
 
 _CASE_PIECE_RE = re.compile(
     r"\b(dames?|tours?|fous?|cavaliers?|pions?|rois?)\b"
-    r"(?:\s+(blanche?s?|noire?s?))?"
+    # "blancs?|blanches?" en deux alternatives distinctes (jamais
+    # "blanche?s?" — un seul radical ne couvrirait jamais le masculin
+    # "blanc"/"blancs", qui n'a pas de "h" final, contrairement au féminin
+    # "blanche"/"blanches" ; défaut relevé issue #111, même correctif que
+    # _CASE_PIECE_SANS_PREP_RE plus bas).
+    r"(?:\s+(blancs?|blanches?|noirs?|noires?))?"
     r"\s*(?:en|sur)\s+([a-h][1-8])\b",
     re.IGNORECASE,
 )
