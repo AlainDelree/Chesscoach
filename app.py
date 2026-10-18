@@ -1838,7 +1838,7 @@ def on_exercise_answer(data):
         # la solution/mat/équivalent Stockfish, pas de coup réellement joué
         # à l'époque, mise à jour du niveau Elo-like de la catégorie) — cf.
         # _on_exercise_answer_lichess.
-        _on_exercise_answer_lichess((data or {}).get("uci", ""))
+        _on_exercise_answer_lichess((data or {}).get("uci", ""), exercise_id)
         return
 
     # Issue #83 : une « Position précise » collée par Alain ne doit fausser
@@ -1849,6 +1849,15 @@ def on_exercise_answer(data):
     # idées, listes de pièces, verdict) est strictement le même calcul que
     # pour la source "mes erreurs".
     is_position_precise = _current_exercise.get("source") == "position_precise"
+
+    # Issue #114 : Récupérer l'exercise_id du client s'il est fourni, sinon en générer un
+    # Le client génère désormais l'identifiant au moment de l'envoi de la réponse,
+    # afin que le navigateur connaisse l'identifiant AVANT l'arrivée de tout avis
+    exercise_id = (data or {}).get("exercise_id")
+    if not exercise_id:
+        # Compatibilité : si le client n'envoie pas d'exercise_id (ancien chemin),
+        # le serveur en génère un comme avant
+        exercise_id = str(uuid.uuid4())
 
     uci = (data or {}).get("uci", "")
     fen_avant = _current_exercise["fen_avant"]
@@ -2123,10 +2132,8 @@ def on_exercise_answer(data):
         "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
-    # Générer un identifiant unique pour cet exercice (issue #113, point 5)
-    # pour éviter que les réponses tardives de Mistral ne s'accrochent à un autre exercice
-    exercise_id = str(uuid.uuid4())
-    
+    # Issue #114 : exercise_id a déjà été généré/extraite au début de la fonction
+    # (soit du client, soit généré par le serveur pour compatibilité)
     # Capturer le sid de la session pour émettre vers elle depuis un thread d'arrière-plan
     session_sid = request.sid
     
@@ -2189,7 +2196,7 @@ def on_exercise_answer(data):
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
-        emit("exercise_error", {"error": error})
+        emit("exercise_error", {"error": error, "exercise_id": exercise_id})
         # Annuler le thread Mistral s'il a été lancé
         if mistral_thread:
             mistral_thread.cancel()
@@ -2266,7 +2273,7 @@ def on_exercise_answer(data):
     })
 
 
-def _on_exercise_answer_lichess(uci: str) -> None:
+def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
     """Jugement du premier coup d'un problème « Problèmes Lichess » (issue
     #78), distinct du jugement "mes erreurs" ci-dessus : réussi si et
     seulement si le coup proposé est le premier coup de la solution (coup
@@ -2280,7 +2287,10 @@ def _on_exercise_answer_lichess(uci: str) -> None:
     (lichess_puzzles.mettre_a_jour_niveau), même si le problème porte
     plusieurs thèmes de catégorie. Pas de "coup réellement joué à l'époque"
     pour cette source (aucune partie d'origine, cf. absence de coup_reel
-    ci-dessous)."""
+    ci-dessous).
+    
+    Issue #114 : exercise_id est passé par le client ou généré par le serveur
+    pour compatibilité."""
     fen_avant = _current_exercise["fen_avant"]
     camp_alain = _current_exercise.get("camp_alain", "")
     solution = _current_exercise.get("solution") or []
@@ -2519,11 +2529,13 @@ def _on_exercise_answer_lichess(uci: str) -> None:
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
-        emit("exercise_error", {"error": error})
+        emit("exercise_error", {"error": error, "exercise_id": exercise_id})
     else:
         emit("exercise_comment", {
             "text": response,
             "fiabilite": fiabilite,
+            # Issue #114 : inclure l'exercise_id pour le contrôle d'obsolescence
+            "exercise_id": exercise_id,
             # fen/mode_origine/log_id (issue #89) : voir le commentaire
             # équivalent de on_exercise_answer ci-dessus.
             "fen": fen_avant, "mode_origine": "exercice_lichess", "log_id": log_id,

@@ -11,6 +11,27 @@
  * d'un enchaînement Stockfish) diffèrent.
  */
 
+// Issue #114 : Fonction utilitaire pour générer un identifiant unique côté client
+// Utilisé pour l'exercise_id afin que le navigateur connaisse l'identifiant AVANT
+// l'arrivée de tout avis (Claude ou Mistral)
+function _generateExerciseId() {
+  // Génération simple d'un UUID v4 côté client
+  // Basé sur crypto.randomUUID si disponible, sinon fallback manuel
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback manuel : 32 caractères hexadécimaux aléatoires
+  const hex = '0123456789abcdef';
+  const variant = '89ab';
+  let uuid = '';
+  for (let i = 0; i < 32; i++) {
+    if (i === 12) uuid += '4';
+    else if (i === 16) uuid += variant[Math.floor(Math.random() * 4)];
+    else uuid += hex[Math.floor(Math.random() * 16)];
+  }
+  return uuid;
+}
+
 let exerciseGame       = null;  // instance chess.js (position de l'exercice)
 let exerciseActive     = false;
 let exerciseSelected   = null;  // case algébrique sélectionnée ou null
@@ -427,6 +448,8 @@ function abandonExerciseGame() {
   exerciseExploring = false;
   exerciseVerdictObtenu = false;
   exerciseLastMove  = null;
+  // Issue #114 : Réinitialiser l'identifiant d'exercice
+  exerciseCurrentId = null;
   _exerciseResetTentative();
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
@@ -985,11 +1008,16 @@ function submitExerciseAnswer(move) {
     _coachHistory.push({ role: "user", content: messageUtilisateur });
   }
   exerciseLastSubmittedUci = move.from + move.to + (move.promotion || "");
+  // Issue #114 : Générer un identifiant unique pour cet exercice AVANT l'envoi
+  // et le mémoriser immédiatement, afin que le navigateur connaisse l'identifiant
+  // avant l'arrivée de tout avis (Claude ou Mistral)
+  const newExerciseId = _generateExerciseId();
+  exerciseCurrentId = newExerciseId;
   _exerciseStartAnalysisWatchdog();
   if (typeof _coachThinkingStart === "function") {
     _exerciseThinking = _coachThinkingStart("Le coach réfléchit...");
   }
-  socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci });
+  socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci, exercise_id: newExerciseId });
 }
 
 function _exerciseClearAnalysisWatchdog() {
@@ -1047,7 +1075,8 @@ function exerciseRetryAnalysis() {
   if (typeof _coachThinkingStart === "function") {
     _exerciseThinking = _coachThinkingStart("Le coach réfléchit...");
   }
-  socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci });
+  // Issue #114 : Réutiliser le même exercise_id pour cette tentative de réessai
+  socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci, exercise_id: exerciseCurrentId });
 }
 
 function _exerciseUpdateCoachInputGating() {
@@ -1080,6 +1109,8 @@ if (typeof socket !== "undefined") {
     exerciseVerdictObtenu = false;
     exerciseLastMove  = null;
     exerciseLastSubmittedUci = null;
+    // Issue #114 : Réinitialiser l'identifiant d'exercice pour le nouvel exercice
+    exerciseCurrentId = null;
     _exerciseClearAnalysisWatchdog();
     const retryBtnReset = document.getElementById("exercise-retry-btn");
     if (retryBtnReset) retryBtnReset.style.display = "none";
@@ -1206,15 +1237,14 @@ if (typeof socket !== "undefined") {
       }
     }
     
-    // Issue #113 : Afficher un indicateur que Mistral réfléchit (si configuré)
-    // On affiche cet indicateur uniquement si on est en mode exercice et qu'on attend Mistral
+    // Issue #114 : L'exercise_id a déjà été mémorisé côté client lors de l'envoi
+    // de la réponse (dans exercise_answer), pas besoin de le remettre à jour ici.
+    // Par contre, on garde l'indicateur "Mistral réfléchit..." si nécessaire
+    // (il est affiché quand Claude répond mais Mistral n'a pas encore répondu)
     if (exerciseId && typeof window.exerciseMistralPending === "undefined") {
       window.exerciseMistralPending = exerciseId;
       _coachRenderMistralThinking(exerciseId);
     }
-    
-    // Mémoriser l'exercise_id courant
-    exerciseCurrentId = exerciseId;
   });
 
   // Issue #113 : Gestionnaire pour l'avis de Mistral (événement séparé)
@@ -1249,6 +1279,11 @@ if (typeof socket !== "undefined") {
   socket.on("exercise_error", (data) => {
     _exerciseClearAnalysisWatchdog();
     _exerciseClearThinking();
+    // Issue #114 : Supprimer l'indicateur "Mistral réfléchit..." en cas d'erreur
+    const exerciseId = (data && data.exercise_id) || null;
+    if (exerciseId) {
+      _coachRemoveMistralThinking(exerciseId);
+    }
     const statusEl = document.getElementById("exercise-status");
     const err = data && data.error;
     // Issue #79, point 3 : un échec pendant exercise_answer (coup déjà joué
