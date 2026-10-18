@@ -1264,6 +1264,12 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
   bubble.dataset.exerciseId = exerciseId || "";
   bubble.dataset.agent = agent || "";
   bubble.dataset.model = model || "";
+  // Issue #115 : Ajouter les données nécessaires pour la notation
+  if (signalData) {
+    bubble.dataset.logId = signalData.log_id || "";
+    bubble.dataset.fen = signalData.fen || "";
+    bubble.dataset.coupPropose = signalData.move || "";
+  }
   
   // En-tête avec l'auteur
   const header = document.createElement("div");
@@ -1299,6 +1305,7 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
     btn1.dataset.agent = agent;
     btn1.dataset.model = model;
     btn1.dataset.exerciseId = exerciseId || "";
+    btn1.dataset.logId = signalData?.log_id || "";
     btn1.dataset.rating = "1";
     btn1.addEventListener("click", _coachRatingClick);
     ratingDiv.appendChild(btn1);
@@ -1310,6 +1317,7 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
     btn0.dataset.agent = agent;
     btn0.dataset.model = model;
     btn0.dataset.exerciseId = exerciseId || "";
+    btn0.dataset.logId = signalData?.log_id || "";
     btn0.dataset.rating = "0";
     btn0.addEventListener("click", _coachRatingClick);
     ratingDiv.appendChild(btn0);
@@ -1467,9 +1475,13 @@ function _coachRenderMistralErrorWithAgent(error, model, exerciseId) {
 }
 
 // Issue #113 : Afficher un indicateur "Mistral réfléchit..."
+// Issue #115 : Vérifie qu'il n'y a pas déjà un indicateur pour cet exercice
 function _coachRenderMistralThinking(exerciseId) {
   const history = document.getElementById("coach-history");
   if (!history) return;
+  
+  // Supprimer les indicateurs existants pour cet exercice (au cas où)
+  _coachRemoveMistralThinking(exerciseId);
   
   const bubble = document.createElement("div");
   bubble.className = "coach-bubble mistral-thinking";
@@ -1495,6 +1507,24 @@ function _coachRemoveMistralThinking(exerciseId) {
       bubble.remove();
     }
   });
+}
+
+// Issue #115 : Afficher un message discret quand Mistral n'a pas répondu dans le délai
+function _coachRenderMistralTimeoutMessage(exerciseId) {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  
+  const bubble = document.createElement("div");
+  bubble.className = "coach-bubble mistral-timeout";
+  bubble.dataset.exerciseId = exerciseId || "";
+  
+  const content = document.createElement("div");
+  content.className = "coach-bubble-content";
+  content.textContent = "Mistral n'a pas répondu.";
+  bubble.appendChild(content);
+  
+  history.appendChild(bubble);
+  _coachScrollReveal(history, bubble, false);
 }
 
 // Issue #113 : Gestion du clic sur les boutons de notation

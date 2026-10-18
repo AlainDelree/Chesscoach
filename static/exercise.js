@@ -38,6 +38,8 @@ let exerciseSelected   = null;  // case algébrique sélectionnée ou null
 let exerciseAnswered   = false; // un coup a déjà été proposé pour cet exercice
 let exerciseFenAvant   = null;  // FEN de départ de l'exercice (issue #13, "Reprendre mon coup")
 let exerciseCampAlain  = null;
+// Issue #115 : Tracker des réponses Mistral par exercise_id pour éviter l'indicateur persistant
+let exerciseMistralResponded = {}; // { exerciseId: true } quand Mistral a répondu
 // Vrai une fois le verdict du coach reçu pour la tentative en cours (issue
 // #21) : à partir de là, les clics sur le plateau déplacent librement les
 // pièces (n'importe quel camp, comme en partie libre) sans redéclencher de
@@ -122,6 +124,9 @@ let exerciseJustReprised   = false;
 // Issue #113 : identifiant unique pour l'exercice en cours, utilisé pour
 // éviter que les réponses tardives de Mistral ne s'accrochent à un autre exercice
 let exerciseCurrentId = null;
+// Issue #115 : Timeout pour l'indicateur "Mistral réfléchit..." (délai maximal raisonnable)
+let exerciseMistralThinkingTimeoutId = null;
+const EXERCISE_MISTRAL_THINKING_TIMEOUT_MS = 45000; // 45 secondes, cohérent avec le timeout HTTP
 let exercisePiecesDepartTexte    = null;
 let exercisePiecesActuellesTexte = null;
 let exerciseMenaceAdverseTexte   = null;
@@ -450,6 +455,10 @@ function abandonExerciseGame() {
   exerciseLastMove  = null;
   // Issue #114 : Réinitialiser l'identifiant d'exercice
   exerciseCurrentId = null;
+  // Issue #115 : Nettoyer l'indicateur Mistral et le timeout
+  _exerciseClearMistralThinkingTimeout();
+  _coachRemoveMistralThinking(null); // Supprime tous les indicateurs Mistral
+  exerciseMistralResponded = {}; // Réinitialiser le tracker
   _exerciseResetTentative();
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
@@ -484,6 +493,10 @@ function startExercise(phaseOverride, sourceOverride, categorieOverride, fenOver
   exerciseVerdictObtenu = false;
   exerciseLastMove  = null;
   exerciseJustReprised = false;
+  // Issue #115 : Nettoyer l'indicateur Mistral et le timeout pour le nouvel exercice
+  _exerciseClearMistralThinkingTimeout();
+  _coachRemoveMistralThinking(null); // Supprime tous les indicateurs Mistral
+  exerciseMistralResponded = {}; // Réinitialiser le tracker
   _exerciseResetTentative();
   _exerciseResetCoachLines();
   _exerciseUpdateCoupReelDisplay();
@@ -547,6 +560,9 @@ function reprendreExerciceCoup() {
   // officiel.
   exerciseExploring = exerciseVerdictObtenu;
   exerciseLastMove  = null;
+  // Issue #115 : Nettoyer l'indicateur Mistral et le timeout
+  _exerciseClearMistralThinkingTimeout();
+  _coachRemoveMistralThinking(null); // Supprime tous les indicateurs Mistral
   _exerciseResetTentative();
   // "Reprendre mon coup" doit rendre le plateau immédiatement rejouable —
   // si une ligne du coach était en cours d'affichage/lecture (issue #58),
@@ -1038,6 +1054,27 @@ function _exerciseClearThinking() {
   }
 }
 
+// Issue #115 : Nettoyer le timeout de l'indicateur "Mistral réfléchit..."
+function _exerciseClearMistralThinkingTimeout() {
+  if (exerciseMistralThinkingTimeoutId !== null) {
+    clearTimeout(exerciseMistralThinkingTimeoutId);
+    exerciseMistralThinkingTimeoutId = null;
+  }
+}
+
+// Issue #115 : Démarrer le timeout pour l'indicateur "Mistral réfléchit..."
+// Au bout du délai, remplace l'indicateur par un message discret
+function _exerciseStartMistralThinkingTimeout(exerciseId) {
+  _exerciseClearMistralThinkingTimeout();
+  exerciseMistralThinkingTimeoutId = setTimeout(() => {
+    // Vérifier que Mistral n'a pas répondu entre-temps
+    if (exerciseId && !exerciseMistralResponded[exerciseId]) {
+      _coachRemoveMistralThinking(exerciseId);
+      _coachRenderMistralTimeoutMessage(exerciseId);
+    }
+  }, EXERCISE_MISTRAL_THINKING_TIMEOUT_MS);
+}
+
 function _exerciseStartAnalysisWatchdog() {
   _exerciseClearAnalysisWatchdog();
   exerciseAnalysisTimeoutId = setTimeout(_exerciseShowAnalysisIndisponible, EXERCISE_ANALYSIS_TIMEOUT_MS);
@@ -1071,6 +1108,10 @@ function exerciseRetryAnalysis() {
   // essai — remis à true par exercise_comment (succès) ou par l'échec
   // suivant (exercise_error/watchdog), jamais laissé à false entre-temps.
   exerciseExploring = false;
+  // Issue #115 : Réinitialiser le tracker Mistral pour ce réessai
+  if (exerciseCurrentId) {
+    delete exerciseMistralResponded[exerciseCurrentId];
+  }
   _exerciseStartAnalysisWatchdog();
   if (typeof _coachThinkingStart === "function") {
     _exerciseThinking = _coachThinkingStart("Le coach réfléchit...");
@@ -1237,13 +1278,17 @@ if (typeof socket !== "undefined") {
       }
     }
     
-    // Issue #114 : L'exercise_id a déjà été mémorisé côté client lors de l'envoi
-    // de la réponse (dans exercise_answer), pas besoin de le remettre à jour ici.
-    // Par contre, on garde l'indicateur "Mistral réfléchit..." si nécessaire
-    // (il est affiché quand Claude répond mais Mistral n'a pas encore répondu)
-    if (exerciseId && typeof window.exerciseMistralPending === "undefined") {
-      window.exerciseMistralPending = exerciseId;
+    // Issue #115 : Ne pas afficher l'indicateur "Mistral réfléchit..." si Mistral
+    // a déjà répondu pour cet exercice. Sinon, afficher l'indicateur et démarrer
+    // le timeout.
+    if (exerciseId && !exerciseMistralResponded[exerciseId]) {
+      // Mistral n'a pas encore répondu, afficher l'indicateur
       _coachRenderMistralThinking(exerciseId);
+      _exerciseStartMistralThinkingTimeout(exerciseId);
+    } else if (exerciseId) {
+      // Mistral a déjà répondu pour cet exercice, supprimer l'indicateur au cas où
+      _coachRemoveMistralThinking(exerciseId);
+      _exerciseClearMistralThinkingTimeout();
     }
   });
 
@@ -1264,8 +1309,13 @@ if (typeof socket !== "undefined") {
       return;
     }
     
-    // Supprimer l'indicateur "Mistral réfléchit..."
-    _coachRemoveMistralThinking(exerciseId);
+    // Issue #115 : Marquer que Mistral a répondu pour cet exercice
+    if (exerciseId) {
+      exerciseMistralResponded[exerciseId] = true;
+      // Supprimer l'indicateur "Mistral réfléchit..." et le timeout
+      _coachRemoveMistralThinking(exerciseId);
+      _exerciseClearMistralThinkingTimeout();
+    }
     
     if (error) {
       // Afficher un message discret en cas d'erreur Mistral
@@ -1279,10 +1329,11 @@ if (typeof socket !== "undefined") {
   socket.on("exercise_error", (data) => {
     _exerciseClearAnalysisWatchdog();
     _exerciseClearThinking();
-    // Issue #114 : Supprimer l'indicateur "Mistral réfléchit..." en cas d'erreur
+    // Issue #115 : Nettoyer l'indicateur Mistral et le timeout en cas d'erreur
     const exerciseId = (data && data.exercise_id) || null;
     if (exerciseId) {
       _coachRemoveMistralThinking(exerciseId);
+      _exerciseClearMistralThinkingTimeout();
     }
     const statusEl = document.getElementById("exercise-status");
     const err = data && data.error;

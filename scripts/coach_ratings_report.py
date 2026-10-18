@@ -26,6 +26,14 @@ import config
 RATINGS_PATH = os.path.join(config.DATA_DIR, "coach_ratings.jsonl")
 
 
+def _get_coach_calls_files():
+    """Retourne la liste de tous les fichiers coach_calls*.log (y compris archives mensuelles)."""
+    log_dir = Path(config.COACH_CALLS_LOG_PATH).parent
+    log_base = Path(config.COACH_CALLS_LOG_PATH).name
+    # Pattern : coach_calls.log et coach_calls-AAAA-MM.log
+    return sorted(log_dir.glob(f"{log_base.stem}*{log_base.suffix}"), key=lambda p: p.name)
+
+
 def load_ratings():
     """Charger toutes les notes depuis le fichier JSONL."""
     ratings = []
@@ -48,18 +56,25 @@ def load_ratings():
 
 
 def get_coach_calls_log():
-    """Charger le fichier coach_calls.log pour récupérer les textes des avis."""
-    log_path = config.COACH_CALLS_LOG_PATH
+    """Charger tous les fichiers coach_calls*.log pour récupérer les textes des avis.
+    
+    Issue #115 : Lit tous les fichiers (mensuels et archives) comme la fonction
+    coachlog d'Alain, sans échouer si le fichier sans suffixe est absent.
+    """
     calls = []
-    if os.path.exists(log_path):
-        try:
-            with open(log_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        calls.append(json.loads(line))
-        except Exception as e:
-            print(f"Erreur lors de la lecture de {log_path} : {e}")
+    log_files = _get_coach_calls_files()
+    
+    for log_path in log_files:
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            calls.append(json.loads(line))
+            except Exception as e:
+                print(f"Erreur lors de la lecture de {log_path} : {e}")
+    
     return calls
 
 
