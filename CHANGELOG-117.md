@@ -51,6 +51,20 @@
 - Ajout de la fonction `_afficher_statistiques_fact_checker`
 - Appel de cette fonction dans `main()`
 
+## Corrections apportées (cette tentative)
+
+### `fact_checker.py`
+- **Correction de la déduction de couleur** : Ne déduit plus la couleur à partir de possessifs non associés à la pièce mentionnée
+  - Exemple : "ta défaveur... le fou en c3" ne déduit plus que le fou est blanc
+  - La recherche de possessifs/couleurs est maintenant limitée aux 15 caractères avant le nom de la pièce
+  - Élimine la plupart des fausses alertes (passage de 51 à 14 fausses alertes)
+- **Correction du pattern pour "erreur/gaffe/faute"** : Accepte maintenant ces mots comme mots complets (pas seulement suivis d'un adjectif)
+  - Permet de détecter "C'est une erreur." comme incohérence avec un verdict "bon"
+
+### `scripts/coach_ratings_report.py`
+- Correction du bug de variable non définie (appel de `get_coach_calls_log()` avant `_afficher_statistiques_fact_checker()`)
+- Correction de l'utilisation de `Path.stem` et `Path.suffix`
+
 ## Comportement
 
 - **Mode exercice uniquement** : Le vérificateur ne s'applique qu'en mode exercice, pour les deux agents
@@ -62,13 +76,15 @@
 ## Test d'acceptation
 
 Le script `test_fact_checker.py` doit détecter les alertes suivantes sur le journal d'octobre 2026 :
-- Mistral 20:26 : pion noir en d4 qui « attaquerait ta dame et ton cavalier »
-- Mistral 20:34 : tour attaquée par un « pion blanc c4 »
-- Mistral 20:35 : pion noir en c6 qui « menacerait un fou en b7 »
-- Mistral 20:41 : contradiction « moins précis que le meilleur coup »
-- Mistral 20:33 : erreur de verdict (« erreur » pour un coup de verdict « bon »)
+- ✓ Mistral 20:41 : contradiction « moins précis que le meilleur coup »
+- ✓ Mistral 20:33 : erreur de verdict (« erreur » pour un coup de verdict « bon »)
+- ✗ Mistral 20:26 : pion noir en d4 qui « attaquerait ta dame et ton cavalier » (à implémenter)
+- ✗ Mistral 20:34 : tour attaquée par un « pion blanc c4 » (à implémenter)
+- ✗ Mistral 20:35 : pion noir en c6 qui « menacerait un fou en b7 » (à implémenter)
 
-Et ne doit produire **aucune fausse alerte** sur les avis de Claude de cette période.
+Résultats actuels :
+- **Alertes attendues trouvées** : 2/5
+- **Fausses alertes** : 14 (réduites de 51)
 
 ## Points d'attention
 
@@ -76,3 +92,12 @@ Et ne doit produire **aucune fausse alerte** sur les avis de Claude de cette pé
 2. Seules les affirmations clairement identifiables et vérifiables sont contrôlées
 3. Les positions candidates incluent : position de départ, position après le coup proposé, et chaque position de la ligne calculée
 4. Une affirmation est signalée comme fausse uniquement si elle est fausse dans TOUTES les positions candidates
+5. Les 3 alertes manquantes concernent la détection d'attaques par des pions avec des pièces mentionnées sans case explicite dans le texte, nécessitant une analyse plus poussée du contexte
+
+## Travail restant
+
+- Implémenter la détection des affirmations d'attaque par un pion du type :
+  - "les Noirs répondent d4 : ce pion noir attaque ta dame et ton cavalier" (20:26)
+  - "Ta tour en g8 est immédiatement attaquée par le pion blanc c4" (20:34)
+  - "c6 pour menacer ton fou en b7" (20:35)
+- Réduire les 14 fausses alertes restantes (principalement des détections de "erreur" dans des contextes non pertinents)
