@@ -183,11 +183,17 @@ configurer la température pour chaque fournisseur :
   mode exercice. Si absente ou vide, aucun paramètre n'est envoyé (l'API
   utilise sa valeur par défaut). Si l'API refuse le paramètre pour le modèle
   utilisé, l'appel est réessayé sans le paramètre et un avertissement est
-  consigné dans le journal.
+  consigné dans le journal. **Note (issue #118) :** le modèle `claude-sonnet-5`
+  n'accepte pas de température personnalisée (paramètre déprécié pour ce
+  modèle) — avec ce modèle, la variable `CHESSCOACH_CLAUDE_TEMPERATURE` n'a
+  donc aucun effet, et la comparaison Claude/Mistral ne peut pas être faite à
+  température identique tant que ce modèle est utilisé.
 - `CHESSCOACH_MISTRAL_TEMPERATURE` : température pour les appels à Mistral.
   Valeur par défaut : 0.0 (comportement initial). Une valeur invalide (non
   numérique, hors plage acceptée) est ignorée avec un avertissement dans les
-  logs, et la valeur par défaut s'applique.
+  logs, et la valeur par défaut s'applique. Si l'API Mistral refuse le
+  paramètre pour le modèle utilisé, l'appel est réessayé sans le paramètre et
+  un avertissement est consigné dans le journal.
 
 La température réellement envoyée (ou "defaut API" quand rien n'est envoyé) est
 consignée dans chaque entrée des journaux `coach_calls*.log` pour les deux

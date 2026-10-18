@@ -38,6 +38,89 @@ import fact_checker
 
 logger = logging.getLogger("chesscoach.llm_coach")
 
+# Mémoire globale des modèles qui refusent le paramètre température (issue #118)
+# Structure : set de tuples (provider, model_id) où provider est "claude" ou "mistral"
+# Cette mémoire persiste pour la durée de vie du processus Python.
+_TEMPERATURE_REFUSED_MODELS: set = set()
+
+
+def _marquer_modele_refuse_temperature(provider: str, model: str) -> None:
+    """Mémorise qu'un modèle refuse le paramètre température (issue #118).
+    
+    Args:
+        provider: "claude" ou "mistral"
+        model: identifiant du modèle (ex: "claude-sonnet-5")
+    """
+    _TEMPERATURE_REFUSED_MODELS.add((provider, model))
+    logger.info(
+        f"[LLM_COACH] Modèle {provider}:{model} marqué comme refusant le paramètre température"
+    )
+
+
+def _modele_refuse_temperature(provider: str, model: str) -> bool:
+    """Vérifie si un modèle est connu pour refuser le paramètre température (issue #118).
+    
+    Args:
+        provider: "claude" ou "mistral"
+        model: identifiant du modèle
+        
+    Returns:
+        True si le modèle est dans la mémoire des refus, False sinon.
+    """
+    return (provider, model) in _TEMPERATURE_REFUSED_MODELS
+
+
+def _est_erreur_temperature_refusee(provider: str, err_data: dict, model: str) -> bool:
+    """Détecte si une erreur API est due au refus du paramètre température (issue #118).
+    
+    Args:
+        provider: "claude" ou "mistral"
+        err_data: dictionnaire parsé du corps de l'erreur HTTP
+        model: identifiant du modèle
+        
+    Returns:
+        True si l'erreur indique un refus du paramètre température.
+    """
+    err_info = err_data.get("error") or {}
+    err_type = err_info.get("type", "").lower()
+    err_msg = err_info.get("message", "").lower()
+    
+    if provider == "claude":
+        # Pour Claude, on cherche des erreurs invalid_request_error avec mention
+        # de "temperature", "deprecated", ou "not supported"
+        return (
+            err_type == "invalid_request_error"
+            and any(mot in err_msg for mot in ["temperature", "deprecated", "not supported"])
+        )
+    elif provider == "mistral":
+        # Pour Mistral, on cherche des erreurs avec mention de temperature
+        return (
+            "temperature" in err_msg
+            and any(mot in err_msg for mot in ["not supported", "invalid", "deprecated", "not accepted"])
+        )
+    return False
+
+
+def _get_temperature_log_value(provider: str, model: str, temperature: float | None) -> str:
+    """Détermine la valeur de température à logger (issue #118).
+    
+    Args:
+        provider: "claude" ou "mistral"
+        model: identifiant du modèle
+        temperature: température configurée (peut être None)
+        
+    Returns:
+        Chaîne à logger : la température configurée, ou "refusée par le modèle, défaut API"
+        si le modèle est connu pour refuser ce paramètre.
+    """
+    if temperature is None:
+        return "defaut API"
+    
+    if _modele_refuse_temperature(provider, model):
+        return "refusée par le modèle, défaut API"
+    
+    return str(temperature)
+
 
 class CreditInsuffisantError(Exception):
     """Levée quand l'API Claude répond que le crédit est épuisé (issue #54,
@@ -2021,9 +2104,13 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
     
-    # Construction du body avec température conditionnelle (issue #116)
+    # Vérifier si ce modèle refuse déjà la température (issue #118)
+    model_resolu = model or "claude-haiku-4-5"
+    temperature_refusee = _modele_refuse_temperature("claude", model_resolu)
+    
+    # Construction du body avec température conditionnelle (issue #116, #118)
     body_dict = {
-        "model": model or "claude-haiku-4-5",
+        "model": model_resolu,
         # 300 tokens coupait certaines réponses en plein mot dès que le coach
         # développait un conseil détaillé plutôt qu'un commentaire de coup
         # isolé (issue #12 point 2). 1024 s'est révélé encore insuffisant à
@@ -2053,7 +2140,8 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
         "system": prompt_sys,
         "messages": messages,
     }
-    if temperature is not None:
+    # N'inclure la température que si elle est fournie ET que le modèle n'est pas connu pour la refuser (issue #118)
+    if temperature is not None and not temperature_refusee:
         body_dict["temperature"] = temperature
     
     body = json.dumps(body_dict).encode("utf-8")
@@ -2096,35 +2184,67 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
         err_info = err_data.get("error") or {}
         err_type = err_info.get("type", "")
         err_msg = err_info.get("message", "")
-        # Détection tolérante (issue #60) : la forme "403 billing_error"
-        # observée initialement (issue #54) n'est pas garantie stable dans le
-        # temps — des retours d'utilisateurs de l'API (2024-2025, non
-        # revérifiables sans épuiser réellement un crédit) rapportent aussi un
-        # statut 402, ou un 400 "invalid_request_error" dont le message
-        # évoque le solde/les crédits (ex. "Your credit balance is too low...
-        # Plans & Billing..."). On reconnaît donc les trois formes, sans se
-        # fier à un unique couple (code, type) — tout en gardant les vraies
-        # erreurs de permission (403 permission_error) et les vraies requêtes
-        # invalides (400 sans mention de crédit) hors de ce cas.
-        msg_lower = err_msg.lower()
-        mots_credit = ("credit balance", "insufficient credit", "plans & billing", "plans and billing")
-        est_credit_epuise = (
-            err_type == "billing_error"
-            or e.code == 402
-            or (e.code == 400 and err_type == "invalid_request_error"
-                and any(mot in msg_lower for mot in mots_credit))
-        )
-        if est_credit_epuise:
-            raise CreditInsuffisantError(err_msg or "Crédit épuisé") from e
-        # Modèle refusé par l'API (issue #61) : identifiant inconnu, retiré ou
-        # momentanément indisponible côté Anthropic — distingué des autres
-        # erreurs HTTP pour que l'appelant revienne au choix précédent plutôt
-        # que d'afficher une erreur technique brute.
-        if e.code == 404 and err_type == "not_found_error":
-            raise ModeleIndisponibleError(
-                (err_data.get("error") or {}).get("message", f"Modèle indisponible : {model}")
-            ) from e
-        raise
+        
+        # Détection du refus du paramètre température (issue #118)
+        if temperature is not None and not temperature_refusee and _est_erreur_temperature_refusee("claude", err_data, model_resolu):
+            # Marquer ce modèle comme refusant la température
+            _marquer_modele_refuse_temperature("claude", model_resolu)
+            # Journaliser une seule fois (issue #118, point 3)
+            logger.warning(
+                f"[LLM_COACH] Paramètre température refusé par le modèle Claude {model_resolu} "
+                f"(valeur configurée: {temperature}), réessai sans ce paramètre"
+            )
+            # Réessayer UNE fois sans le paramètre température (issue #118, point 1)
+            body_dict_sans_temp = body_dict.copy()
+            body_dict_sans_temp.pop("temperature", None)
+            body_sans_temp = json.dumps(body_dict_sans_temp).encode("utf-8")
+            req_sans_temp = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=body_sans_temp,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req_sans_temp, timeout=timeout_s) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e2:
+                # Si le réessai échoue aussi, propager l'erreur originale
+                # (celle du premier appel, qui était plus informative)
+                raise
+        else:
+            # Détection tolérante (issue #60) : la forme "403 billing_error"
+            # observée initialement (issue #54) n'est pas garantie stable dans le
+            # temps — des retours d'utilisateurs de l'API (2024-2025, non
+            # revérifiables sans épuiser réellement un crédit) rapportent aussi un
+            # statut 402, ou un 400 "invalid_request_error" dont le message
+            # évoque le solde/les crédits (ex. "Your credit balance is too low...
+            # Plans & Billing..."). On reconnaît donc les trois formes, sans se
+            # fier à un unique couple (code, type) — tout en gardant les vraies
+            # erreurs de permission (403 permission_error) et les vraies requêtes
+            # invalides (400 sans mention de crédit) hors de ce cas.
+            msg_lower = err_msg.lower()
+            mots_credit = ("credit balance", "insufficient credit", "plans & billing", "plans and billing")
+            est_credit_epuise = (
+                err_type == "billing_error"
+                or e.code == 402
+                or (e.code == 400 and err_type == "invalid_request_error"
+                    and any(mot in msg_lower for mot in mots_credit))
+            )
+            if est_credit_epuise:
+                raise CreditInsuffisantError(err_msg or "Crédit épuisé") from e
+            # Modèle refusé par l'API (issue #61) : identifiant inconnu, retiré ou
+            # momentanément indisponible côté Anthropic — distingué des autres
+            # erreurs HTTP pour que l'appelant revienne au choix précédent plutôt
+            # que d'afficher une erreur technique brute.
+            if e.code == 404 and err_type == "not_found_error":
+                raise ModeleIndisponibleError(
+                    (err_data.get("error") or {}).get("message", f"Modèle indisponible : {model}")
+                ) from e
+            raise
     # Tokens consommés par cet appel (issue #54) — déjà présents dans la
     # réponse normale de l'API, pas d'appel supplémentaire nécessaire. Le
     # modèle réellement utilisé (data["model"]) est repris plutôt que le
@@ -2180,12 +2300,22 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
     """
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
-    body = json.dumps({
-        "model": model or "mistral-large-latest",
+    
+    # Vérifier si ce modèle refuse déjà la température (issue #118)
+    model_resolu = model or "mistral-large-latest"
+    temperature_refusee = _modele_refuse_temperature("mistral", model_resolu)
+    
+    # Construction du body avec température conditionnelle (issue #116, #118)
+    body_dict = {
+        "model": model_resolu,
         "messages": [{"role": "system", "content": prompt_sys}] + messages,
         "max_tokens": 4096,
-        "temperature": temperature,
-    }).encode("utf-8")
+    }
+    # N'inclure la température que si le modèle n'est pas connu pour la refuser (issue #118)
+    if not temperature_refusee:
+        body_dict["temperature"] = temperature
+    
+    body = json.dumps(body_dict).encode("utf-8")
     req = urllib.request.Request(
         "https://api.mistral.ai/v1/chat/completions",
         data=body,
@@ -2205,13 +2335,43 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
             err_data = json.loads(corps)
         except (ValueError, TypeError):
             err_data = {}
-        # Ne pas lever d'exception spécifique (contrairement à Claude) :
-        # consigne 6 dit "un échec côté Mistral [...] produit un court message
-        # discret dans le bloc Mistral, sans jamais casser le chat ni le
-        # commentaire de Claude" — donc on laisse l'exception remonter pour
-        # être attrapée par l'appelant, qui gérera l'affichage du message
-        # d'erreur discret.
-        raise
+        
+        # Détection du refus du paramètre température (issue #118)
+        if not temperature_refusee and _est_erreur_temperature_refusee("mistral", err_data, model_resolu):
+            # Marquer ce modèle comme refusant la température
+            _marquer_modele_refuse_temperature("mistral", model_resolu)
+            # Journaliser une seule fois (issue #118, point 3)
+            logger.warning(
+                f"[LLM_COACH] Paramètre température refusé par le modèle Mistral {model_resolu} "
+                f"(valeur configurée: {temperature}), réessai sans ce paramètre"
+            )
+            # Réessayer UNE fois sans le paramètre température (issue #118, point 1)
+            body_dict_sans_temp = body_dict.copy()
+            body_dict_sans_temp.pop("temperature", None)
+            body_sans_temp = json.dumps(body_dict_sans_temp).encode("utf-8")
+            req_sans_temp = urllib.request.Request(
+                "https://api.mistral.ai/v1/chat/completions",
+                data=body_sans_temp,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req_sans_temp, timeout=timeout_s) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e2:
+                # Si le réessai échoue aussi, propager l'erreur originale
+                raise
+        else:
+            # Ne pas lever d'exception spécifique (contrairement à Claude) :
+            # consigne 6 dit "un échec côté Mistral [...] produit un court message
+            # discret dans le bloc Mistral, sans jamais casser le chat ni le
+            # commentaire de Claude" — donc on laisse l'exception remonter pour
+            # être attrapée par l'appelant, qui gérera l'affichage du message
+            # d'erreur discret.
+            raise
     # Chercher le texte de la réponse de façon robuste (consigne 6) :
     # Mistral retourne {"choices": [{"message": {"content": "..."}}]}
     # mais on ne suppose pas cette structure fixe.
@@ -2546,8 +2706,9 @@ def get_coach_response(messages, context, coach_memory, config):
     # dans le délai total vu par l'interface.
     timeout_s = (config or {}).get("coach_timeout_s") or 90
     
-    # Déterminer la température à logger (issue #116)
-    claude_temperature_log = str(claude_temperature) if claude_temperature is not None else "defaut API"
+    # Déterminer la température à logger (issue #116, #118)
+    model_resolu = model or "claude-haiku-4-5"
+    claude_temperature_log = _get_temperature_log_value("claude", model_resolu, claude_temperature)
     
     try:
         response = _call_claude(prompt_sys, clean_messages, api_key, model, usage_path, timeout_s=timeout_s, temperature=claude_temperature)
@@ -2904,8 +3065,9 @@ def get_mistral_response(messages, context, config):
             )
             mistral_temperature = 0.0
     
-    # Température à logger (issue #116)
-    mistral_temperature_log = str(mistral_temperature)
+    # Température à logger (issue #116, #118)
+    model_resolu = mistral_model or "mistral-large-latest"
+    mistral_temperature_log = _get_temperature_log_value("mistral", model_resolu, mistral_temperature)
 
     try:
         response = _call_mistral(prompt_sys, clean_messages, mistral_api_key, mistral_model, None, timeout_s=mistral_timeout_s, temperature=mistral_temperature)
