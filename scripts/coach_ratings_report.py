@@ -29,7 +29,7 @@ RATINGS_PATH = os.path.join(config.DATA_DIR, "coach_ratings.jsonl")
 def _get_coach_calls_files():
     """Retourne la liste de tous les fichiers coach_calls*.log (y compris archives mensuelles)."""
     log_dir = Path(config.COACH_CALLS_LOG_PATH).parent
-    log_base = Path(config.COACH_CALLS_LOG_PATH).name
+    log_base = Path(config.COACH_CALLS_LOG_PATH)
     # Pattern : coach_calls.log et coach_calls-AAAA-MM.log
     return sorted(log_dir.glob(f"{log_base.stem}*{log_base.suffix}"), key=lambda p: p.name)
 
@@ -151,7 +151,8 @@ def main():
     print("=" * 80)
     print()
     
-    # Statistiques des alertes du vérificateur d'affirmations factuelles (issue #117)
+    # Charger les logs pour les statistiques du vérificateur d'affirmations factuelles (issue #117)
+    calls = get_coach_calls_log()
     _afficher_statistiques_fact_checker(calls)
     print()
     

@@ -73,7 +73,7 @@ _INCONSISTENCIES = [
     (r'pas\s+aussi\s+bon\s+(?:que|que le)\s+meilleur\s+coup', re.IGNORECASE),
     (r'inférieur\s+au\s+meilleur\s+coup', re.IGNORECASE),
     # "erreur" ou "gaffe" pour un coup de verdict "bon"
-    (r'(?:erreur|gaffe|faute)\s+(?:grossièr|stratégiqu|tactiqu|graves?)?', re.IGNORECASE),
+    (r'\b(?:erreur|gaffe|faute)\b', re.IGNORECASE),
 ]
 
 # Verbes d'attaque pour la vérification des pions
@@ -231,41 +231,36 @@ def _verifier_piece_en_case(
         case = match.group(2).lower()
         
         # Déterminer la couleur si possible
-        # Chercher dans le texte avant le match
-        texte_avant = texte[:match.start()]
+        # Chercher dans le texte avant le nom de la pièce (pas avant le match complet)
+        # Le match est de la forme "[possessif] pièce préposition case"
+        # On veut chercher le possessif dans les 15 caractères avant le nom de la pièce
+        
+        # Trouver la position du nom de la pièce dans le match
+        # Le groupe 1 est le nom de la pièce
+        piece_start_in_match = match.start(1)
+        texte_avant_piece = texte[max(0, match.start() + piece_start_in_match - 15):match.start() + piece_start_in_match]
         
         # Chercher un possessif ou un article de couleur
         couleur = None
         
-        # Chercher un possessif dans les 20 caractères avant
+        # Chercher un possessif immédiatement avant le nom de la pièce
         possessif_match = re.search(
-            r'\b(ta|ton|tes|ma|mon|mes|sa|son|ses)\b',
-            texte_avant[-50:],
+            r'\b(ta|ton|tes|ma|mon|mes|sa|son|ses)\s+$',
+            texte_avant_piece,
             re.IGNORECASE
         )
         if possessif_match:
-            couleur = _get_couleur_from_possessif(possessif_match.group(0))
+            couleur = _get_couleur_from_possessif(possessif_match.group(1))
         
-        # Chercher un article de couleur dans les 30 caractères avant
+        # Chercher un article de couleur dans les 15 caractères avant le nom de la pièce
         if couleur is None:
             couleur_match = re.search(
-                r'\b(blanc|blancs|noir|noirs)\b',
-                texte_avant[-50:],
+                r'\b(blanc|blancs|noir|noirs)\s+$',
+                texte_avant_piece,
                 re.IGNORECASE
             )
             if couleur_match:
-                couleur = _COLOR_MAP.get(couleur_match.group(0).lower())
-        
-        # Si camp_alain est fourni et qu'on a un possessif "ta/ton/tes", 
-        # on peut déduire que c'est la couleur d'Alain
-        if couleur is None and camp_alain:
-            possessif_match = re.search(
-                r'\b(ta|ton|tes)\b',
-                texte_avant[-50:],
-                re.IGNORECASE
-            )
-            if possessif_match:
-                couleur = chess.WHITE if camp_alain == "blancs" else chess.BLACK
+                couleur = _COLOR_MAP.get(couleur_match.group(1).lower())
         
         # Vérifier dans toutes les positions candidates
         piece_trouvee_dans_une_position = False
@@ -332,33 +327,27 @@ def _verifier_piece_case_sans_preposition(
         case = match.group(2).lower()
         
         # Déterminer la couleur si possible
-        texte_avant = texte[:match.start()]
+        # Chercher dans le texte avant le nom de la pièce
+        piece_start_in_match = match.start(1)
+        texte_avant_piece = texte[max(0, match.start() + piece_start_in_match - 15):match.start() + piece_start_in_match]
+        
         couleur = None
         
         possessif_match = re.search(
-            r'\b(ta|ton|tes|ma|mon|mes|sa|son|ses)\b',
-            texte_avant[-50:],
+            r'\b(ta|ton|tes|ma|mon|mes|sa|son|ses)\s+$',
+            texte_avant_piece,
             re.IGNORECASE
         )
         if possessif_match:
-            couleur = _get_couleur_from_possessif(possessif_match.group(0))
+            couleur = _get_couleur_from_possessif(possessif_match.group(1))
         
         couleur_match = re.search(
-            r'\b(blanc|blancs|noir|noirs)\b',
-            texte_avant[-50:],
+            r'\b(blanc|blancs|noir|noirs)\s+$',
+            texte_avant_piece,
             re.IGNORECASE
         )
         if couleur_match:
-            couleur = _COLOR_MAP.get(couleur_match.group(0).lower())
-        
-        if couleur is None and camp_alain:
-            possessif_match = re.search(
-                r'\b(ta|ton|tes)\b',
-                texte_avant[-50:],
-                re.IGNORECASE
-            )
-            if possessif_match:
-                couleur = chess.WHITE if camp_alain == "blancs" else chess.BLACK
+            couleur = _COLOR_MAP.get(couleur_match.group(1).lower())
         
         # Vérifier dans toutes les positions candidates
         piece_trouvee_dans_une_position = False
