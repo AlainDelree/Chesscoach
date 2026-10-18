@@ -39,6 +39,12 @@
   --cc-divider:         color-mix(in srgb, #201e1d 16%, transparent);
   --cc-last-move-from:  #efe1a0; /* jaune doux — dernier coup (souhait d'Alain, absent de la maquette) */
   --cc-last-move-to:    #e6cd74;
+  /* Issue #113 : couleurs neutres pour les bordures et messages */
+  --cc-border:          #8c491a; /* brun foncé — bordure neutre */
+  --cc-border-error:    #8c491a; /* brun foncé — bordure d'erreur neutre */
+  --cc-success:         #3d472b; /* vert foncé — succès */
+  --cc-error:           #8c491a; /* brun foncé — erreur */
+  --cc-neutral-100:     #f5ead8; /* fond neutre clair */
 
   --cc-font-body:    "Figtree", system-ui, sans-serif;
   --cc-font-heading: "Caprasimo", system-ui, sans-serif;
@@ -482,30 +488,96 @@
 }
 .coach-bubble.error a { color: #5a1a1a; text-decoration: underline; display: inline-block; margin-top: 4px; }
 
-/* Avis de Mistral (issue #112) : bloc séparé sous le commentaire de Claude */
+/* Avis de Mistral (issue #113) : bloc séparé avec auteur clairement identifié */
+/* Issue #113, point 7 : couleurs neutres, pas de bleu cliquable, pas de terracotta */
 .coach-bubble.mistral {
   align-self: flex-start;
   background: var(--cc-neutral-100);
   color: var(--cc-text);
   border-radius: 20px 20px 20px 6px;
-  border-left: 3px solid #0066cc;
+  border-left: 3px solid var(--cc-border);
 }
 .coach-bubble.mistral-error {
   align-self: flex-start;
   background: var(--cc-neutral-100);
   color: var(--cc-text-muted);
   border-radius: 20px 20px 20px 6px;
-  border-left: 3px solid #cc0000;
+  border-left: 3px solid var(--cc-border-error);
 }
-.mistral-title {
-  font-weight: bold;
-  color: #0066cc;
-  margin-bottom: 4px;
+.coach-bubble.mistral-thinking {
+  align-self: flex-start;
+  background: var(--cc-neutral-100);
+  color: var(--cc-text-muted);
+  border-radius: 20px 20px 20px 6px;
+  border-left: 3px solid var(--cc-border);
+  font-style: italic;
+}
+
+/* En-tête de bulle avec auteur (issue #113, point 4) */
+.coach-bubble-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
   font-size: 0.85rem;
 }
-.mistral-content {
-  font-size: 0.95rem;
-  line-height: 1.4;
+
+.coach-agent {
+  font-weight: bold;
+  color: var(--cc-text);
+}
+
+.coach-model {
+  color: var(--cc-text-muted);
+  font-size: 0.8rem;
+}
+
+/* Boutons de notation (issue #113, point 9) */
+.coach-rating {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--cc-border);
+}
+
+.rating-btn {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--cc-border);
+  border-radius: 4px;
+  background: var(--cc-neutral-100);
+  color: var(--cc-text);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.rating-btn:hover {
+  background: var(--cc-neutral-200);
+}
+
+.rating-btn.selected {
+  background: var(--cc-terracotta);
+  color: white;
+  border-color: var(--cc-terracotta);
+}
+
+.rating-btn.rating-1 {
+  color: var(--cc-success);
+}
+
+.rating-btn.rating-0 {
+  color: var(--cc-error);
+}
+
+.rating-btn.rating-1.selected {
+  background: var(--cc-success);
+  border-color: var(--cc-success);
+}
+
+.rating-btn.rating-0.selected {
+  background: var(--cc-error);
+  border-color: var(--cc-error);
 }
 
 /* Bulle "Le coach réfléchit..." (issue #105, point 1) : même emplacement et
