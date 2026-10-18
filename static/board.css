@@ -482,6 +482,32 @@
 }
 .coach-bubble.error a { color: #5a1a1a; text-decoration: underline; display: inline-block; margin-top: 4px; }
 
+/* Avis de Mistral (issue #112) : bloc séparé sous le commentaire de Claude */
+.coach-bubble.mistral {
+  align-self: flex-start;
+  background: var(--cc-neutral-100);
+  color: var(--cc-text);
+  border-radius: 20px 20px 20px 6px;
+  border-left: 3px solid #0066cc;
+}
+.coach-bubble.mistral-error {
+  align-self: flex-start;
+  background: var(--cc-neutral-100);
+  color: var(--cc-text-muted);
+  border-radius: 20px 20px 20px 6px;
+  border-left: 3px solid #cc0000;
+}
+.mistral-title {
+  font-weight: bold;
+  color: #0066cc;
+  margin-bottom: 4px;
+  font-size: 0.85rem;
+}
+.mistral-content {
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
 /* Bulle "Le coach réfléchit..." (issue #105, point 1) : même emplacement et
    même forme qu'une bulle .assistant normale (pour n'occuper QUE la place de
    la future réponse, sans décaler le reste du chat quand elle disparaît),

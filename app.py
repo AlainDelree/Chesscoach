@@ -8,6 +8,7 @@ sans lancer le moteur — l'analyse elle-même est l'objet d'une issue séparée
 """
 
 import atexit
+import concurrent.futures
 import ipaddress
 import json
 import logging
@@ -2121,75 +2122,115 @@ def on_exercise_answer(data):
         "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
+    # Appel Claude (toujours effectué)
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()
     if error:
         _handle_llm_model_indisponible_si_besoin(error)
         emit("exercise_error", {"error": error})
-    else:
-        emit("exercise_comment", {
-            "text": response,
-            # Pastille de fiabilité (issue #87, point 5) : couleur/raison/
-            # contrôles déjà calculés par get_coach_response — affichée par
-            # le client telle quelle, jamais recalculée côté UI.
-            "fiabilite": fiabilite,
-            # fen/mode_origine/log_id (issue #89) : pour le bouton
-            # "Signaler" côté client (static/exercise.js) — fen_avant, la
-            # position de DÉPART de l'exercice (pas fen_apres, moins utile à
-            # une vérification Stockfish du coup proposé).
-            "fen": fen_avant, "mode_origine": "exercice", "log_id": log_id,
-            "coup_propose": coup_propose_san,
-            "coup_reel": coup_reel,
-            "meilleur_coup": meilleur_coup,
-            # Transmis au client pour qu'il puisse enrichir le contexte d'une
-            # question de suivi posée dans le chat libre (issue #17) — jamais
-            # affiché tel quel côté UI (cf. exercise.js).
-            "verdict_qualite": verdict_qualite,
-            "verdict_delta_cp": verdict_delta_cp,
-            # Idem pour la ligne (PV) calculée (issue #20) : sans ça, une
-            # question de suivi dans le chat libre reperdrait l'ancrage sur
-            # la ligne réellement calculée dès le tour suivant.
-            "pv_coup_propose": pv_coup_propose,
-            "pv_meilleur_coup": pv_meilleur_coup,
-            # Détail coup par coup (description mécanique + solde matériel
-            # cumulé pour Alain, issue #75 point 3) des deux lignes
-            # ci-dessus — même raison que pv_coup_propose/pv_meilleur_coup
-            # ci-dessus : sans ça, une question de suivi perdrait l'ancrage
-            # sur le bilan matériel réel de la ligne.
-            "pv_coup_propose_detail": pv_coup_propose_detail,
-            "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
-            # Réponses adverses alternatives (issue #91) : transmis au client
-            # pour la même raison que pv_coup_propose_detail ci-dessus — sans
-            # ça, une question de suivi perdrait cet ancrage dès le tour
-            # suivant.
-            "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
-            "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
-            # Position de départ, descriptions mécaniques des trois coups et
-            # évaluation point de vue d'Alain (issue #73) : transmis au
-            # client pour qu'une question de suivi posée dans le chat libre
-            # (exerciseChatContextExtra, exercise.js) dispose du même
-            # contexte complet que ce premier verdict, sans jamais confondre
-            # la position de départ avec la position actuellement affichée.
-            "fen_depart_exercice": fen_avant,
-            "coup_propose_description_mecanique": coup_propose_description_mecanique,
-            "coup_reel_description_mecanique": coup_reel_description_mecanique,
-            "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
-            "eval_alain_cp": eval_alain_cp,
-            "eval_alain_mat": eval_alain_mat,
-            # Listes de pièces, menace adverse et idées détectées (issue
-            # #80) : mêmes raisons que les champs ci-dessus — sans eux, une
-            # question de suivi posée dans le chat libre perdrait ce
-            # contexte dès le tour suivant (cf. exerciseChatContextExtra,
-            # static/exercise.js).
-            "pieces_depart_texte": pieces_depart_texte,
-            "pieces_actuelles_texte": pieces_actuelles_texte,
-            "materiel_resume_texte": materiel_resume_texte,
-            "pieces_clouees_texte": pieces_clouees_texte,
-            "menace_adverse_texte": menace_adverse_texte,
-            "idees_coup_propose_texte": idees_coup_propose_texte,
-            "idees_coup_reel_texte": idees_coup_reel_texte,
-            "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
-        })
+        return
+
+    # Appel Mistral en parallèle (issue #112) - uniquement en mode exercice
+    mistral_response = None
+    mistral_error = None
+    mistral_log_id = None
+    if context.get("mode_exercice"):
+        mistral_config = {
+            "mistral_api_key": config.MISTRAL_API_KEY,
+            "mistral_model": config.CHESSCOACH_MISTRAL_MODEL,
+            "coach_log_path": config.COACH_CALLS_LOG_PATH,
+            "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
+            "coach_memory": coach_memory,
+        }
+        # Exécuter Mistral en parallèle sans bloquer Claude
+        # Utiliser ThreadPoolExecutor pour ne pas bloquer l'événement SocketIO
+        def call_mistral():
+            try:
+                return llm_coach.get_mistral_response(messages, context, mistral_config)
+            except Exception as e:
+                logger.warning(f"[EXERCISE] Appel Mistral en arrière-plan échoué : {e}")
+                return None, str(e), None
+
+        # Lancer dans un thread séparé pour ne pas bloquer
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(call_mistral)
+            # Attendre avec un timeout généreux (consigne 6)
+            try:
+                mistral_response, mistral_error, mistral_log_id = future.result(timeout=120)
+            except concurrent.futures.TimeoutError:
+                mistral_error = "timeout"
+                logger.warning("[EXERCISE] Appel Mistral timeout")
+
+    # Envoyer la réponse de Claude immédiatement (consigne 3)
+    emit("exercise_comment", {
+        "text": response,
+        # Pastille de fiabilité (issue #87, point 5) : couleur/raison/
+        # contrôles déjà calculés par get_coach_response — affichée par
+        # le client telle quelle, jamais recalculée côté UI.
+        "fiabilite": fiabilite,
+        # fen/mode_origine/log_id (issue #89) : pour le bouton
+        # "Signaler" côté client (static/exercise.js) — fen_avant, la
+        # position de DÉPART de l'exercice (pas fen_apres, moins utile à
+        # une vérification Stockfish du coup proposé).
+        "fen": fen_avant, "mode_origine": "exercice", "log_id": log_id,
+        "coup_propose": coup_propose_san,
+        "coup_reel": coup_reel,
+        "meilleur_coup": meilleur_coup,
+        # Transmis au client pour qu'il puisse enrichir le contexte d'une
+        # question de suivi posée dans le chat libre (issue #17) — jamais
+        # affiché tel quel côté UI (cf. exercise.js).
+        "verdict_qualite": verdict_qualite,
+        "verdict_delta_cp": verdict_delta_cp,
+        # Idem pour la ligne (PV) calculée (issue #20) : sans ça, une
+        # question de suivi dans le chat libre reperdrait l'ancrage sur
+        # la ligne réellement calculée dès le tour suivant.
+        "pv_coup_propose": pv_coup_propose,
+        "pv_meilleur_coup": pv_meilleur_coup,
+        # Détail coup par coup (description mécanique + solde matériel
+        # cumulé pour Alain, issue #75 point 3) des deux lignes
+        # ci-dessus — même raison que pv_coup_propose/pv_meilleur_coup
+        # ci-dessus : sans ça, une question de suivi perdrait l'ancrage
+        # sur le bilan matériel réel de la ligne.
+        "pv_coup_propose_detail": pv_coup_propose_detail,
+        "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
+        # Réponses adverses alternatives (issue #91) : transmis au client
+        # pour la même raison que pv_coup_propose_detail ci-dessus — sans
+        # ça, une question de suivi perdrait cet ancrage dès le tour
+        # suivant.
+        "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
+        "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
+        # Position de départ, descriptions mécaniques des trois coups et
+        # évaluation point de vue d'Alain (issue #73) : transmis au
+        # client pour qu'une question de suivi posée dans le chat libre
+        # (exerciseChatContextExtra, exercise.js) dispose du même
+        # contexte complet que ce premier verdict, sans jamais confondre
+        # la position de départ avec la position actuellement affichée.
+        "fen_depart_exercice": fen_avant,
+        "coup_propose_description_mecanique": coup_propose_description_mecanique,
+        "coup_reel_description_mecanique": coup_reel_description_mecanique,
+        "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
+        "eval_alain_cp": eval_alain_cp,
+        "eval_alain_mat": eval_alain_mat,
+        # Listes de pièces, menace adverse et idées détectées (issue
+        # #80) : mêmes raisons que les champs ci-dessus — sans eux, une
+        # question de suivi posée dans le chat libre perdrait ce
+        # contexte dès le tour suivant (cf. exerciseChatContextExtra,
+        # static/exercise.js).
+        "pieces_depart_texte": pieces_depart_texte,
+        "pieces_actuelles_texte": pieces_actuelles_texte,
+        "materiel_resume_texte": materiel_resume_texte,
+        "pieces_clouees_texte": pieces_clouees_texte,
+        "menace_adverse_texte": menace_adverse_texte,
+        "idees_coup_propose_texte": idees_coup_propose_texte,
+        "idees_coup_reel_texte": idees_coup_reel_texte,
+        "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
+        # Avis de Mistral (issue #112) : envoyé avec Claude pour affichage
+        # côté client. Si Mistral a échoué ou n'est pas configuré, ces
+        # champs sont None/absents.
+        "mistral_text": mistral_response,
+        "mistral_error": mistral_error,
+        "mistral_log_id": mistral_log_id,
+    })
 
 
 def _on_exercise_answer_lichess(uci: str) -> None:

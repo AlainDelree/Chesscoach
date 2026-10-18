@@ -1239,6 +1239,55 @@ function _coachRenderCreditInsuffisant() {
   _coachScrollReveal(history, bubble, false);
 }
 
+// Avis de Mistral (issue #112) : affiche un bloc séparé, clairement titré
+// "Avis de Mistral", sous le commentaire de Claude, dans le panneau Coach.
+// Respecte le style existant, sans utiliser la couleur terracotta (réservée
+// aux éléments cliquables).
+function _coachRenderMistralBubble(text) {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  const bubble = document.createElement("div");
+  bubble.className = "coach-bubble mistral";
+  // Structure : titre + texte
+  const title = document.createElement("div");
+  title.className = "mistral-title";
+  title.textContent = "Avis de Mistral";
+  bubble.appendChild(title);
+  const content = document.createElement("div");
+  content.className = "mistral-content";
+  content.textContent = text;
+  bubble.appendChild(content);
+  history.appendChild(bubble);
+  _coachScrollReveal(history, bubble, false);
+}
+
+// Message d'erreur discret pour Mistral (issue #112, consigne 6)
+function _coachRenderMistralError(error) {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  const bubble = document.createElement("div");
+  bubble.className = "coach-bubble mistral-error";
+  const title = document.createElement("div");
+  title.className = "mistral-title";
+  title.textContent = "Avis de Mistral";
+  bubble.appendChild(title);
+  const content = document.createElement("div");
+  content.className = "mistral-content";
+  // Message discret selon le type d'erreur
+  let errorMsg = "Indisponible";
+  if (error === "timeout") {
+    errorMsg = "Réponse trop lente";
+  } else if (error === "no_api_key" || error === "empty") {
+    errorMsg = "Clé API non configurée";
+  } else if (error.includes("401") || error.includes("403") || error.includes("Unauthorized")) {
+    errorMsg = "Clé API invalide";
+  }
+  content.textContent = errorMsg;
+  bubble.appendChild(content);
+  history.appendChild(bubble);
+  _coachScrollReveal(history, bubble, false);
+}
+
 // ── Attente du coach : indicateur + délai maximal (issue #105) ─────────────
 // Mécanisme partagé par tous les appels à l'API du coach pilotés depuis ce
 // fichier (coach_ask, coach_comment_on_demand, training_program_build) et

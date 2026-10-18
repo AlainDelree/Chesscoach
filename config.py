@@ -109,6 +109,12 @@ SYZYGY_PATH = ENGINES_DIR / "syzygy"
 
 LLM_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+# Configuration Mistral (issue #112) — clé API et modèle pour le second avis
+# du coach en mode exercice. La clé est lue depuis .env sous MISTRAL_API_KEY,
+# le modèle sous CHESSCOACH_MISTRAL_MODEL (défaut : mistral-large-latest).
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "")
+CHESSCOACH_MISTRAL_MODEL = os.environ.get("CHESSCOACH_MISTRAL_MODEL", "mistral-large-latest")
+
 # Les deux modèles Claude choisissables depuis l'interface (issue #61) —
 # identifiants canoniques définis ici en un seul endroit, réutilisés par
 # app.py (sélecteur de l'en-tête) et par le fallback en cas de refus de

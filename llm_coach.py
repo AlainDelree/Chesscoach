@@ -2123,6 +2123,79 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
     raise ValueError(f"Aucun bloc de type 'text' dans la réponse Claude : {data.get('content')!r}")
 
 
+def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_path=None,
+                  timeout_s: int = 90) -> str:
+    """Appel à l'API Mistral (chat/completions) pour un second avis du coach
+    (issue #112). Parallèle à _call_claude, mais avec les spécificités de
+    l'API Mistral : endpoint chat/completions, format de requête/réponse
+    différent, pas de comptage de tokens dans la réponse (donc pas de
+    _record_usage pour Mistral, cf. consigne 7 de l'issue #112).
+
+    Paramètres :
+      prompt_sys    : system prompt (chaîne) — réutilisé tel quel de Claude
+      messages     : liste de {"role": "user"|"assistant", "content": str}, ou une
+                     simple chaîne (raccourci équivalent à [{"role": "user", "content": messages}])
+      api_key      : clé API Mistral (lue depuis .env sous MISTRAL_API_KEY)
+      model        : identifiant du modèle Mistral (défaut : mistral-large-latest)
+      usage_path   : chemin vers usage_tokens.json (non utilisé pour Mistral,
+                     cf. consigne 7 : "Ne pas fausser le compteur de tokens affiché
+                     pour Claude")
+      timeout_s    : délai maximal de cet appel HTTP (généreux, cf. consigne 6)
+
+    Retourne le texte de la réponse (premier bloc de type "text" trouvé).
+    Lève TimeoutError ou urllib.error.URLError en cas de timeout, ValueError
+    ou KeyError en cas de réponse de forme inattendue (cf. consigne 6 :
+    "chercher le texte de la réponse de façon robuste plutôt que de supposer
+    une position fixe").
+    """
+    if isinstance(messages, str):
+        messages = [{"role": "user", "content": messages}]
+    body = json.dumps({
+        "model": model or "mistral-large-latest",
+        "messages": [{"role": "system", "content": prompt_sys}] + messages,
+        "max_tokens": 4096,
+        "temperature": 0.0,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.mistral.ai/v1/chat/completions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # Erreur HTTP : lire le corps pour le logging, puis propager
+        corps = e.read().decode("utf-8", errors="replace")
+        try:
+            err_data = json.loads(corps)
+        except (ValueError, TypeError):
+            err_data = {}
+        # Ne pas lever d'exception spécifique (contrairement à Claude) :
+        # consigne 6 dit "un échec côté Mistral [...] produit un court message
+        # discret dans le bloc Mistral, sans jamais casser le chat ni le
+        # commentaire de Claude" — donc on laisse l'exception remonter pour
+        # être attrapée par l'appelant, qui gérera l'affichage du message
+        # d'erreur discret.
+        raise
+    # Chercher le texte de la réponse de façon robuste (consigne 6) :
+    # Mistral retourne {"choices": [{"message": {"content": "..."}}]}
+    # mais on ne suppose pas cette structure fixe.
+    choices = data.get("choices") or []
+    for choice in choices:
+        msg = choice.get("message") or {}
+        content = msg.get("content")
+        if content:
+            return content
+    # Si aucun contenu trouvé, lever ValueError pour signaler une réponse
+    # vide ou de forme inattendue (consigne 6).
+    raise ValueError(f"Aucun contenu textuel dans la réponse Mistral : {data!r}")
+
+
 def get_opening_moves(opening_name: str, config):
     """Identifie les 2 à 6 premiers coups caractéristiques d'une ouverture
     nommée par Alain (issue #9), via un appel dédié à Claude — indépendant du
@@ -2640,3 +2713,105 @@ def get_coach_response(messages, context, coach_memory, config):
         premiere_reponse=premiere_reponse,
     )
     return response, None, fiabilite, log_id
+
+
+def get_mistral_response(messages, context, config):
+    """Obtient un second avis du coach via l'API Mistral (issue #112).
+    Appelée uniquement en mode exercice, en parallèle de get_coach_response
+    (Claude). Reçoit exactement le même contexte et les mêmes consignes
+    système que Claude, réutilisés tels quels.
+
+    Paramètres :
+      messages     : historique complet de la conversation
+                     ([{"role": "user"|"assistant", "content": str}, ...])
+      context      : dict fen/move/pgn de la position courante (identique à
+                     celui passé à get_coach_response)
+      config       : dict avec au moins "mistral_api_key" et optionnellement
+                     "mistral_model" (défaut : mistral-large-latest)
+
+    Retourne (réponse_mistral, erreur_mistral, log_id_mistral) — un seul de
+    réponse_mistral/erreur_mistral est non vide/non None. `log_id_mistral` est
+    l'identifiant de l'entrée écrite dans coach_calls.log pour cet appel.
+    Si MISTRAL_API_KEY est absente ou vide, retourne (None, None, None) sans
+    faire d'appel.
+    """
+    mistral_api_key = (config or {}).get("mistral_api_key", "")
+    # Consigne 5 : si MISTRAL_API_KEY est absente ou vide, aucun appel
+    if not mistral_api_key:
+        return None, None, None
+
+    clean_messages = [
+        {"role": m.get("role"), "content": (m.get("content") or "").strip()}
+        for m in (messages or [])
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    ]
+    if not clean_messages:
+        return None, "empty", None
+
+    # Construire le même prompt système que Claude (consigne 2)
+    prompt_sys = _SYSTEM_PROMPT
+    if (context or {}).get("mode_exercice"):
+        prompt_sys = f"{prompt_sys}\n\n{_EXERCISE_SYSTEM_ADDENDUM}"
+        prompt_sys = f"{prompt_sys}\n\n{_REPONSE_STRUCTUREE_ADDENDUM}"
+        if (context or {}).get("source_lichess"):
+            prompt_sys = f"{prompt_sys}\n\n{_EXERCISE_LICHESS_ADDENDUM}"
+    else:
+        prompt_sys = f"{prompt_sys}\n\n{_GAME_LINES_ADDENDUM}"
+        if (context or {}).get("verdict_qualite") or (context or {}).get("pv_coup_propose") or (context or {}).get("pv_meilleur_coup"):
+            prompt_sys = f"{prompt_sys}\n\n{_ANTI_INVENTION_ADDENDUM}"
+    if (context or {}).get("mode_demonstration"):
+        prompt_sys = f"{prompt_sys}\n\n{_DEMONSTRATION_ADDENDUM}"
+    if (context or {}).get("mode_origine") == "analyse_partie":
+        prompt_sys = f"{prompt_sys}\n\n{_ANALYSE_PARTIE_ADDENDUM}"
+    if (context or {}).get("faits_calcules"):
+        prompt_sys = f"{prompt_sys}\n\n{_GAME_FACTS_ADDENDUM}"
+    if (context or {}).get("analyse_indisponible") and not (context or {}).get("verdict_qualite"):
+        prompt_sys = f"{prompt_sys}\n\n{_ANALYSE_INDISPONIBLE_ADDENDUM}"
+    if (context or {}).get("materiel_resume_texte"):
+        prompt_sys = f"{prompt_sys}\n\n{_MATERIEL_ADDENDUM}"
+    if (context or {}).get("pieces_clouees_texte"):
+        prompt_sys = f"{prompt_sys}\n\n{_CLOUAGE_ADDENDUM}"
+
+    # Ajouter la mémoire du coach comme pour Claude
+    memory_text = _build_memory_text((config or {}).get("coach_memory", {}))
+    if memory_text:
+        prompt_sys = f"{prompt_sys}\n\n{memory_text}"
+
+    # Ajouter le contexte comme pour Claude
+    context_text = _build_context_text(context)
+    if context_text:
+        prompt_sys = f"{prompt_sys}\n\nContexte de la position en cours :\n{context_text}"
+
+    # Configuration Mistral
+    mistral_model = (config or {}).get("mistral_model", "mistral-large-latest")
+    log_path = (config or {}).get("coach_log_path")
+    timeout_s = (config or {}).get("coach_timeout_s") or 90
+    # Consigne 6 : timeout généreux
+    mistral_timeout_s = timeout_s
+
+    mode_origine = (context or {}).get("mode_origine") or (
+        "exercice" if (context or {}).get("mode_exercice") else "chat_libre"
+    )
+
+    try:
+        response = _call_mistral(prompt_sys, clean_messages, mistral_api_key, mistral_model, None, timeout_s=mistral_timeout_s)
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
+        # Consigne 6 : échec côté Mistral produit un court message discret,
+        # sans jamais casser le chat ni le commentaire de Claude
+        logger.warning(f"[LLM_COACH] Appel Mistral échoué : {e}")
+        erreur = _erreur_label(e)
+        # Journalisation (consigne 7) : enregistrer l'appel Mistral avec erreur
+        mistral_log_id = _log_coach_call(
+            log_path, prompt_sys, context, clean_messages, mode_origine,
+            model=f"mistral:{mistral_model}", erreur=erreur
+        )
+        return None, erreur, mistral_log_id
+
+    response = (response or "").strip()
+
+    # Journalisation (consigne 7) : enregistrer l'appel Mistral avec réponse
+    mistral_log_id = _log_coach_call(
+        log_path, prompt_sys, context, clean_messages, mode_origine,
+        model=f"mistral:{mistral_model}", reponse=response
+    )
+    return response, None, mistral_log_id
