@@ -33,7 +33,7 @@ def _get_coach_calls_files(log_dir: Path = None) -> list:
     if log_dir is None:
         log_dir = Path(config.COACH_CALLS_LOG_PATH).parent
     
-    log_base = Path(config.COACH_CALLS_LOG_PATH).name
+    log_base = Path(config.COACH_CALLS_LOG_PATH)
     # Pattern : coach_calls.log et coach_calls-AAAA-MM.log
     return sorted(log_dir.glob(f"{log_base.stem}*{log_base.suffix}"), key=lambda p: p.name)
 
@@ -133,6 +133,10 @@ def _tester_verificateur(entrees: list) -> dict:
         
         # Exécuter le vérificateur
         try:
+            # Vérifier que reponse est une chaîne
+            if not isinstance(reponse, str):
+                reponse = ""
+            
             result = fact_checker.verifier_affirmations(
                 reponse,
                 context,

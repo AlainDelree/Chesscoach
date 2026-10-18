@@ -150,12 +150,12 @@ def _get_all_positions_candidates(context: Dict) -> List[str]:
     
     # Position de départ
     fen_depart = context.get('fen_depart_exercice') or context.get('fen')
-    if fen_depart:
+    if fen_depart and isinstance(fen_depart, str):
         positions.append(fen_depart)
     
     # Position après le coup proposé (si on peut la calculer)
     coup_propose = context.get('coup_propose')
-    if coup_propose and fen_depart:
+    if coup_propose and isinstance(coup_propose, str) and fen_depart and isinstance(fen_depart, str):
         try:
             board = chess.Board(fen_depart)
             move = board.parse_san(coup_propose) if board.parse_san(coup_propose) else board.parse_uci(coup_propose)
@@ -166,7 +166,7 @@ def _get_all_positions_candidates(context: Dict) -> List[str]:
     
     # Ligne calculée pour le coup proposé
     pv_coup_propose = context.get('pv_coup_propose', '')
-    if pv_coup_propose and fen_depart:
+    if pv_coup_propose and isinstance(pv_coup_propose, str) and fen_depart and isinstance(fen_depart, str):
         try:
             board = chess.Board(fen_depart)
             moves = pv_coup_propose.split()
@@ -187,7 +187,7 @@ def _get_all_positions_candidates(context: Dict) -> List[str]:
     
     # Ligne du meilleur coup
     pv_meilleur_coup = context.get('pv_meilleur_coup', '')
-    if pv_meilleur_coup and fen_depart:
+    if pv_meilleur_coup and isinstance(pv_meilleur_coup, str) and fen_depart and isinstance(fen_depart, str):
         try:
             board = chess.Board(fen_depart)
             moves = pv_meilleur_coup.split()
@@ -718,9 +718,9 @@ def verifier_affirmations(
     affirmations_verifiees += len(pion_attaque_piece_alertes)
     
     # (c) Vérifier la cohérence verdict/texte
-    verdict = context.get('verdict_qualite')
-    meilleur_coup = context.get('meilleur_coup')
-    coup_propose = context.get('coup_propose')
+    verdict = context.get('verdict_qualite') if isinstance(context.get('verdict_qualite'), str) else None
+    meilleur_coup = context.get('meilleur_coup') if isinstance(context.get('meilleur_coup'), str) else None
+    coup_propose = context.get('coup_propose') if isinstance(context.get('coup_propose'), str) else None
     
     coherence_alertes = _verifier_coherence_verdict(texte, verdict, meilleur_coup, coup_propose)
     alertes.extend(coherence_alertes)
