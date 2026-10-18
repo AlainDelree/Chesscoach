@@ -2291,6 +2291,10 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
     
     Issue #114 : exercise_id est passé par le client ou généré par le serveur
     pour compatibilité."""
+    # Générer exercise_id si non fourni (compatibilité)
+    if not exercise_id:
+        exercise_id = str(uuid.uuid4())
+    
     fen_avant = _current_exercise["fen_avant"]
     camp_alain = _current_exercise.get("camp_alain", "")
     solution = _current_exercise.get("solution") or []
