@@ -79,11 +79,14 @@ def get_coach_calls_log():
 
 
 def get_text_for_log_id(log_id, calls):
-    """Récupérer le texte de la réponse pour un log_id donné."""
+    """Récupérer le texte de la réponse et la température pour un log_id donné.
+    
+    Retourne un tuple (texte, temperature) où temperature est une chaîne ou None.
+    """
     for call in calls:
-        if call.get("log_id") == log_id:
-            return call.get("response", "")
-    return ""
+        if call.get("id") == log_id:  # Note: le champ est "id", pas "log_id"
+            return call.get("reponse", ""), call.get("temperature")
+    return "", None
 
 
 def main():
@@ -138,8 +141,8 @@ def main():
                     claude_log_id = agents["claude"].get("log_id", "")
                     mistral_log_id = agents["mistral"].get("log_id", "")
                     
-                    claude_text = get_text_for_log_id(claude_log_id, calls)
-                    mistral_text = get_text_for_log_id(mistral_log_id, calls)
+                    claude_text, claude_temp = get_text_for_log_id(claude_log_id, calls)
+                    mistral_text, mistral_temp = get_text_for_log_id(mistral_log_id, calls)
                     
                     divergences.append({
                         "fen": fen,
@@ -147,7 +150,9 @@ def main():
                         "claude_rating": claude_rating,
                         "mistral_rating": mistral_rating,
                         "claude_model": agents["claude"].get("model", ""),
+                        "claude_temperature": claude_temp,
                         "mistral_model": agents["mistral"].get("model", ""),
+                        "mistral_temperature": mistral_temp,
                         "claude_text": claude_text,
                         "mistral_text": mistral_text,
                     })
@@ -161,8 +166,10 @@ def main():
             print(f"  Cas #{i} :")
             print(f"    Position : {div['fen']}")
             print(f"    Coup : {div['coup_propose']}")
-            print(f"    Claude ({div['claude_model']}) : {div['claude_rating']}")
-            print(f"    Mistral ({div['mistral_model']}) : {div['mistral_rating']}")
+            claude_temp_str = f" (T={div['claude_temperature']})" if div.get('claude_temperature') else ""
+            mistral_temp_str = f" (T={div['mistral_temperature']})" if div.get('mistral_temperature') else ""
+            print(f"    Claude ({div['claude_model']}{claude_temp_str}) : {div['claude_rating']}")
+            print(f"    Mistral ({div['mistral_model']}{mistral_temp_str}) : {div['mistral_rating']}")
             print()
             print("    Avis de Claude :")
             print(f"      {div['claude_text'][:200]}{'...' if len(div['claude_text']) > 200 else ''}")

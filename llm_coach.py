@@ -30,6 +30,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import config
 import coach_reliability
 import game_facts
 
@@ -1874,7 +1875,7 @@ def _purge_vieux_logs_coach(log_path: Path, fichier_actif: Path) -> None:
 def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str,
                      model: str = None, reponse: str = None, erreur: str = None, usage: dict = None,
                      fiabilite: dict = None, avertissement: str = None,
-                     premiere_reponse: dict = None) -> str | None:
+                     premiere_reponse: dict = None, temperature: str = None) -> str | None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -1942,6 +1943,12 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     fin de dict : ne modifie aucune clé existante, donc aucun impact sur
     lire_journal_coach.py (ni sur la fonction `coachlog` d'Alain) qui ne lit
     déjà que des clés explicitement nommées.
+
+    Étendu par l'issue #116 : `temperature` (str ou None) — température réellement
+    envoyée à l'API (ex. "0.7", "1.0"), ou "defaut API" si aucun paramètre n'a été
+    envoyé (comportement par défaut de l'API utilisé). Ce champ permet de
+    tracer les conditions exactes de chaque appel pour une comparabilité
+    future entre séries d'exercices.
     """
     if not log_path:
         return None
@@ -1955,6 +1962,7 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
             "horodatage": datetime.now().isoformat(),
             "mode_origine": mode_origine,
             "model": model,
+            "temperature": temperature,
             "system_prompt": system_prompt,
             "context": context or {},
             "messages": messages,
@@ -1975,7 +1983,7 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
 
 
 def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path=None,
-                  timeout_s: int = 90) -> str:
+                  timeout_s: int = 90, temperature: float = None) -> str:
     """messages : liste de {"role": "user"|"assistant", "content": str}, ou une
     simple chaîne (raccourci équivalent à [{"role": "user", "content": messages}]).
 
@@ -1988,6 +1996,9 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
     les cumule dans usage_path si fourni — aucun appel API supplémentaire,
     ces informations sont déjà présentes dans la réponse normale (issue #54).
 
+    temperature (issue #116) : si fourni (non None), inclus dans la requête
+    comme paramètre "temperature".
+
     timeout_s (issue #105) : délai maximal de cet appel HTTP, transmis par
     chaque fonction publique de ce module depuis config.COACH_TIMEOUT_REPONSE_S/
     COACH_TIMEOUT_ANALYSE_S (via config["coach_timeout_s"], assemblé par
@@ -1998,7 +2009,9 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
     _erreur_label ci-dessus."""
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
-    body = json.dumps({
+    
+    # Construction du body avec température conditionnelle (issue #116)
+    body_dict = {
         "model": model or "claude-haiku-4-5",
         # 300 tokens coupait certaines réponses en plein mot dès que le coach
         # développait un conseil détaillé plutôt qu'un commentaire de coup
@@ -2028,7 +2041,11 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
         "thinking": {"type": "disabled"},
         "system": prompt_sys,
         "messages": messages,
-    }).encode("utf-8")
+    }
+    if temperature is not None:
+        body_dict["temperature"] = temperature
+    
+    body = json.dumps(body_dict).encode("utf-8")
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
         data=body,
@@ -2124,7 +2141,7 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
 
 
 def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_path=None,
-                  timeout_s: int = 90) -> str:
+                  timeout_s: int = 90, temperature: float = 0.0) -> str:
     """Appel à l'API Mistral (chat/completions) pour un second avis du coach
     (issue #112). Parallèle à _call_claude, mais avec les spécificités de
     l'API Mistral : endpoint chat/completions, format de requête/réponse
@@ -2141,6 +2158,8 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
                      cf. consigne 7 : "Ne pas fausser le compteur de tokens affiché
                      pour Claude")
       timeout_s    : délai maximal de cet appel HTTP (généreux, cf. consigne 6)
+      temperature  : (issue #116) température à utiliser pour la requête.
+                     Valeur par défaut 0.0 (comportement actuel).
 
     Retourne le texte de la réponse (premier bloc de type "text" trouvé).
     Lève TimeoutError ou urllib.error.URLError en cas de timeout, ValueError
@@ -2154,7 +2173,7 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
         "model": model or "mistral-large-latest",
         "messages": [{"role": "system", "content": prompt_sys}] + messages,
         "max_tokens": 4096,
-        "temperature": 0.0,
+        "temperature": temperature,
     }).encode("utf-8")
     req = urllib.request.Request(
         "https://api.mistral.ai/v1/chat/completions",
@@ -2490,6 +2509,20 @@ def get_coach_response(messages, context, coach_memory, config):
     log_path = (config or {}).get("coach_log_path")
     usage_path = (config or {}).get("usage_path")
 
+    # Température pour Claude (issue #116) : uniquement en mode exercice
+    claude_temperature = None
+    if mode_origine == "exercice":
+        claude_temp_str = config.CHESSCOACH_CLAUDE_TEMPERATURE or ""
+        if claude_temp_str:
+            try:
+                claude_temperature = float(claude_temp_str)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"[LLM_COACH] CHESSCOACH_CLAUDE_TEMPERATURE invalide : '{claude_temp_str}', "
+                    "utilise défaut API (aucun paramètre envoyé)"
+                )
+                claude_temperature = None
+    
     # Appel loggé une seule fois, après coup (issue #44) : plus tôt, seule la
     # requête était journalisée (avant même l'appel API) — la réponse réelle
     # du coach n'apparaissait donc jamais dans coach_calls.log, obligeant à
@@ -2501,20 +2534,24 @@ def get_coach_response(messages, context, coach_memory, config):
     # pour la relance automatique de fiabilité ci-dessous : elle compte donc
     # dans le délai total vu par l'interface.
     timeout_s = (config or {}).get("coach_timeout_s") or 90
+    
+    # Déterminer la température à logger (issue #116)
+    claude_temperature_log = str(claude_temperature) if claude_temperature is not None else "defaut API"
+    
     try:
-        response = _call_claude(prompt_sys, clean_messages, api_key, model, usage_path, timeout_s=timeout_s)
+        response = _call_claude(prompt_sys, clean_messages, api_key, model, usage_path, timeout_s=timeout_s, temperature=claude_temperature)
     except CreditInsuffisantError as e:
         logger.warning(f"[LLM_COACH] Appel Claude : crédit épuisé : {e}")
-        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="credit_insuffisant")
+        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="credit_insuffisant", temperature=claude_temperature_log)
         return None, "credit_insuffisant", None, None
     except ModeleIndisponibleError as e:
         logger.warning(f"[LLM_COACH] Appel Claude : modèle indisponible : {e}")
-        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="modele_indisponible")
+        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur="modele_indisponible", temperature=claude_temperature_log)
         return None, "modele_indisponible", None, None
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         logger.warning(f"[LLM_COACH] Appel Claude échoué : {e}")
         erreur = _erreur_label(e)
-        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur=erreur)
+        _log_coach_call(log_path, prompt_sys, context, clean_messages, mode_origine, model=model, erreur=erreur, temperature=claude_temperature_log)
         return None, erreur, None, None
 
     response = (response or "").strip()
@@ -2710,7 +2747,7 @@ def get_coach_response(messages, context, coach_memory, config):
     log_id = _log_coach_call(
         log_path, prompt_sys, context, clean_messages, mode_origine, model=model,
         reponse=response, usage=usage_appel, fiabilite=fiabilite, avertissement=avertissement,
-        premiere_reponse=premiere_reponse,
+        premiere_reponse=premiere_reponse, temperature=claude_temperature_log,
     )
     return response, None, fiabilite, log_id
 
@@ -2793,8 +2830,24 @@ def get_mistral_response(messages, context, config):
         "exercice" if (context or {}).get("mode_exercice") else "chat_libre"
     )
 
+    # Température pour Mistral (issue #116) : toujours configurable, valeur par défaut 0.0
+    mistral_temp_str = config.CHESSCOACH_MISTRAL_TEMPERATURE or "0.0"
+    mistral_temperature = 0.0  # valeur par défaut
+    if mistral_temp_str:
+        try:
+            mistral_temperature = float(mistral_temp_str)
+        except (ValueError, TypeError):
+            logger.warning(
+                f"[LLM_COACH] CHESSCOACH_MISTRAL_TEMPERATURE invalide : '{mistral_temp_str}', "
+                "utilise la valeur par défaut 0.0"
+            )
+            mistral_temperature = 0.0
+    
+    # Température à logger (issue #116)
+    mistral_temperature_log = str(mistral_temperature)
+
     try:
-        response = _call_mistral(prompt_sys, clean_messages, mistral_api_key, mistral_model, None, timeout_s=mistral_timeout_s)
+        response = _call_mistral(prompt_sys, clean_messages, mistral_api_key, mistral_model, None, timeout_s=mistral_timeout_s, temperature=mistral_temperature)
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         # Consigne 6 : échec côté Mistral produit un court message discret,
         # sans jamais casser le chat ni le commentaire de Claude
@@ -2803,7 +2856,7 @@ def get_mistral_response(messages, context, config):
         # Journalisation (consigne 7) : enregistrer l'appel Mistral avec erreur
         mistral_log_id = _log_coach_call(
             log_path, prompt_sys, context, clean_messages, mode_origine,
-            model=f"mistral:{mistral_model}", erreur=erreur
+            model=f"mistral:{mistral_model}", erreur=erreur, temperature=mistral_temperature_log
         )
         return None, erreur, mistral_log_id
 
@@ -2812,6 +2865,6 @@ def get_mistral_response(messages, context, config):
     # Journalisation (consigne 7) : enregistrer l'appel Mistral avec réponse
     mistral_log_id = _log_coach_call(
         log_path, prompt_sys, context, clean_messages, mode_origine,
-        model=f"mistral:{mistral_model}", reponse=response
+        model=f"mistral:{mistral_model}", reponse=response, temperature=mistral_temperature_log
     )
     return response, None, mistral_log_id

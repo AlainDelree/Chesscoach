@@ -173,6 +173,28 @@ CET appel, pas le paramètre d'entrée), donc un changement de sélection
 n'affecte que les appels suivants — les compteurs déjà accumulés pour
 l'ancien modèle restent inchangés dans `par_modele`.
 
+## Température configurable pour les appels LLM (issue #116)
+Pour permettre une comparaison honnête entre Claude et Mistral sur les
+exercices, les deux IA doivent tourner dans des conditions connues et, si
+possible, identiques. Deux variables d'environnement permettent désormais de
+configurer la température pour chaque fournisseur :
+
+- `CHESSCOACH_CLAUDE_TEMPERATURE` : température pour les appels à Claude en
+  mode exercice. Si absente ou vide, aucun paramètre n'est envoyé (l'API
+  utilise sa valeur par défaut). Si l'API refuse le paramètre pour le modèle
+  utilisé, l'appel est réessayé sans le paramètre et un avertissement est
+  consigné dans le journal.
+- `CHESSCOACH_MISTRAL_TEMPERATURE` : température pour les appels à Mistral.
+  Valeur par défaut : 0.0 (comportement initial). Une valeur invalide (non
+  numérique, hors plage acceptée) est ignorée avec un avertissement dans les
+  logs, et la valeur par défaut s'applique.
+
+La température réellement envoyée (ou "defaut API" quand rien n'est envoyé) est
+consignée dans chaque entrée des journaux `coach_calls*.log` pour les deux
+agents, sous le champ `temperature`. Le script `scripts/coach_ratings_report.py`
+affiche désormais la température à côté du modèle pour chaque avis, permettant
+de tracer précisément les conditions de chaque appel.
+
 ## Source d'exercices « Problèmes Lichess » (issue #78)
 Deuxième source pour le mode "Exercice", en complément de "Mes erreurs"
 (erreurs_detectees.json) : des problèmes tirés de la base ouverte Lichess

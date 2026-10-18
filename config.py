@@ -115,6 +115,19 @@ LLM_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "")
 CHESSCOACH_MISTRAL_MODEL = os.environ.get("CHESSCOACH_MISTRAL_MODEL", "mistral-large-latest")
 
+# Température pour les appels LLM (issue #116) — configurable via .env.
+# Pour Claude : si CHESSCOACH_CLAUDE_TEMPERATURE est absente ou vide, rien n'est
+# envoyé (comportement strictement identique à aujourd'hui, l'API utilise sa
+# valeur par défaut). Si elle est renseignée, elle est envoyée avec la requête,
+# uniquement pour les appels du mode exercices.
+CHESSCOACH_CLAUDE_TEMPERATURE = os.environ.get("CHESSCOACH_CLAUDE_TEMPERATURE", "")
+
+# Pour Mistral : la valeur par défaut reste 0.0 (comportement actuel), mais elle
+# devient configurable via CHESSCOACH_MISTRAL_TEMPERATURE. Une valeur invalide
+# (non numérique, hors plage acceptée) est ignorée avec un avertissement dans les
+# logs de l'appli, et la valeur par défaut s'applique.
+CHESSCOACH_MISTRAL_TEMPERATURE = os.environ.get("CHESSCOACH_MISTRAL_TEMPERATURE", "0.0")
+
 # Les deux modèles Claude choisissables depuis l'interface (issue #61) —
 # identifiants canoniques définis ici en un seul endroit, réutilisés par
 # app.py (sélecteur de l'en-tête) et par le fallback en cas de refus de
