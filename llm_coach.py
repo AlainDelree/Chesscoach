@@ -2272,12 +2272,12 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
 
 
 def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_path=None,
-                  timeout_s: int = 90, temperature: float = 0.0) -> str:
+                  timeout_s: int = 90, temperature: float = 0.0) -> tuple[str, dict | None]:
     """Appel à l'API Mistral (chat/completions) pour un second avis du coach
     (issue #112). Parallèle à _call_claude, mais avec les spécificités de
     l'API Mistral : endpoint chat/completions, format de requête/réponse
-    différent, pas de comptage de tokens dans la réponse (donc pas de
-    _record_usage pour Mistral, cf. consigne 7 de l'issue #112).
+    différent. Depuis l'issue #119, extrait et retourne aussi la consommation
+    de jetons (usage) de la réponse pour enregistrement dans coach_calls.log.
 
     Paramètres :
       prompt_sys    : system prompt (chaîne) — réutilisé tel quel de Claude
@@ -2286,13 +2286,16 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
       api_key      : clé API Mistral (lue depuis .env sous MISTRAL_API_KEY)
       model        : identifiant du modèle Mistral (défaut : mistral-large-latest)
       usage_path   : chemin vers usage_tokens.json (non utilisé pour Mistral,
-                     cf. consigne 7 : "Ne pas fausser le compteur de tokens affiché
-                     pour Claude")
+                     cf. consigne 7 de l'issue #112 : "Ne pas fausser le compteur
+                     de tokens affiché pour Claude")
       timeout_s    : délai maximal de cet appel HTTP (généreux, cf. consigne 6)
       temperature  : (issue #116) température à utiliser pour la requête.
                      Valeur par défaut 0.0 (comportement actuel).
 
-    Retourne le texte de la réponse (premier bloc de type "text" trouvé).
+    Retourne un tuple (texte_de_la_reponse, usage) où :
+      - texte_de_la_reponse : le texte de la réponse (premier bloc de type "text" trouvé)
+      - usage : dict avec les jetons consommés (prompt_tokens, completion_tokens,
+        total_tokens si présents dans la réponse), ou None si absent
     Lève TimeoutError ou urllib.error.URLError en cas de timeout, ValueError
     ou KeyError en cas de réponse de forme inattendue (cf. consigne 6 :
     "chercher le texte de la réponse de façon robuste plutôt que de supposer
@@ -2372,6 +2375,17 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
             # être attrapée par l'appelant, qui gérera l'affichage du message
             # d'erreur discret.
             raise
+    # Extraire la consommation de jetons si présente (issue #119)
+    # L'API Mistral retourne un champ "usage" avec prompt_tokens et completion_tokens
+    usage_brut = data.get("usage") or {}
+    usage_appel = {
+        "input_tokens": usage_brut.get("prompt_tokens") or usage_brut.get("input_tokens") or 0,
+        "output_tokens": usage_brut.get("completion_tokens") or usage_brut.get("output_tokens") or 0,
+    }
+    # Si usage est vide, retourner None pour indiquer absence d'information
+    if not usage_brut:
+        usage_appel = None
+    
     # Chercher le texte de la réponse de façon robuste (consigne 6) :
     # Mistral retourne {"choices": [{"message": {"content": "..."}}]}
     # mais on ne suppose pas cette structure fixe.
@@ -2380,7 +2394,7 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
         msg = choice.get("message") or {}
         content = msg.get("content")
         if content:
-            return content
+            return content, usage_appel
     # Si aucun contenu trouvé, lever ValueError pour signaler une réponse
     # vide ou de forme inattendue (consigne 6).
     raise ValueError(f"Aucun contenu textuel dans la réponse Mistral : {data!r}")
@@ -3070,7 +3084,7 @@ def get_mistral_response(messages, context, config):
     mistral_temperature_log = _get_temperature_log_value("mistral", model_resolu, mistral_temperature)
 
     try:
-        response = _call_mistral(prompt_sys, clean_messages, mistral_api_key, mistral_model, None, timeout_s=mistral_timeout_s, temperature=mistral_temperature)
+        response, usage_mistral = _call_mistral(prompt_sys, clean_messages, mistral_api_key, mistral_model, None, timeout_s=mistral_timeout_s, temperature=mistral_temperature)
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, TimeoutError) as e:
         # Consigne 6 : échec côté Mistral produit un court message discret,
         # sans jamais casser le chat ni le commentaire de Claude
@@ -3107,9 +3121,12 @@ def get_mistral_response(messages, context, config):
             fact_checker_affirmations_ignorees = result.get("affirmations_ignorees", 0)
 
     # Journalisation (consigne 7) : enregistrer l'appel Mistral avec réponse
+    # et usage (issue #119) : usage_mistral peut être None si la réponse n'avait
+    # pas d'information de consommation
     mistral_log_id = _log_coach_call(
         log_path, prompt_sys, context, clean_messages, mode_origine,
         model=f"mistral:{mistral_model}", reponse=response, temperature=mistral_temperature_log,
+        usage=usage_mistral,
         fact_checker_alertes=fact_checker_alertes,
         fact_checker_affirmations_verifiees=fact_checker_affirmations_verifiees,
         fact_checker_affirmations_ignorees=fact_checker_affirmations_ignorees,
