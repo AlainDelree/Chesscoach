@@ -195,7 +195,8 @@ def _afficher(entree: dict) -> None:
     (--n/--mode/--mot/--date/--coup/--log-dir) sont inchangées."""
     contexte = entree.get("context") or {}
     print("=" * 78)
-    print(f"{entree.get('horodatage', '?')}  mode={entree.get('mode_origine', '?')}  modele={entree.get('model', '?')}")
+    temperature = entree.get('temperature') or '?'
+    print(f"{entree.get('horodatage', '?')}  mode={entree.get('mode_origine', '?')}  modele={entree.get('model', '?')}  temperature={temperature}")
 
     print()
     print("Ce que tu as noté")
