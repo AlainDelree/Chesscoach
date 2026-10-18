@@ -89,10 +89,70 @@ def get_text_for_log_id(log_id, calls):
     return "", None
 
 
+def _afficher_statistiques_fact_checker(calls):
+    """Affiche les statistiques des alertes du vérificateur d'affirmations factuelles.
+    
+    Issue #117 : affiche par agent le nombre d'avis avec au moins une alerte
+    et le nombre total d'alertes.
+    """
+    # Compter les alertes par agent
+    stats_par_agent = {"claude": {"avis_avec_alertes": 0, "total_alertes": 0},
+                       "mistral": {"avis_avec_alertes": 0, "total_alertes": 0}}
+    
+    for call in calls:
+        # Vérifier si c'est un appel en mode exercice
+        if call.get("mode_origine") != "exercice":
+            continue
+        
+        # Récupérer les alertes du vérificateur
+        fact_checker_alertes = call.get("fact_checker_alertes", [])
+        
+        if not fact_checker_alertes:
+            continue
+        
+        # Déterminer l'agent
+        model = call.get("model", "")
+        if "mistral" in model.lower():
+            agent = "mistral"
+        elif "claude" in model.lower():
+            agent = "claude"
+        else:
+            # Essayer de deviner à partir du nom du modèle
+            if model and "mistral" in model:
+                agent = "mistral"
+            else:
+                agent = "claude"
+        
+        if agent in stats_par_agent:
+            stats_par_agent[agent]["avis_avec_alertes"] += 1
+            stats_par_agent[agent]["total_alertes"] += len(fact_checker_alertes)
+    
+    # Afficher les statistiques
+    print("Statistiques des alertes du vérificateur d'affirmations factuelles (issue #117) :")
+    print("-" * 80)
+    
+    total_avis_avec_alertes = 0
+    total_alertes = 0
+    
+    for agent in ["claude", "mistral"]:
+        avis_avec_alertes = stats_par_agent[agent]["avis_avec_alertes"]
+        total_alertes_agent = stats_par_agent[agent]["total_alertes"]
+        total_avis_avec_alertes += avis_avec_alertes
+        total_alertes += total_alertes_agent
+        
+        print(f"  {agent.capitalize()} : {avis_avec_alertes} avis avec alerte(s), {total_alertes_agent} alerte(s) totale(s)")
+    
+    print(f"  Total : {total_avis_avec_alertes} avis avec alerte(s), {total_alertes} alerte(s) totale(s)")
+
+
 def main():
     print("=" * 80)
     print("Rapport des notes Claude/Mistral")
     print("=" * 80)
+    print()
+    
+    # Statistiques des alertes du vérificateur d'affirmations factuelles (issue #117)
+    _afficher_statistiques_fact_checker(calls)
     print()
     
     ratings = load_ratings()

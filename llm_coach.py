@@ -24,6 +24,7 @@ Ajouté pour ChessCoach :
 
 import json
 import logging
+import os
 import urllib.error
 import urllib.request
 import uuid
@@ -33,6 +34,7 @@ from pathlib import Path
 import config
 import coach_reliability
 import game_facts
+import fact_checker
 
 logger = logging.getLogger("chesscoach.llm_coach")
 
@@ -1875,7 +1877,9 @@ def _purge_vieux_logs_coach(log_path: Path, fichier_actif: Path) -> None:
 def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_origine: str,
                      model: str = None, reponse: str = None, erreur: str = None, usage: dict = None,
                      fiabilite: dict = None, avertissement: str = None,
-                     premiere_reponse: dict = None, temperature: str = None) -> str | None:
+                     premiere_reponse: dict = None, temperature: str = None,
+                     fact_checker_alertes: list = None, fact_checker_affirmations_verifiees: int = 0,
+                     fact_checker_affirmations_ignorees: int = 0) -> str | None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -1973,6 +1977,13 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
             "avertissement": avertissement,
             "premiere_reponse": premiere_reponse,
         }
+        # Ajouter les champs du vérificateur d'affirmations factuelles (issue #117)
+        if fact_checker_alertes is not None:
+            entry["fact_checker_alertes"] = fact_checker_alertes
+        if fact_checker_affirmations_verifiees > 0:
+            entry["fact_checker_affirmations_verifiees"] = fact_checker_affirmations_verifiees
+        if fact_checker_affirmations_ignorees > 0:
+            entry["fact_checker_affirmations_ignorees"] = fact_checker_affirmations_ignorees
         with open(fichier_actif, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         _purge_vieux_logs_coach(log_path, fichier_actif)
@@ -2744,10 +2755,60 @@ def get_coach_response(messages, context, coach_memory, config):
     # d'usage à travers toute la chaîne de retour juste pour le logging
     # (issue #54, champ d'usage ajouté à coach_calls.log).
     usage_appel = (get_usage_summary(usage_path) or {}).get("dernier_appel") if usage_path else None
+    
+    # Vérification des affirmations factuelles (issue #117) - uniquement en mode exercice
+    # et uniquement si le vérificateur est activé
+    fact_checker_alertes = []
+    fact_checker_affirmations_verifiees = 0
+    fact_checker_affirmations_ignorees = 0
+    
+    if (context or {}).get("mode_exercice"):
+        # Vérifier si le vérificateur est activé (par défaut : oui)
+        fact_checker_activated = os.environ.get("CHESSCOACH_FACT_CHECKER_ACTIVATED", "1")
+        if fact_checker_activated != "0":
+            camp_alain_ctx = (context or {}).get("camp_alain") or ""
+            agent_name = model if model else "claude"
+            
+            result = fact_checker.verifier_affirmations(
+                response,
+                context,
+                agent=agent_name,
+                camp_alain=camp_alain_ctx
+            )
+            fact_checker_alertes = result.get("alertes", [])
+            fact_checker_affirmations_verifiees = result.get("affirmations_verifiees", 0)
+            fact_checker_affirmations_ignorees = result.get("affirmations_ignorees", 0)
+            
+            # Ajouter les alertes du vérificateur à la fiabilité
+            if fact_checker_alertes:
+                if "alertes" not in fiabilite:
+                    fiabilite["alertes"] = []
+                fiabilite["alertes"].extend([
+                    {
+                        "type": "fact_checker",
+                        "detail": alerte.get("affirmation", ""),
+                        "agent": alerte.get("agent", "inconnu"),
+                        "fact_checker_type": alerte.get("type", "inconnu"),
+                        "fact_checker_details": alerte.get("details", "")
+                    }
+                    for alerte in fact_checker_alertes
+                ])
+                # Si la couleur était verte et qu'on a des alertes du vérificateur, 
+                # passer en orange
+                if fiabilite.get("couleur") == "vert" and fact_checker_alertes:
+                    fiabilite["couleur"] = "orange"
+                    fiabilite["raison"] = (
+                        fiabilite.get("raison", "") + 
+                        "; " if fiabilite.get("raison") else ""
+                    ) + f"{len(fact_checker_alertes)} affirmation(s) factuelle(s) à vérifier"
+    
     log_id = _log_coach_call(
         log_path, prompt_sys, context, clean_messages, mode_origine, model=model,
         reponse=response, usage=usage_appel, fiabilite=fiabilite, avertissement=avertissement,
         premiere_reponse=premiere_reponse, temperature=claude_temperature_log,
+        fact_checker_alertes=fact_checker_alertes,
+        fact_checker_affirmations_verifiees=fact_checker_affirmations_verifiees,
+        fact_checker_affirmations_ignorees=fact_checker_affirmations_ignorees,
     )
     return response, None, fiabilite, log_id
 
@@ -2862,9 +2923,33 @@ def get_mistral_response(messages, context, config):
 
     response = (response or "").strip()
 
+    # Vérification des affirmations factuelles pour Mistral (issue #117)
+    fact_checker_alertes = []
+    fact_checker_affirmations_verifiees = 0
+    fact_checker_affirmations_ignorees = 0
+    
+    if (context or {}).get("mode_exercice"):
+        # Vérifier si le vérificateur est activé (par défaut : oui)
+        fact_checker_activated = os.environ.get("CHESSCOACH_FACT_CHECKER_ACTIVATED", "1")
+        if fact_checker_activated != "0":
+            camp_alain_ctx = (context or {}).get("camp_alain") or ""
+            
+            result = fact_checker.verifier_affirmations(
+                response,
+                context,
+                agent="mistral",
+                camp_alain=camp_alain_ctx
+            )
+            fact_checker_alertes = result.get("alertes", [])
+            fact_checker_affirmations_verifiees = result.get("affirmations_verifiees", 0)
+            fact_checker_affirmations_ignorees = result.get("affirmations_ignorees", 0)
+
     # Journalisation (consigne 7) : enregistrer l'appel Mistral avec réponse
     mistral_log_id = _log_coach_call(
         log_path, prompt_sys, context, clean_messages, mode_origine,
-        model=f"mistral:{mistral_model}", reponse=response, temperature=mistral_temperature_log
+        model=f"mistral:{mistral_model}", reponse=response, temperature=mistral_temperature_log,
+        fact_checker_alertes=fact_checker_alertes,
+        fact_checker_affirmations_verifiees=fact_checker_affirmations_verifiees,
+        fact_checker_affirmations_ignorees=fact_checker_affirmations_ignorees,
     )
     return response, None, mistral_log_id

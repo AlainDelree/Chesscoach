@@ -128,6 +128,10 @@ CHESSCOACH_CLAUDE_TEMPERATURE = os.environ.get("CHESSCOACH_CLAUDE_TEMPERATURE", 
 # logs de l'appli, et la valeur par défaut s'applique.
 CHESSCOACH_MISTRAL_TEMPERATURE = os.environ.get("CHESSCOACH_MISTRAL_TEMPERATURE", "0.0")
 
+# Vérificateur d'affirmations factuelles (issue #117) — activé par défaut.
+# Peut être désactivé en mettant CHESSCOACH_FACT_CHECKER_ACTIVATED=0 dans .env.
+CHESSCOACH_FACT_CHECKER_ACTIVATED = os.environ.get("CHESSCOACH_FACT_CHECKER_ACTIVATED", "1")
+
 # Les deux modèles Claude choisissables depuis l'interface (issue #61) —
 # identifiants canoniques définis ici en un seul endroit, réutilisés par
 # app.py (sélecteur de l'en-tête) et par le fallback en cas de refus de
