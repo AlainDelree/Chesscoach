@@ -42,7 +42,11 @@ Pour comparer honnêtement Claude et Mistral sur les exercices, les deux IA doiv
 - Mise à jour de l'affichage des divergences pour inclure la température à côté du modèle (ex: "Claude (claude-sonnet-5, T=0.7)")
 - Le champ temperature est lu depuis les entrées de coach_calls.log
 
-### 4. Documentation (CONTEXTE.md)
+### 4. Script de lecture du journal (lire_journal_coach.py)
+- Ajout de l'affichage de la température dans l'en-tête de chaque entrée (à côté du modèle)
+- Le champ `temperature` est maintenant visible dans la sortie du script
+
+### 5. Documentation (CONTEXTE.md)
 - Ajout d'une nouvelle section "Température configurable pour les appels LLM (issue #116)" expliquant :
   - Les deux nouvelles variables d'environnement
   - Leur comportement (défaut, validation, journalisation)
@@ -92,8 +96,9 @@ Un script de test `test_issue116.py` a été créé et exécuté avec succès, v
 1. `config.py` : Ajout des variables CHESSCOACH_CLAUDE_TEMPERATURE et CHESSCOACH_MISTRAL_TEMPERATURE
 2. `llm_coach.py` : Modifications de _call_claude, _call_mistral, _log_coach_call, get_coach_response, get_mistral_response
 3. `scripts/coach_ratings_report.py` : Mise à jour pour afficher la température
-4. `CONTEXTE.md` : Documentation des nouvelles variables
-5. `test_issue116.py` : Script de test (nouveau fichier)
+4. `lire_journal_coach.py` : Ajout de l'affichage de la température dans l'en-tête
+5. `CONTEXTE.md` : Documentation des nouvelles variables
+6. `test_issue116.py` : Script de test (nouveau fichier)
 
 ## Rétrocompatibilité
 
