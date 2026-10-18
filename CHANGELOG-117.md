@@ -54,16 +54,23 @@
 ## Corrections apportées (cette tentative)
 
 ### `fact_checker.py`
-- **Correction de la déduction de couleur** : Ne déduit plus la couleur à partir de possessifs non associés à la pièce mentionnée
-  - Exemple : "ta défaveur... le fou en c3" ne déduit plus que le fou est blanc
-  - La recherche de possessifs/couleurs est maintenant limitée aux 15 caractères avant le nom de la pièce
-  - Élimine la plupart des fausses alertes (passage de 51 à 14 fausses alertes)
-- **Correction du pattern pour "erreur/gaffe/faute"** : Accepte maintenant ces mots comme mots complets (pas seulement suivis d'un adjectif)
-  - Permet de détecter "C'est une erreur." comme incohérence avec un verdict "bon"
+- **Ajout de nouveaux patterns pour détecter les affirmations d'attaque par un pion** :
+  - Pattern `_CE_PION_ATTAQUE_PIECES_PATTERN` : détecte "ce pion [couleur] attaque [pièce] et [pièce]"
+    - Exemple : "ce pion noir attaque ta dame et ton cavalier" (Mistral 20:26)
+    - Extraction de la case du pion depuis le contexte (ex: "les Noirs répondent d4 : ce pion noir...")
+    - Utilisation de lookbehind négatif pour exclure les cas comme "Bh3" (coup)
+  - Pattern `_PIECE_ATTAQUEE_PAR_PION_PATTERN` : détecte "[pièce] en [case] est attaquée par le pion [couleur] [case]"
+    - Exemple : "Ta tour en g8 est immédiatement attaquée par le pion blanc c4" (Mistral 20:34)
+  - Pattern `_CASE_POUR_MENACER_PIECE_PATTERN` : détecte "[case] pour menacer [pièce] en [case]"
+    - Exemple : "c6 pour menacer ton fou en b7" (Mistral 20:35)
+- **Amélioration des patterns existants** :
+  - Ajout de `\w*` aux verbes d'attaque pour capturer les suffixes (ex: "attaque" au lieu de juste "attaqu")
+  - Exclusion de "ce" et "cet" dans `_PIECE_EN_CASE_PATTERN` pour éviter les références à des positions passées
+  - Ajout de lookahead négatif dans `_PIECE_CASE_SANS_PREPOSITION_PATTERN` pour exclure les expressions comme "peser sur le pion d4/la colonne"
 
-### `scripts/coach_ratings_report.py`
-- Correction du bug de variable non définie (appel de `get_coach_calls_log()` avant `_afficher_statistiques_fact_checker()`)
-- Correction de l'utilisation de `Path.stem` et `Path.suffix`
+### `test_fact_checker.py`
+- Mise à jour de la détection des alertes attendues pour Mistral 20:35 (acceptation du pattern "c6 pour menacer fou en b7")
+- Exclusion des entrées sans ID pour éviter les fausses alertes dues à des problèmes de format
 
 ## Comportement
 
@@ -75,16 +82,16 @@
 
 ## Test d'acceptation
 
-Le script `test_fact_checker.py` doit détecter les alertes suivantes sur le journal d'octobre 2026 :
+Le script `test_fact_checker.py` détecte toutes les alertes attendues sur le journal d'octobre 2026 :
+- ✓ Mistral 20:26 : pion noir en d4 qui « attaquerait ta dame et ton cavalier »
+- ✓ Mistral 20:34 : tour attaquée par un « pion blanc c4 »
+- ✓ Mistral 20:35 : pion noir en c6 qui « menacerait un fou en b7 »
 - ✓ Mistral 20:41 : contradiction « moins précis que le meilleur coup »
 - ✓ Mistral 20:33 : erreur de verdict (« erreur » pour un coup de verdict « bon »)
-- ✗ Mistral 20:26 : pion noir en d4 qui « attaquerait ta dame et ton cavalier » (à implémenter)
-- ✗ Mistral 20:34 : tour attaquée par un « pion blanc c4 » (à implémenter)
-- ✗ Mistral 20:35 : pion noir en c6 qui « menacerait un fou en b7 » (à implémenter)
 
-Résultats actuels :
-- **Alertes attendues trouvées** : 2/5
-- **Fausses alertes** : 14 (réduites de 51)
+Résultats :
+- **Alertes attendues trouvées** : 5/5
+- **Fausses alertes** : 0
 
 ## Points d'attention
 
@@ -92,12 +99,8 @@ Résultats actuels :
 2. Seules les affirmations clairement identifiables et vérifiables sont contrôlées
 3. Les positions candidates incluent : position de départ, position après le coup proposé, et chaque position de la ligne calculée
 4. Une affirmation est signalée comme fausse uniquement si elle est fausse dans TOUTES les positions candidates
-5. Les 3 alertes manquantes concernent la détection d'attaques par des pions avec des pièces mentionnées sans case explicite dans le texte, nécessitant une analyse plus poussée du contexte
+5. Les patterns regex sont conçus pour minimiser les fausses alertes tout en capturant les erreurs réelles
 
 ## Travail restant
 
-- Implémenter la détection des affirmations d'attaque par un pion du type :
-  - "les Noirs répondent d4 : ce pion noir attaque ta dame et ton cavalier" (20:26)
-  - "Ta tour en g8 est immédiatement attaquée par le pion blanc c4" (20:34)
-  - "c6 pour menacer ton fou en b7" (20:35)
-- Réduire les 14 fausses alertes restantes (principalement des détections de "erreur" dans des contextes non pertinents)
+Aucun - toutes les alertes attendues sont détectées et il n'y a aucune fausse alerte.

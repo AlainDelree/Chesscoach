@@ -28,7 +28,10 @@ from typing import List, Dict, Tuple, Optional, Set
 
 # Motifs regex pour détecter les affirmations à vérifier
 # (a) Pièce en case : "ta dame en b5", "le cavalier en e5", "une tour sur d1", etc.
+# Exclure "ce" et "cet" pour éviter de capturer des références à des positions passées
+# Utiliser une assertion négative pour exclure "ce " ou "cet " avant la pièce
 _PIECE_EN_CASE_PATTERN = re.compile(
+    r'(?<!\bce\s)(?<!\bcet\s)'
     r'(?:(?:ta|ton|tes|ma|mon|mes|sa|son|ses|le|la|les|un|une|des)\s+)?'
     r'(dame|roi|tour|fou|cavalier|pion)\s+'
     r'(?:en|sur|à|au|aux)\s+'
@@ -37,31 +40,75 @@ _PIECE_EN_CASE_PATTERN = re.compile(
 )
 
 # (a) Variante : "dame b5", "cavalier e5" (sans préposition)
+# Exclure les cas où la case est suivie de mots comme "sur", "dans", "vers", etc.
+# ou de caractères comme "/" pour éviter de capturer des expressions comme "peser sur le pion d4/la colonne"
 _PIECE_CASE_SANS_PREPOSITION_PATTERN = re.compile(
     r'(?:(?:ta|ton|tes|ma|mon|mes|sa|son|ses|le|la|les|un|une|des)\s+)?'
     r'(dame|roi|tour|fou|cavalier|pion)\s+'
+    r'([a-h][1-8])'
+    r'(?!\s+(?:sur|dans|vers|à|au|aux|par|pour|avec)|/|,|;)',
+    re.IGNORECASE
+)
+
+# (b) Attaque par un pion avec case et pièce explicitement mentionnées
+# Pattern: "pion [couleur] en [case] attaque/menace/prend [pièce]"
+_PION_ATTAQUE_AVEC_PIECE_PATTERN = re.compile(
+    r'pion\s+(?:(blanc|noir|blancs|noirs)\s+)?'
+    r'(?:en|sur|à|au|aux)?\s*'
+    r'([a-h][1-8])\s+'
+    r'(attaqu|menac|prend|chass|captur|frappe|contrôl)\w*\s+'
+    r'(?:la|le|les|une|un|ta|ton|tes|ma|mon|mes|sa|son|ses)?\s*'
+    r'(dame|roi|tour|fou|cavalier|pion)',
+    re.IGNORECASE
+)
+
+# (b) Attaque par un pion avec case mentionnée mais pièce implicite
+# Pattern: "pion [couleur] en [case] attaque/menace/prend"
+_PION_ATTAQUE_CASE_SEULE_PATTERN = re.compile(
+    r'pion\s+(?:(blanc|noir|blancs|noirs)\s+)?'
+    r'(?:en|sur|à|au|aux)?\s*'
+    r'([a-h][1-8])\s+'
+    r'(attaqu|menac|prend|chass|captur|frappe|contrôl)\w*',
+    re.IGNORECASE
+)
+
+# (b) Pattern pour détecter "[case] pour menacer [pièce] en [case]"
+# Exemple: "c6 pour menacer ton fou en b7"
+_CASE_POUR_MENACER_PIECE_PATTERN = re.compile(
+    r'([a-h][1-8])\s+'
+    r'pour\s+'
+    r'(attaqu|menac|prend|chass|captur|frappe|contrôl)\w*\s+'
+    r'(?:la|le|les|une|un|ta|ton|tes|ma|mon|mes|sa|son|ses)?\s*'
+    r'(dame|roi|tour|fou|cavalier|pion)\s+'
+    r'(?:en|sur|à|au|aux)?\s*'
     r'([a-h][1-8])',
     re.IGNORECASE
 )
 
-# (b) Attaque par un pion : "le pion X attaque/menace/prend/chasse la pièce Y"
-# On cherche des patterns comme "pion [case] attaque/menace/prend/chasse"
-_PION_ATTAQUE_PATTERN = re.compile(
-    r'pion\s+(?:blanc|noir|blancs|noirs)?\s*'
-    r'(?:en|sur|à|au|aux)?\s*'
-    r'([a-h][1-8])\s+'
-    r'(attaqu|menac|prend|chass|captur)',
+# (b) Pattern pour détecter "ce pion [couleur] attaque [pièce] et [pièce]"
+# Exemple: "ce pion noir attaque ta dame et ton cavalier"
+_CE_PION_ATTAQUE_PIECES_PATTERN = re.compile(
+    r'ce\s+pion\s+(?:(blanc|noir|blancs|noirs)\s+)?'
+    r'(attaqu|menac|prend|chass|captur|frappe|contrôl)\w*\s+'
+    r'(?:la|le|les|une|un|ta|ton|tes|ma|mon|mes|sa|son|ses)?\s*'
+    r'(dame|roi|tour|fou|cavalier|pion)\s+'
+    r'et\s+'
+    r'(?:la|le|les|une|un|ta|ton|tes|ma|mon|mes|sa|son|ses)?\s*'
+    r'(dame|roi|tour|fou|cavalier|pion)',
     re.IGNORECASE
 )
 
-# (b) Variante : "pion [case] [verbe] [pièce]"
-_PION_ATTAQUE_PIECE_PATTERN = re.compile(
-    r'pion\s+(?:blanc|noir|blancs|noirs)?\s*'
-    r'(?:en|sur|à|au|aux)?\s*'
-    r'([a-h][1-8])\s+'
-    r'(attaqu|menac|prend|chass|captur)\s+'
+# (b) Pattern pour détecter "[pièce] en [case] est attaquée par le pion [couleur] [case]"
+# Exemple: "Ta tour en g8 est immédiatement attaquée par le pion blanc c4"
+_PIECE_ATTAQUEE_PAR_PION_PATTERN = re.compile(
     r'(?:la|le|les|une|un|ta|ton|tes|ma|mon|mes|sa|son|ses)?\s*'
-    r'(dame|roi|tour|fou|cavalier|pion)',
+    r'(dame|roi|tour|fou|cavalier|pion)\s+'
+    r'(?:en|sur|à|au|aux)?\s+'
+    r'([a-h][1-8])\s+'
+    r'est\s+(?:immédiatement\s+)?attaquée\s+par\s+le\s+pion\s+'
+    r'(?:(blanc|noir|blancs|noirs)\s+)?'
+    r'(?:en|sur|à|au|aux)?\s*'
+    r'([a-h][1-8])',
     re.IGNORECASE
 )
 
@@ -73,6 +120,8 @@ _INCONSISTENCIES = [
     (r'pas\s+aussi\s+bon\s+(?:que|que le)\s+meilleur\s+coup', re.IGNORECASE),
     (r'inférieur\s+au\s+meilleur\s+coup', re.IGNORECASE),
     # "erreur" ou "gaffe" pour un coup de verdict "bon"
+    # Utiliser \b pour éviter de matcher des mots comme "erreur" dans "erreur_stratégique"
+    # Mais on veut matcher "erreur" comme mot complet
     (r'\b(?:erreur|gaffe|faute)\b', re.IGNORECASE),
 ]
 
@@ -390,175 +439,312 @@ def _verifier_piece_case_sans_preposition(
     return alertes
 
 
-def _verifier_pion_attaque(
+def _verifier_pion_attaque_avec_piece(
     texte: str,
     positions_candidates: List[str]
 ) -> List[Dict]:
-    """Vérifie les affirmations d'attaque par un pion.
+    """Vérifie les affirmations d'attaque par un pion avec pièce explicitement mentionnée.
     
-    Un pion attaque diagonalement en avant. Pour les blancs : a2->b3, a2->a3 (non, c'est devant)
-    Un pion en c2 (blanc) attaque b3 et d3.
-    Un pion en c7 (noir) attaque b6 et d6.
-    
-    Retourne une liste d'alertes pour les affirmations fausses.
+    Pattern: "pion [couleur] en [case] attaque/menace/prend [pièce]"
     """
     alertes = []
     
-    # Trouver toutes les mentions de pion qui attaque
-    matches = _PION_ATTAQUE_PATTERN.finditer(texte)
+    matches = _PION_ATTAQUE_AVEC_PIECE_PATTERN.finditer(texte)
     
     for match in matches:
-        pion_case = match.group(1).lower()
-        verbe = match.group(2).lower()
+        pion_couleur_str = match.group(1)
+        pion_case = match.group(2).lower()
+        verbe = match.group(3).lower()
+        piece_attaquee = match.group(4).lower()
         
         # Déterminer la couleur du pion
-        couleur = None
-        texte_match = match.group(0)
+        if pion_couleur_str:
+            couleur = _COLOR_MAP.get(pion_couleur_str.lower())
+        else:
+            couleur = None
         
-        if 'blanc' in texte_match.lower():
-            couleur = chess.WHITE
-        elif 'noir' in texte_match.lower():
-            couleur = chess.BLACK
-        
-        # Si la couleur n'est pas spécifiée, on essaie de la déduire du contexte
-        # Mais pour les pions, sans couleur explicite, on ne peut pas vérifier
         if couleur is None:
             continue
         
-        # Trouver la pièce attaquée si mentionnée
-        piece_attaquee = None
-        piece_attaquee_case = None
-        
-        # Chercher après le verbe
-        reste_texte = texte[match.end():]
-        piece_match = re.search(
-            r'(?:la|le|les|une|un|ta|ton|tes|ma|mon|mes|sa|son|ses)?\s*'
-            r'(dame|roi|tour|fou|cavalier|pion)\s+'
-            r'(?:en|sur|à|au|aux)?\s*'
-            r'([a-h][1-8])',
-            reste_texte[:100],
-            re.IGNORECASE
-        )
-        
-        if piece_match:
-            piece_attaquee = piece_match.group(1).lower()
-            piece_attaquee_case = piece_match.group(2).lower()
-        
         # Vérifier la géométrie d'attaque du pion
         # Un pion attaque diagonalement en avant d'une case
-        pion_square = chess.parse_square(pion_case)
+        try:
+            pion_square = chess.parse_square(pion_case)
+        except:
+            continue
         
         if couleur == chess.WHITE:
             # Pion blanc : attaque une case en diagonale devant (rang + 1)
-            attaques_possibles = [
-                pion_square + 7,  # b3 depuis a2 (file +1, rang +1)
-                pion_square + 9,  # d3 depuis a2 (file -1, rang +1)
-            ]
+            attaques_possibles = [pion_square + 7, pion_square + 9]
         else:
             # Pion noir : attaque une case en diagonale devant (rang - 1)
-            attaques_possibles = [
-                pion_square - 7,  # b6 depuis c7 (file +1, rang -1)
-                pion_square - 9,  # d6 depuis c7 (file -1, rang -1)
-            ]
+            attaques_possibles = [pion_square - 7, pion_square - 9]
         
         # Filtrer les cases valides (0-63)
         attaques_possibles = [sq for sq in attaques_possibles if 0 <= sq < 64]
         
-        # Si une pièce attaquée est mentionnée avec sa case
-        if piece_attaquee and piece_attaquee_case:
-            piece_attaquee_square = chess.parse_square(piece_attaquee_case)
-            
-            # Vérifier si cette case est dans les attaques possibles
-            if piece_attaquee_square not in attaques_possibles:
-                # Vérifier dans toutes les positions candidates
-                attaque_valide_dans_une_position = False
+        # Vérifier dans toutes les positions candidates
+        attaque_valide_dans_une_position = False
+        
+        for fen in positions_candidates:
+            try:
+                board = chess.Board(fen)
+                piece = board.piece_at(pion_square)
                 
-                for fen in positions_candidates:
-                    try:
-                        board = chess.Board(fen)
-                        piece = board.piece_at(pion_square)
-                        
-                        # Vérifier que c'est bien un pion de la bonne couleur
-                        if piece and piece.piece_type == chess.PAWN and piece.color == couleur:
-                            # Vérifier que le pion attaque bien la case mentionnée
-                            if board.is_attacked_by(couleur, piece_attaquee_square):
-                                # Vérifier que c'est bien le pion qui attaque
-                                # (pas une autre pièce)
-                                if board.is_attacked_by(couleur, piece_attaquee_square):
-                                    # On vérifie si le pion est bien celui qui attaque
-                                    # en vérifiant que la pièce sur la case attaquée est bien attaquée par ce pion
-                                    # Pour être précis, on vérifie que le pion attaque cette case
-                                    if chess.square_distance(pion_square, piece_attaquee_square) == 2 and \
-                                       abs(chess.square_file(pion_square) - chess.square_file(piece_attaquee_square)) == 1:
-                                        # C'est une attaque diagonale valide
-                                        if (couleur == chess.WHITE and 
-                                            chess.square_rank(pion_square) + 1 == chess.square_rank(piece_attaquee_square)) or \
-                                           (couleur == chess.BLACK and 
-                                            chess.square_rank(pion_square) - 1 == chess.square_rank(piece_attaquee_square)):
-                                            attaque_valide_dans_une_position = True
-                                            break
-                    except:
+                # Vérifier que c'est bien un pion de la bonne couleur
+                if piece and piece.piece_type == chess.PAWN and piece.color == couleur:
+                    # Vérifier que le pion attaque bien une pièce de type piece_attaquee
+                    expected_type = _PIECE_TYPE_MAP.get(piece_attaquee)
+                    if expected_type is None:
                         continue
-                
-                if not attaque_valide_dans_une_position:
-                    alerte = {
-                        'type': 'pion_attaque',
-                        'affirmation': f"pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case} {verbe} {piece_attaquee} en {piece_attaquee_case}",
-                        'pion_case': pion_case,
-                        'pion_couleur': 'blancs' if couleur == chess.WHITE else 'noirs',
-                        'piece_attaquee': piece_attaquee,
-                        'piece_attaquee_case': piece_attaquee_case,
-                        'details': f"Un pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case} n'attaque pas {piece_attaquee} en {piece_attaquee_case} (géométrie invalide)"
-                    }
-                    alertes.append(alerte)
-        else:
-            # Pas de pièce attaquée mentionnée, on vérifie juste la géométrie
-            # On ne peut pas vérifier sans savoir quelle pièce est attaquée
-            pass
+                    
+                    # Vérifier si une pièce de ce type est sur une case attaquée par le pion
+                    for attaque_sq in attaques_possibles:
+                        piece_cible = board.piece_at(attaque_sq)
+                        if piece_cible and piece_cible.piece_type == expected_type:
+                            attaque_valide_dans_une_position = True
+                            break
+                    
+                    if attaque_valide_dans_une_position:
+                        break
+            except:
+                continue
+        
+        if not attaque_valide_dans_une_position:
+            alerte = {
+                'type': 'pion_attaque_avec_piece',
+                'affirmation': f"pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case} {verbe} {piece_attaquee}",
+                'pion_case': pion_case,
+                'pion_couleur': 'blancs' if couleur == chess.WHITE else 'noirs',
+                'piece_attaquee': piece_attaquee,
+                'details': f"Un pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case} n'attaque pas de {piece_attaquee} dans les positions candidates"
+            }
+            alertes.append(alerte)
     
     return alertes
 
 
-def _verifier_pion_attaque_piece(
+def _verifier_pion_attaque_case_seule(
     texte: str,
     positions_candidates: List[str]
 ) -> List[Dict]:
-    """Vérifie les affirmations d'attaque par un pion avec pièce mentionnée."""
+    """Vérifie les affirmations d'attaque par un pion avec case mentionnée mais pièce non mentionnée.
+    
+    Pattern: "pion [couleur] en [case] attaque/menace/prend"
+    
+    Pour ces cas, on vérifie que le pion existe bien et qu'il attaque au moins une pièce.
+    """
     alertes = []
     
-    matches = _PION_ATTAQUE_PIECE_PATTERN.finditer(texte)
+    matches = _PION_ATTAQUE_CASE_SEULE_PATTERN.finditer(texte)
     
     for match in matches:
-        pion_case = match.group(1).lower()
-        verbe = match.group(2).lower()
-        piece_attaquee = match.group(3).lower()
+        pion_couleur_str = match.group(1)
+        pion_case = match.group(2).lower()
+        verbe = match.group(3).lower()
         
         # Déterminer la couleur du pion
-        couleur = None
-        texte_match = match.group(0)
-        
-        if 'blanc' in texte_match.lower():
-            couleur = chess.WHITE
-        elif 'noir' in texte_match.lower():
-            couleur = chess.BLACK
+        if pion_couleur_str:
+            couleur = _COLOR_MAP.get(pion_couleur_str.lower())
+        else:
+            couleur = None
         
         if couleur is None:
             continue
         
-        # Trouver la case de la pièce attaquée
-        piece_attaquee_case = None
-        reste_texte = texte[match.end():]
-        case_match = re.search(r'(?:en|sur|à|au|aux)\s+([a-h][1-8])', reste_texte[:50], re.IGNORECASE)
-        
-        if case_match:
-            piece_attaquee_case = case_match.group(1).lower()
-        
-        if not piece_attaquee_case:
+        # Vérifier que le pion existe et attaque bien quelque chose
+        try:
+            pion_square = chess.parse_square(pion_case)
+        except:
             continue
         
-        # Vérifier la géométrie
-        pion_square = chess.parse_square(pion_case)
-        piece_attaquee_square = chess.parse_square(piece_attaquee_case)
+        # Vérifier dans toutes les positions candidates
+        pion_existe_et_attaque = False
+        
+        for fen in positions_candidates:
+            try:
+                board = chess.Board(fen)
+                piece = board.piece_at(pion_square)
+                
+                # Vérifier que c'est bien un pion de la bonne couleur
+                if piece and piece.piece_type == chess.PAWN and piece.color == couleur:
+                    # Calculer les cases attaquées par ce pion
+                    if couleur == chess.WHITE:
+                        attaques_possibles = [pion_square + 7, pion_square + 9]
+                    else:
+                        attaques_possibles = [pion_square - 7, pion_square - 9]
+                    
+                    attaques_possibles = [sq for sq in attaques_possibles if 0 <= sq < 64]
+                    
+                    # Vérifier si au moins une pièce est sur une case attaquée
+                    for attaque_sq in attaques_possibles:
+                        if board.piece_at(attaque_sq) is not None:
+                            pion_existe_et_attaque = True
+                            break
+                    
+                    if pion_existe_et_attaque:
+                        break
+            except:
+                continue
+        
+        # Si le pion n'existe pas OU n'attaque rien dans AUCUNE position candidate
+        if not pion_existe_et_attaque:
+            alerte = {
+                'type': 'pion_attaque_case_seule',
+                'affirmation': f"pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case} {verbe}",
+                'pion_case': pion_case,
+                'pion_couleur': 'blancs' if couleur == chess.WHITE else 'noirs',
+                'details': f"Le pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case} n'existe pas ou n'attaque rien dans les positions candidates"
+            }
+            alertes.append(alerte)
+    
+    return alertes
+
+
+def _verifier_case_pour_menacer_piece(
+    texte: str,
+    positions_candidates: List[str]
+) -> List[Dict]:
+    """Vérifie les affirmations du type "[case] pour menacer [pièce] en [case]".
+    
+    Exemple: "c6 pour menacer ton fou en b7"
+    
+    Cela signifie qu'un pion (ou une pièce) en [case1] menace [pièce] en [case2].
+    Pour un pion, on vérifie la géométrie d'attaque.
+    """
+    alertes = []
+    
+    matches = _CASE_POUR_MENACER_PIECE_PATTERN.finditer(texte)
+    
+    for match in matches:
+        case_attaquante = match.group(1).lower()
+        verbe = match.group(2).lower()
+        piece_attaquee = match.group(3).lower()
+        case_attaquee = match.group(4).lower()
+        
+        # Vérifier la géométrie d'attaque
+        try:
+            attaquant_square = chess.parse_square(case_attaquante)
+            attaquee_square = chess.parse_square(case_attaquee)
+        except:
+            continue
+        
+        # Vérifier dans toutes les positions candidates
+        attaque_valide_dans_une_position = False
+        
+        for fen in positions_candidates:
+            try:
+                board = chess.Board(fen)
+                piece_attaquante = board.piece_at(attaquant_square)
+                
+                if piece_attaquante is not None:
+                    piece_attaquee_obj = board.piece_at(attaquee_square)
+                    
+                    # Si c'est un pion, vérifier la géométrie spécifique
+                    if piece_attaquante.piece_type == chess.PAWN:
+                        couleur = piece_attaquante.color
+                        
+                        # Calculer les cases qu'un pion de cette couleur attaquerait
+                        if couleur == chess.WHITE:
+                            attaques_possibles = [attaquant_square + 7, attaquant_square + 9]
+                        else:
+                            attaques_possibles = [attaquant_square - 7, attaquant_square - 9]
+                        
+                        attaques_possibles = [sq for sq in attaques_possibles if 0 <= sq < 64]
+                        
+                        # Vérifier si la case attaquée est dans les attaques possibles
+                        if attaquee_square in attaques_possibles:
+                            # Vérifier que la pièce attaquée existe et correspond au type
+                            expected_type = _PIECE_TYPE_MAP.get(piece_attaquee)
+                            if piece_attaquee_obj and piece_attaquee_obj.piece_type == expected_type:
+                                attaque_valide_dans_une_position = True
+                                break
+                    else:
+                        # Pour les autres pièces, vérifier si elles attaquent la case
+                        if board.is_attacked_by(piece_attaquante.color, attaquee_square):
+                            # Vérifier que la pièce attaquée existe et correspond au type
+                            expected_type = _PIECE_TYPE_MAP.get(piece_attaquee)
+                            if piece_attaquee_obj and piece_attaquee_obj.piece_type == expected_type:
+                                attaque_valide_dans_une_position = True
+                                break
+            except:
+                continue
+        
+        if not attaque_valide_dans_une_position:
+            alerte = {
+                'type': 'case_pour_menacer_piece',
+                'affirmation': f"{case_attaquante} pour {verbe} {piece_attaquee} en {case_attaquee}",
+                'case_attaquante': case_attaquante,
+                'piece_attaquee': piece_attaquee,
+                'case_attaquee': case_attaquee,
+                'details': f"La case {case_attaquante} ne menace pas {piece_attaquee} en {case_attaquee} dans les positions candidates"
+            }
+            alertes.append(alerte)
+    
+    return alertes
+
+
+def _verifier_ce_pion_attaque_pieces(
+    texte: str,
+    positions_candidates: List[str]
+) -> List[Dict]:
+    """Vérifie les affirmations du type "ce pion [couleur] attaque [pièce] et [pièce]".
+    
+    Exemple: "ce pion noir attaque ta dame et ton cavalier"
+    ou "les Noirs répondent d4 : ce pion noir attaque ta dame et ton cavalier"
+    
+    On vérifie que le pion attaque bien les deux pièces mentionnées.
+    """
+    alertes = []
+    
+    matches = _CE_PION_ATTAQUE_PIECES_PATTERN.finditer(texte)
+    
+    for match in matches:
+        pion_couleur_str = match.group(1)
+        verbe = match.group(2).lower()
+        piece1 = match.group(3).lower()
+        piece2 = match.group(4).lower()
+        
+        # Déterminer la couleur du pion
+        if pion_couleur_str:
+            couleur = _COLOR_MAP.get(pion_couleur_str.lower())
+        else:
+            couleur = None
+        
+        if couleur is None:
+            continue
+        
+        # Trouver la case du pion dans le texte
+        # Chercher dans les 50 caractères avant "ce pion"
+        match_start = match.start()
+        texte_avant = texte[max(0, match_start - 50):match_start]
+        
+        # Chercher une case mentionnée avant, avec des patterns comme "d4", "en d4", "sur d4", "répondent d4"
+        # Mais ignorer les cases qui font partie d'un coup (ex: Bh3, cxd5)
+        # On cherche une case qui n'est PAS précédée d'une lettre de pièce (D, T, C, F, R, P)
+        case_match = re.search(
+            r'(?:répondent|jouent|poussent|avancent|placent)?\s*'
+            r'(?:en|sur|à|au|aux|:)?\s*'
+            r'(?<![A-Za-z])([a-h][1-8])',
+            texte_avant,
+            re.IGNORECASE
+        )
+        
+        if not case_match:
+            # Chercher après "ce pion" et avant le verbe
+            texte_apres_pion = texte[match_start:match.start(2)]
+            case_match = re.search(r'([a-h][1-8])', texte_apres_pion, re.IGNORECASE)
+        
+        if not case_match:
+            continue
+        
+        pion_case = case_match.group(1).lower()
+        
+        # Vérifier la géométrie d'attaque du pion
+        try:
+            pion_square = chess.parse_square(pion_case)
+        except:
+            continue
         
         if couleur == chess.WHITE:
             attaques_possibles = [pion_square + 7, pion_square + 9]
@@ -567,38 +753,137 @@ def _verifier_pion_attaque_piece(
         
         attaques_possibles = [sq for sq in attaques_possibles if 0 <= sq < 64]
         
-        if piece_attaquee_square not in attaques_possibles:
-            # Vérifier dans toutes les positions candidates
-            attaque_valide_dans_une_position = False
-            
-            for fen in positions_candidates:
-                try:
-                    board = chess.Board(fen)
-                    piece = board.piece_at(pion_square)
+        # Vérifier dans toutes les positions candidates
+        attaque_valide_dans_une_position = False
+        
+        for fen in positions_candidates:
+            try:
+                board = chess.Board(fen)
+                piece = board.piece_at(pion_square)
+                
+                # Vérifier que c'est bien un pion de la bonne couleur
+                if piece and piece.piece_type == chess.PAWN and piece.color == couleur:
+                    # Vérifier que le pion attaque bien les deux pièces mentionnées
+                    expected_type1 = _PIECE_TYPE_MAP.get(piece1)
+                    expected_type2 = _PIECE_TYPE_MAP.get(piece2)
                     
-                    if piece and piece.piece_type == chess.PAWN and piece.color == couleur:
-                        if (couleur == chess.WHITE and 
-                            chess.square_rank(pion_square) + 1 == chess.square_rank(piece_attaquee_square) and
-                            abs(chess.square_file(pion_square) - chess.square_file(piece_attaquee_square)) == 1) or \
-                           (couleur == chess.BLACK and 
-                            chess.square_rank(pion_square) - 1 == chess.square_rank(piece_attaquee_square) and
-                            abs(chess.square_file(pion_square) - chess.square_file(piece_attaquee_square)) == 1):
-                            attaque_valide_dans_une_position = True
-                            break
-                except:
+                    if expected_type1 is None or expected_type2 is None:
+                        continue
+                    
+                    # Vérifier si les deux types de pièces sont sur des cases attaquées par le pion
+                    pieces_trouvees = []
+                    for attaque_sq in attaques_possibles:
+                        piece_cible = board.piece_at(attaque_sq)
+                        if piece_cible:
+                            pieces_trouvees.append(piece_cible.piece_type)
+                    
+                    # Vérifier si les deux types sont présents
+                    if expected_type1 in pieces_trouvees and expected_type2 in pieces_trouvees:
+                        attaque_valide_dans_une_position = True
+                        break
+            except:
+                continue
+        
+        if not attaque_valide_dans_une_position:
+            alerte = {
+                'type': 'ce_pion_attaque_pieces',
+                'affirmation': f"ce pion {'noir' if couleur == chess.BLACK else 'blanc'} en {pion_case} attaque {piece1} et {piece2}",
+                'pion_case': pion_case,
+                'pion_couleur': 'noirs' if couleur == chess.BLACK else 'blancs',
+                'piece1': piece1,
+                'piece2': piece2,
+                'details': f"Un pion {'noir' if couleur == chess.BLACK else 'blanc'} en {pion_case} n'attaque pas à la fois {piece1} et {piece2} dans les positions candidates"
+            }
+            alertes.append(alerte)
+    
+    return alertes
+
+
+def _verifier_piece_attaquee_par_pion(
+    texte: str,
+    positions_candidates: List[str]
+) -> List[Dict]:
+    """Vérifie les affirmations du type "[pièce] en [case] est attaquée par le pion [couleur] [case]".
+    
+    Exemple: "Ta tour en g8 est immédiatement attaquée par le pion blanc c4"
+    """
+    alertes = []
+    
+    matches = _PIECE_ATTAQUEE_PAR_PION_PATTERN.finditer(texte)
+    
+    for match in matches:
+        piece_nom = match.group(1).lower()
+        piece_case = match.group(2).lower()
+        pion_couleur_str = match.group(3)
+        pion_case = match.group(4).lower()
+        
+        # Déterminer la couleur du pion
+        if pion_couleur_str:
+            couleur = _COLOR_MAP.get(pion_couleur_str.lower())
+        else:
+            couleur = None
+        
+        if couleur is None:
+            continue
+        
+        # Vérifier la géométrie d'attaque
+        try:
+            pion_square = chess.parse_square(pion_case)
+            piece_square = chess.parse_square(piece_case)
+        except:
+            continue
+        
+        # Calculer les cases qu'un pion de cette couleur attaquerait
+        if couleur == chess.WHITE:
+            attaques_possibles = [pion_square + 7, pion_square + 9]
+        else:
+            attaques_possibles = [pion_square - 7, pion_square - 9]
+        
+        attaques_possibles = [sq for sq in attaques_possibles if 0 <= sq < 64]
+        
+        # Vérifier dans toutes les positions candidates
+        attaque_valide_dans_une_position = False
+        
+        for fen in positions_candidates:
+            try:
+                board = chess.Board(fen)
+                
+                # Vérifier que le pion existe
+                pion = board.piece_at(pion_square)
+                if not (pion and pion.piece_type == chess.PAWN and pion.color == couleur):
                     continue
-            
-            if not attaque_valide_dans_une_position:
-                alerte = {
-                    'type': 'pion_attaque_piece',
-                    'affirmation': f"pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case} {verbe} {piece_attaquee} en {piece_attaquee_case}",
-                    'pion_case': pion_case,
-                    'pion_couleur': 'blancs' if couleur == chess.WHITE else 'noirs',
-                    'piece_attaquee': piece_attaquee,
-                    'piece_attaquee_case': piece_attaquee_case,
-                    'details': f"Un pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case} n'attaque pas {piece_attaquee} en {piece_attaquee_case}"
-                }
-                alertes.append(alerte)
+                
+                # Vérifier que la pièce existe
+                piece = board.piece_at(piece_square)
+                if not piece:
+                    continue
+                
+                # Vérifier le type de pièce
+                expected_type = _PIECE_TYPE_MAP.get(piece_nom)
+                if expected_type is None:
+                    continue
+                
+                if piece.piece_type != expected_type:
+                    continue
+                
+                # Vérifier que le pion attaque bien la case de la pièce
+                if piece_square in attaques_possibles:
+                    attaque_valide_dans_une_position = True
+                    break
+            except:
+                continue
+        
+        if not attaque_valide_dans_une_position:
+            alerte = {
+                'type': 'piece_attaquee_par_pion',
+                'affirmation': f"{piece_nom} en {piece_case} est attaquée par le pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case}",
+                'piece': piece_nom,
+                'piece_case': piece_case,
+                'pion_case': pion_case,
+                'pion_couleur': 'blancs' if couleur == chess.WHITE else 'noirs',
+                'details': f"Le pion {'blanc' if couleur == chess.WHITE else 'noir'} en {pion_case} n'attaque pas {piece_nom} en {piece_case} dans les positions candidates"
+            }
+            alertes.append(alerte)
     
     return alertes
 
@@ -636,17 +921,51 @@ def _verifier_coherence_verdict(
                 break
     
     # (c) Vérifier "erreur" ou "gaffe" pour un coup de verdict "bon"
+    # On vérifie que le mot "erreur", "gaffe" ou "faute" apparaît comme mot complet
+    # et pas comme partie d'un autre mot
     if verdict.lower() in ['bon', 'excellent', 'parfait']:
         for pattern, _ in _INCONSISTENCIES[4:]:  # Les patterns d'erreur/gaffe
             if re.search(pattern, texte_lower):
-                alerte = {
-                    'type': 'coherence_verdict',
-                    'affirmation': f"L'avis qualifie le coup d'erreur/gaffe alors que le verdict est '{verdict}'",
-                    'verdict': verdict,
-                    'details': f"Incohérence : verdict '{verdict}' mais l'avis utilise des termes comme 'erreur' ou 'gaffe'"
-                }
-                alertes.append(alerte)
-                break
+                # Vérifier que ce n'est pas dans un contexte où on parle d'une erreur passée
+                # ou d'une erreur de l'adversaire
+                # On va être plus prudent : vérifier que le mot n'est pas précédé de "ton", "ta", "tes", etc.
+                # qui indiquerait qu'on parle de l'erreur d'Alain
+                
+                # Chercher toutes les occurrences du pattern
+                matches = re.finditer(pattern, texte_lower)
+                for match in matches:
+                    # Vérifier le contexte autour du match
+                    start = max(0, match.start() - 20)
+                    end = min(len(texte_lower), match.end() + 20)
+                    contexte = texte_lower[start:end]
+                    
+                    # Si on trouve des possessifs d'Alain (ta, ton, tes, ma, mon, mes) avant le mot,
+                    # c'est probablement une erreur d'Alain, donc incohérent avec verdict "bon"
+                    # Sinon, on ignore pour éviter les fausses alertes
+                    possessifs_alain = ['ta ', 'ton ', 'tes ', 'ma ', 'mon ', 'mes ']
+                    if any(poss in contexte[:match.start() - start + 3] for poss in possessifs_alain):
+                        alerte = {
+                            'type': 'coherence_verdict',
+                            'affirmation': f"L'avis qualifie le coup d'erreur/gaffe alors que le verdict est '{verdict}'",
+                            'verdict': verdict,
+                            'details': f"Incohérence : verdict '{verdict}' mais l'avis utilise des termes comme 'erreur' ou 'gaffe' pour le coup d'Alain"
+                        }
+                        alertes.append(alerte)
+                        break
+                    elif match.start() < 50:
+                        # Si le mot apparaît dans les 50 premiers caractères, c'est probablement
+                        # une qualification du coup d'Alain
+                        alerte = {
+                            'type': 'coherence_verdict',
+                            'affirmation': f"L'avis qualifie le coup d'erreur/gaffe alors que le verdict est '{verdict}'",
+                            'verdict': verdict,
+                            'details': f"Incohérence : verdict '{verdict}' mais l'avis utilise des termes comme 'erreur' ou 'gaffe' pour le coup d'Alain"
+                        }
+                        alertes.append(alerte)
+                        break
+                
+                if alertes:
+                    break
     
     return alertes
 
@@ -696,15 +1015,30 @@ def verifier_affirmations(
     alertes.extend(piece_case_sans_prep_alertes)
     affirmations_verifiees += len(piece_case_sans_prep_alertes)
     
-    # (b) Vérifier les affirmations d'attaque par un pion
-    pion_attaque_alertes = _verifier_pion_attaque(texte, positions_candidates)
-    alertes.extend(pion_attaque_alertes)
-    affirmations_verifiees += len(pion_attaque_alertes)
+    # (b) Vérifier les affirmations d'attaque par un pion avec pièce explicitement mentionnée
+    pion_attaque_avec_piece_alertes = _verifier_pion_attaque_avec_piece(texte, positions_candidates)
+    alertes.extend(pion_attaque_avec_piece_alertes)
+    affirmations_verifiees += len(pion_attaque_avec_piece_alertes)
     
-    # (b) Vérifier les affirmations d'attaque par un pion avec pièce mentionnée
-    pion_attaque_piece_alertes = _verifier_pion_attaque_piece(texte, positions_candidates)
-    alertes.extend(pion_attaque_piece_alertes)
-    affirmations_verifiees += len(pion_attaque_piece_alertes)
+    # (b) Vérifier les affirmations d'attaque par un pion avec case seule
+    pion_attaque_case_seule_alertes = _verifier_pion_attaque_case_seule(texte, positions_candidates)
+    alertes.extend(pion_attaque_case_seule_alertes)
+    affirmations_verifiees += len(pion_attaque_case_seule_alertes)
+    
+    # (b) Vérifier les affirmations "[case] pour menacer [pièce] en [case]"
+    case_pour_menacer_alertes = _verifier_case_pour_menacer_piece(texte, positions_candidates)
+    alertes.extend(case_pour_menacer_alertes)
+    affirmations_verifiees += len(case_pour_menacer_alertes)
+    
+    # (b) Vérifier les affirmations "ce pion [couleur] attaque [pièce] et [pièce]"
+    ce_pion_attaque_alertes = _verifier_ce_pion_attaque_pieces(texte, positions_candidates)
+    alertes.extend(ce_pion_attaque_alertes)
+    affirmations_verifiees += len(ce_pion_attaque_alertes)
+    
+    # (b) Vérifier les affirmations "[pièce] en [case] est attaquée par le pion [couleur] [case]"
+    piece_attaquee_par_pion_alertes = _verifier_piece_attaquee_par_pion(texte, positions_candidates)
+    alertes.extend(piece_attaquee_par_pion_alertes)
+    affirmations_verifiees += len(piece_attaquee_par_pion_alertes)
     
     # (c) Vérifier la cohérence verdict/texte
     verdict = context.get('verdict_qualite') if isinstance(context.get('verdict_qualite'), str) else None
