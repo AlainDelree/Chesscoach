@@ -98,6 +98,9 @@ let exerciseJustReprised   = false;
 // serveur avec le verdict — mêmes raisons que les champs ci-dessus : sans
 // eux, une question de suivi posée dans le chat libre perdrait ce contexte
 // dès le tour suivant.
+// Issue #113 : identifiant unique pour l'exercice en cours, utilisé pour
+// éviter que les réponses tardives de Mistral ne s'accrochent à un autre exercice
+let exerciseCurrentId = null;
 let exercisePiecesDepartTexte    = null;
 let exercisePiecesActuellesTexte = null;
 let exerciseMenaceAdverseTexte   = null;
@@ -1186,27 +1189,60 @@ if (typeof socket !== "undefined") {
     // avec le verdict (pv_meilleur_coup), pas besoin de recalcul côté client.
     _exerciseAddStockfishLine();
     const text = stripMarkdownForChat((data && data.text) || "");
+    const exerciseId = (data && data.exercise_id) || null;
+    const agent = (data && data.agent) || "claude";
+    const model = (data && data.model) || config.LLM_MODEL;
+    
     _exerciseAddCoachLines(text);
     if (text) {
       // Verdict de l'exercice : Alain l'attend, la page doit défiler jusqu'à
       // lui sur mobile (issue #67, comportement voulu par la maquette).
-      _coachRenderBubble("assistant", text, true, undefined, data && data.fiabilite, data && {
+      // Issue #113 : afficher l'auteur clairement
+      _coachRenderBubbleWithAgent("assistant", text, true, undefined, data && data.fiabilite, data && {
         mode_origine: data.mode_origine, fen: data.fen, move: data.coup_propose, log_id: data.log_id,
-      });
+      }, agent, model, exerciseId);
       if (typeof _coachHistory !== "undefined") {
-        _coachHistory.push({ role: "assistant", content: text });
+        _coachHistory.push({ role: "assistant", content: text, agent: agent, model: model });
       }
     }
-    // Avis de Mistral (issue #112) : afficher un bloc séparé sous le
-    // commentaire de Claude, clairement titré "Avis de Mistral"
-    const mistralText = (data && data.mistral_text) || null;
-    const mistralError = (data && data.mistral_error) || null;
-    if (mistralText) {
-      // Afficher le commentaire de Mistral dans une bulle dédiée
-      _coachRenderMistralBubble(stripMarkdownForChat(mistralText));
-    } else if (mistralError) {
-      // Afficher un message discret en cas d'erreur Mistral (consigne 6)
-      _coachRenderMistralError(mistralError);
+    
+    // Issue #113 : Afficher un indicateur que Mistral réfléchit (si configuré)
+    // On affiche cet indicateur uniquement si on est en mode exercice et qu'on attend Mistral
+    if (exerciseId && typeof window.exerciseMistralPending === "undefined") {
+      window.exerciseMistralPending = exerciseId;
+      _coachRenderMistralThinking(exerciseId);
+    }
+    
+    // Mémoriser l'exercise_id courant
+    exerciseCurrentId = exerciseId;
+  });
+
+  // Issue #113 : Gestionnaire pour l'avis de Mistral (événement séparé)
+  socket.on("exercise_mistral_comment", (data) => {
+    const exerciseId = (data && data.exercise_id) || null;
+    const text = (data && data.text) || null;
+    const error = (data && data.error) || null;
+    const logId = (data && data.log_id) || null;
+    const model = (data && data.model) || "mistral-large-latest";
+    const fen = (data && data.fen) || null;
+    const coupPropose = (data && data.coup_propose) || null;
+    
+    // Issue #113, point 5 : Ignorer les réponses obsolètes
+    // Si l'exercise_id ne correspond pas à l'exercice courant, ignorer
+    if (exerciseId && exerciseCurrentId && exerciseId !== exerciseCurrentId) {
+      console.log("[exercice] Ignorer avis Mistral obsolète pour exercice", exerciseId);
+      return;
+    }
+    
+    // Supprimer l'indicateur "Mistral réfléchit..."
+    _coachRemoveMistralThinking(exerciseId);
+    
+    if (error) {
+      // Afficher un message discret en cas d'erreur Mistral
+      _coachRenderMistralErrorWithAgent(error, model, exerciseId);
+    } else if (text) {
+      // Afficher le commentaire de Mistral dans une bulle dédiée avec l'auteur
+      _coachRenderMistralBubbleWithAgent(stripMarkdownForChat(text), model, exerciseId, logId, fen, coupPropose);
     }
   });
 

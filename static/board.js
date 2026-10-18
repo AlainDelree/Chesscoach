@@ -1244,35 +1244,210 @@ function _coachRenderCreditInsuffisant() {
 // Respecte le style existant, sans utiliser la couleur terracotta (réservée
 // aux éléments cliquables).
 function _coachRenderMistralBubble(text) {
-  const history = document.getElementById("coach-history");
-  if (!history) return;
-  const bubble = document.createElement("div");
-  bubble.className = "coach-bubble mistral";
-  // Structure : titre + texte
-  const title = document.createElement("div");
-  title.className = "mistral-title";
-  title.textContent = "Avis de Mistral";
-  bubble.appendChild(title);
-  const content = document.createElement("div");
-  content.className = "mistral-content";
-  content.textContent = text;
-  bubble.appendChild(content);
-  history.appendChild(bubble);
-  _coachScrollReveal(history, bubble, false);
+  // Issue #113 : cette fonction est dépréciée, utiliser _coachRenderMistralBubbleWithAgent
+  _coachRenderMistralBubbleWithAgent(text, "mistral-large-latest", null, null, null, null);
 }
 
 // Message d'erreur discret pour Mistral (issue #112, consigne 6)
 function _coachRenderMistralError(error) {
+  // Issue #113 : cette fonction est dépréciée, utiliser _coachRenderMistralErrorWithAgent
+  _coachRenderMistralErrorWithAgent(error, "mistral-large-latest", null);
+}
+
+// Issue #113 : Afficher une bulle avec l'auteur clairement identifié et les boutons de notation
+function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, agent, model, exerciseId) {
   const history = document.getElementById("coach-history");
   if (!history) return;
+  
+  const bubble = document.createElement("div");
+  bubble.className = "coach-bubble " + role;
+  bubble.dataset.exerciseId = exerciseId || "";
+  bubble.dataset.agent = agent || "";
+  bubble.dataset.model = model || "";
+  
+  // En-tête avec l'auteur
+  const header = document.createElement("div");
+  header.className = "coach-bubble-header";
+  
+  const agentSpan = document.createElement("span");
+  agentSpan.className = "coach-agent";
+  agentSpan.textContent = agent === "claude" ? "Claude" : "Mistral";
+  header.appendChild(agentSpan);
+  
+  const modelSpan = document.createElement("span");
+  modelSpan.className = "coach-model";
+  modelSpan.textContent = model;
+  header.appendChild(modelSpan);
+  
+  bubble.appendChild(header);
+  
+  // Contenu
+  const content = document.createElement("div");
+  content.className = "coach-bubble-content";
+  content.textContent = text;
+  bubble.appendChild(content);
+  
+  // Boutons de notation (issue #113, point 9)
+  if (agent && (agent === "claude" || agent === "mistral")) {
+    const ratingDiv = document.createElement("div");
+    ratingDiv.className = "coach-rating";
+    
+    const btn1 = document.createElement("button");
+    btn1.className = "rating-btn rating-1";
+    btn1.textContent = "1";
+    btn1.title = "Bonne réponse";
+    btn1.dataset.agent = agent;
+    btn1.dataset.model = model;
+    btn1.dataset.exerciseId = exerciseId || "";
+    btn1.dataset.rating = "1";
+    btn1.addEventListener("click", _coachRatingClick);
+    ratingDiv.appendChild(btn1);
+    
+    const btn0 = document.createElement("button");
+    btn0.className = "rating-btn rating-0";
+    btn0.textContent = "0";
+    btn0.title = "Moins bonne réponse";
+    btn0.dataset.agent = agent;
+    btn0.dataset.model = model;
+    btn0.dataset.exerciseId = exerciseId || "";
+    btn0.dataset.rating = "0";
+    btn0.addEventListener("click", _coachRatingClick);
+    ratingDiv.appendChild(btn0);
+    
+    bubble.appendChild(ratingDiv);
+  }
+  
+  // Pastille de fiabilité (si présente)
+  if (fiabilite && role === "assistant") {
+    const fiabiliteSpan = document.createElement("span");
+    fiabiliteSpan.className = "fiabilite-pastille " + fiabilite.couleur;
+    fiabiliteSpan.title = fiabilite.raison;
+    fiabiliteSpan.textContent = "";
+    bubble.appendChild(fiabiliteSpan);
+  }
+  
+  // Bouton Signaler (si présent)
+  if (signalData && role === "assistant") {
+    const signalBtn = document.createElement("button");
+    signalBtn.className = "coach-signal-btn";
+    signalBtn.textContent = "Signaler";
+    signalBtn.title = "Signaler un problème avec ce commentaire";
+    signalBtn.onclick = () => {
+      if (typeof _coachSignalClick === "function") {
+        _coachSignalClick(signalData);
+      }
+    };
+    bubble.appendChild(signalBtn);
+  }
+  
+  history.appendChild(bubble);
+  if (scroll) {
+    _coachScrollReveal(history, bubble, true);
+  } else {
+    _coachScrollReveal(history, bubble, false);
+  }
+}
+
+// Issue #113 : Afficher l'avis de Mistral avec l'auteur et les boutons de notation
+function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen, coupPropose) {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  
+  const bubble = document.createElement("div");
+  bubble.className = "coach-bubble mistral";
+  bubble.dataset.exerciseId = exerciseId || "";
+  bubble.dataset.agent = "mistral";
+  bubble.dataset.model = model || "";
+  bubble.dataset.logId = logId || "";
+  bubble.dataset.fen = fen || "";
+  bubble.dataset.coupPropose = coupPropose || "";
+  
+  // En-tête avec l'auteur
+  const header = document.createElement("div");
+  header.className = "coach-bubble-header";
+  
+  const agentSpan = document.createElement("span");
+  agentSpan.className = "coach-agent";
+  agentSpan.textContent = "Mistral";
+  header.appendChild(agentSpan);
+  
+  const modelSpan = document.createElement("span");
+  modelSpan.className = "coach-model";
+  modelSpan.textContent = model;
+  header.appendChild(modelSpan);
+  
+  bubble.appendChild(header);
+  
+  // Contenu
+  const content = document.createElement("div");
+  content.className = "coach-bubble-content";
+  content.textContent = text;
+  bubble.appendChild(content);
+  
+  // Boutons de notation (issue #113, point 9)
+  const ratingDiv = document.createElement("div");
+  ratingDiv.className = "coach-rating";
+  
+  const btn1 = document.createElement("button");
+  btn1.className = "rating-btn rating-1";
+  btn1.textContent = "1";
+  btn1.title = "Bonne réponse";
+  btn1.dataset.agent = "mistral";
+  btn1.dataset.model = model;
+  btn1.dataset.exerciseId = exerciseId || "";
+  btn1.dataset.logId = logId || "";
+  btn1.dataset.rating = "1";
+  btn1.addEventListener("click", _coachRatingClick);
+  ratingDiv.appendChild(btn1);
+  
+  const btn0 = document.createElement("button");
+  btn0.className = "rating-btn rating-0";
+  btn0.textContent = "0";
+  btn0.title = "Moins bonne réponse";
+  btn0.dataset.agent = "mistral";
+  btn0.dataset.model = model;
+  btn0.dataset.exerciseId = exerciseId || "";
+  btn0.dataset.logId = logId || "";
+  btn0.dataset.rating = "0";
+  btn0.addEventListener("click", _coachRatingClick);
+  ratingDiv.appendChild(btn0);
+  
+  bubble.appendChild(ratingDiv);
+  
+  history.appendChild(bubble);
+  _coachScrollReveal(history, bubble, false);
+}
+
+// Issue #113 : Afficher une erreur Mistral avec l'auteur
+function _coachRenderMistralErrorWithAgent(error, model, exerciseId) {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  
   const bubble = document.createElement("div");
   bubble.className = "coach-bubble mistral-error";
-  const title = document.createElement("div");
-  title.className = "mistral-title";
-  title.textContent = "Avis de Mistral";
-  bubble.appendChild(title);
+  bubble.dataset.exerciseId = exerciseId || "";
+  bubble.dataset.agent = "mistral";
+  bubble.dataset.model = model || "";
+  
+  // En-tête avec l'auteur
+  const header = document.createElement("div");
+  header.className = "coach-bubble-header";
+  
+  const agentSpan = document.createElement("span");
+  agentSpan.className = "coach-agent";
+  agentSpan.textContent = "Mistral";
+  header.appendChild(agentSpan);
+  
+  const modelSpan = document.createElement("span");
+  modelSpan.className = "coach-model";
+  modelSpan.textContent = model;
+  header.appendChild(modelSpan);
+  
+  bubble.appendChild(header);
+  
+  // Contenu
   const content = document.createElement("div");
-  content.className = "mistral-content";
+  content.className = "coach-bubble-content";
   // Message discret selon le type d'erreur
   let errorMsg = "Indisponible";
   if (error === "timeout") {
@@ -1281,11 +1456,128 @@ function _coachRenderMistralError(error) {
     errorMsg = "Clé API non configurée";
   } else if (error.includes("401") || error.includes("403") || error.includes("Unauthorized")) {
     errorMsg = "Clé API invalide";
+  } else {
+    errorMsg = error;
   }
   content.textContent = errorMsg;
   bubble.appendChild(content);
+  
   history.appendChild(bubble);
   _coachScrollReveal(history, bubble, false);
+}
+
+// Issue #113 : Afficher un indicateur "Mistral réfléchit..."
+function _coachRenderMistralThinking(exerciseId) {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  
+  const bubble = document.createElement("div");
+  bubble.className = "coach-bubble mistral-thinking";
+  bubble.dataset.exerciseId = exerciseId || "";
+  
+  const content = document.createElement("div");
+  content.className = "coach-bubble-content";
+  content.textContent = "Mistral réfléchit…";
+  bubble.appendChild(content);
+  
+  history.appendChild(bubble);
+  _coachScrollReveal(history, bubble, false);
+}
+
+// Issue #113 : Supprimer l'indicateur "Mistral réfléchit..."
+function _coachRemoveMistralThinking(exerciseId) {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  
+  const thinkingBubbles = history.querySelectorAll(".coach-bubble.mistral-thinking");
+  thinkingBubbles.forEach(bubble => {
+    if (!exerciseId || bubble.dataset.exerciseId === exerciseId) {
+      bubble.remove();
+    }
+  });
+}
+
+// Issue #113 : Gestion du clic sur les boutons de notation
+function _coachRatingClick(event) {
+  const btn = event.target;
+  const agent = btn.dataset.agent;
+  const model = btn.dataset.model;
+  const exerciseId = btn.dataset.exerciseId;
+  const rating = btn.dataset.rating;
+  const logId = btn.dataset.logId || "";
+  const fen = btn.closest(".coach-bubble")?.dataset.fen || "";
+  const coupPropose = btn.closest(".coach-bubble")?.dataset.coupPropose || "";
+  
+  // Trouver la bulle parente
+  const bubble = btn.closest(".coach-bubble");
+  if (!bubble) return;
+  
+  // Basculer la sélection : si le bouton est déjà sélectionné, le désélectionner
+  const wasSelected = btn.classList.contains("selected");
+  
+  // Désélectionner tous les boutons de notation dans cette bulle
+  bubble.querySelectorAll(".rating-btn").forEach(b => {
+    b.classList.remove("selected");
+  });
+  
+  // Si on clique sur un bouton déjà sélectionné, ne pas en sélectionner
+  if (!wasSelected) {
+    btn.classList.add("selected");
+    
+    // Envoyer la note au serveur pour enregistrement
+    _coachSendRating(agent, model, exerciseId, rating, logId, fen, coupPropose);
+  } else {
+    // Envoyer null pour supprimer la note
+    _coachSendRating(agent, model, exerciseId, null, logId, fen, coupPropose);
+  }
+}
+
+// Issue #113 : Envoyer la note au serveur
+function _coachSendRating(agent, model, exerciseId, rating, logId, fen, coupPropose) {
+  // Envoyer au serveur via SocketIO
+  if (typeof socket !== "undefined" && socket.connected) {
+    try {
+      socket.emit("coach_rating", {
+        agent: agent,
+        model: model,
+        rating: rating,
+        log_id: logId,
+        fen: fen,
+        coup_propose: coupPropose,
+        mode: "exercice"
+      });
+      console.log("[rating] Note envoyée au serveur:", {agent, model, rating, logId});
+    } catch (e) {
+      console.error("[rating] Erreur lors de l'envoi au serveur:", e);
+      // Repli : stocker localement
+      _coachSendRatingFallback(agent, model, exerciseId, rating, logId, fen, coupPropose);
+    }
+  } else {
+    // Si pas connecté, stocker localement
+    _coachSendRatingFallback(agent, model, exerciseId, rating, logId, fen, coupPropose);
+  }
+}
+
+// Issue #113 : Repli pour stocker localement si le serveur n'est pas disponible
+function _coachSendRatingFallback(agent, model, exerciseId, rating, logId, fen, coupPropose) {
+  try {
+    const ratings = JSON.parse(localStorage.getItem("coachRatings") || "[]");
+    const newRating = {
+      timestamp: new Date().toISOString(),
+      agent: agent,
+      model: model,
+      rating: rating,
+      exercise_id: exerciseId,
+      log_id: logId,
+      fen: fen,
+      coup_propose: coupPropose
+    };
+    ratings.push(newRating);
+    localStorage.setItem("coachRatings", JSON.stringify(ratings));
+    console.log("[rating] Note stockée localement:", newRating);
+  } catch (e) {
+    console.error("[rating] Erreur lors du stockage local:", e);
+  }
 }
 
 // ── Attente du coach : indicateur + délai maximal (issue #105) ─────────────

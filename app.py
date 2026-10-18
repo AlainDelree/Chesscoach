@@ -18,9 +18,10 @@ from datetime import datetime
 from pathlib import Path
 
 import chess
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 
+import coach_ratings
 import config
 import exercise_history
 import finales
@@ -2122,19 +2123,16 @@ def on_exercise_answer(data):
         "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
-    # Appel Claude (toujours effectué)
-    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
-    _emit_usage_update()
-    if error:
-        _handle_llm_model_indisponible_si_besoin(error)
-        emit("exercise_error", {"error": error})
-        return
-
-    # Appel Mistral en parallèle (issue #112) - uniquement en mode exercice
-    mistral_response = None
-    mistral_error = None
-    mistral_log_id = None
-    if context.get("mode_exercice"):
+    # Générer un identifiant unique pour cet exercice (issue #113, point 5)
+    # pour éviter que les réponses tardives de Mistral ne s'accrochent à un autre exercice
+    exercise_id = str(uuid.uuid4())
+    
+    # Capturer le sid de la session pour émettre vers elle depuis un thread d'arrière-plan
+    session_sid = request.sid
+    
+    # Appel Mistral en parallèle (issue #113, point 1) - uniquement en mode exercice
+    # Lancer AVANT d'attendre Claude pour que les deux soient vraiment en parallèle
+    if context.get("mode_exercice") and config.MISTRAL_API_KEY:
         mistral_config = {
             "mistral_api_key": config.MISTRAL_API_KEY,
             "mistral_model": config.CHESSCOACH_MISTRAL_MODEL,
@@ -2142,28 +2140,66 @@ def on_exercise_answer(data):
             "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
             "coach_memory": coach_memory,
         }
-        # Exécuter Mistral en parallèle sans bloquer Claude
-        # Utiliser ThreadPoolExecutor pour ne pas bloquer l'événement SocketIO
-        def call_mistral():
+        
+        # Lancer Mistral dans un thread séparé sans attendre
+        def call_mistral_and_emit():
             try:
-                return llm_coach.get_mistral_response(messages, context, mistral_config)
+                mistral_response, mistral_error, mistral_log_id = llm_coach.get_mistral_response(
+                    messages, context, mistral_config
+                )
+                # Émettre vers la session spécifique depuis l'arrière-plan
+                socketio.emit(
+                    "exercise_mistral_comment",
+                    {
+                        "exercise_id": exercise_id,
+                        "text": mistral_response,
+                        "error": mistral_error,
+                        "log_id": mistral_log_id,
+                        "model": config.CHESSCOACH_MISTRAL_MODEL,
+                        "fen": fen_avant,
+                        "coup_propose": coup_propose_san,
+                    },
+                    room=session_sid
+                )
             except Exception as e:
                 logger.warning(f"[EXERCISE] Appel Mistral en arrière-plan échoué : {e}")
-                return None, str(e), None
-
+                socketio.emit(
+                    "exercise_mistral_comment",
+                    {
+                        "exercise_id": exercise_id,
+                        "text": None,
+                        "error": str(e),
+                        "log_id": None,
+                        "model": config.CHESSCOACH_MISTRAL_MODEL,
+                        "fen": fen_avant,
+                        "coup_propose": coup_propose_san,
+                    },
+                    room=session_sid
+                )
+        
         # Lancer dans un thread séparé pour ne pas bloquer
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(call_mistral)
-            # Attendre avec un timeout généreux (consigne 6)
-            try:
-                mistral_response, mistral_error, mistral_log_id = future.result(timeout=120)
-            except concurrent.futures.TimeoutError:
-                mistral_error = "timeout"
-                logger.warning("[EXERCISE] Appel Mistral timeout")
+        mistral_thread = concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(
+            call_mistral_and_emit
+        )
+    else:
+        mistral_thread = None
 
-    # Envoyer la réponse de Claude immédiatement (consigne 3)
+    # Appel Claude (toujours effectué)
+    response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
+    _emit_usage_update()
+    if error:
+        _handle_llm_model_indisponible_si_besoin(error)
+        emit("exercise_error", {"error": error})
+        # Annuler le thread Mistral s'il a été lancé
+        if mistral_thread:
+            mistral_thread.cancel()
+        return
+
+    # Envoyer la réponse de Claude immédiatement (issue #113, point 2)
+    # SANS attendre Mistral, et SANS les champs mistral_*
     emit("exercise_comment", {
         "text": response,
+        "exercise_id": exercise_id,
         # Pastille de fiabilité (issue #87, point 5) : couleur/raison/
         # contrôles déjà calculés par get_coach_response — affichée par
         # le client telle quelle, jamais recalculée côté UI.
@@ -2224,12 +2260,9 @@ def on_exercise_answer(data):
         "idees_coup_propose_texte": idees_coup_propose_texte,
         "idees_coup_reel_texte": idees_coup_reel_texte,
         "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
-        # Avis de Mistral (issue #112) : envoyé avec Claude pour affichage
-        # côté client. Si Mistral a échoué ou n'est pas configuré, ces
-        # champs sont None/absents.
-        "mistral_text": mistral_response,
-        "mistral_error": mistral_error,
-        "mistral_log_id": mistral_log_id,
+        # Agent pour l'affichage (issue #113, point 4)
+        "agent": "claude",
+        "model": config.LLM_MODEL,
     })
 
 
@@ -3519,6 +3552,48 @@ def on_signalement_envoyer(data):
         "traite": False,
     }
     _log_signalement(entry)
+
+
+@socketio.on("coach_rating")
+def on_coach_rating(data):
+    """Enregistrer une note (1/0) pour un avis de coach (issue #113, point 9-10).
+    
+    Reçoit les notes du client et les stocke dans data/coach_ratings.jsonl.
+    Une note modifiée remplace la précédente pour le même avis (même log_id).
+    """
+    try:
+        data = data or {}
+        agent = data.get("agent", "")
+        model = data.get("model", "")
+        rating = data.get("rating")  # peut être 0, 1 ou null (suppression)
+        log_id = data.get("log_id", "")
+        fen = data.get("fen", "")
+        coup_propose = data.get("coup_propose", "")
+        mode = data.get("mode", "exercice")
+        
+        # Convertir rating de string à int ou None
+        if rating is None:
+            rating_value = None
+        elif isinstance(rating, str) and rating.lower() == "null":
+            rating_value = None
+        else:
+            rating_value = int(rating) if rating is not None else None
+        
+        coach_ratings.record_rating(
+            agent=agent,
+            model=model,
+            rating=rating_value,
+            log_id=log_id,
+            fen=fen,
+            coup_propose=coup_propose,
+            mode=mode
+        )
+        
+        # Accuser réception (optionnel, le client ne l'attend pas)
+        emit("coach_rating_ack", {"status": "ok", "agent": agent, "rating": rating_value})
+    except Exception as e:
+        logger.warning(f"[RATING] Erreur lors de l'enregistrement de la note : {e}")
+        emit("coach_rating_error", {"error": str(e)})
 
 
 if __name__ == "__main__":
