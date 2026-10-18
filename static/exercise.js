@@ -1197,6 +1197,17 @@ if (typeof socket !== "undefined") {
         _coachHistory.push({ role: "assistant", content: text });
       }
     }
+    // Avis de Mistral (issue #112) : afficher un bloc séparé sous le
+    // commentaire de Claude, clairement titré "Avis de Mistral"
+    const mistralText = (data && data.mistral_text) || null;
+    const mistralError = (data && data.mistral_error) || null;
+    if (mistralText) {
+      // Afficher le commentaire de Mistral dans une bulle dédiée
+      _coachRenderMistralBubble(stripMarkdownForChat(mistralText));
+    } else if (mistralError) {
+      // Afficher un message discret en cas d'erreur Mistral (consigne 6)
+      _coachRenderMistralError(mistralError);
+    }
   });
 
   socket.on("exercise_error", (data) => {
