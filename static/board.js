@@ -888,6 +888,36 @@ function stripMarkdownForChat(text) {
     .trim();
 }
 
+// Issue #120 : Formate les alertes du vérificateur d'affirmations pour affichage
+// sous la bulle de l'avis. Retourne un élément DOM div contenant les alertes,
+// ou null si aucune alerte n'est présente.
+function _coachFormatFactCheckerAlertes(alertes) {
+  if (!alertes || !Array.isArray(alertes) || alertes.length === 0) {
+    return null;
+  }
+  
+  const container = document.createElement("div");
+  container.className = "coach-fact-checker-alerts";
+  
+  for (const alerte of alertes) {
+    // Extraire l'agent et l'affirmation
+    // Les alertes peuvent venir de deux sources :
+    // 1. De fiabilite.alertes (pour Claude) : {type: "fact_checker", detail: "...", agent: "...", ...}
+    // 2. Directement fact_checker_alertes (pour Mistral) : {type: "...", affirmation: "...", agent: "...", ...}
+    const agent = alerte.agent || "inconnu";
+    const affirmation = alerte.detail || alerte.affirmation || "";
+    
+    if (!affirmation) continue;
+    
+    const alertDiv = document.createElement("div");
+    alertDiv.className = "coach-fact-checker-alert";
+    alertDiv.textContent = `à vérifier (${agent}) : ${affirmation}`;
+    container.appendChild(alertDiv);
+  }
+  
+  return container;
+}
+
 // Révèle un nouveau message du chat coach, que #coach-history défile en
 // interne (bureau, ou mobile si jamais le CSS venait à réintroduire un
 // overflow-y:auto — repli robuste) ou non (mobile, issue #65 point 3 : plus
@@ -1334,6 +1364,17 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
     bubble.appendChild(fiabiliteSpan);
   }
   
+  // Alertes du vérificateur d'affirmations (issue #120)
+  // Extraire les alertes fact_checker de la fiabilité (pour Claude)
+  let factCheckerAlertes = [];
+  if (fiabilite && fiabilite.alertes) {
+    factCheckerAlertes = fiabilite.alertes.filter(a => a.type === "fact_checker");
+  }
+  const alertsContainer = _coachFormatFactCheckerAlertes(factCheckerAlertes);
+  if (alertsContainer) {
+    bubble.appendChild(alertsContainer);
+  }
+  
   // Bouton Signaler (si présent)
   if (signalData && role === "assistant") {
     const signalBtn = document.createElement("button");
@@ -1357,7 +1398,8 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
 }
 
 // Issue #113 : Afficher l'avis de Mistral avec l'auteur et les boutons de notation
-function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen, coupPropose) {
+// Issue #120 : Ajout du paramètre factCheckerAlertes pour afficher les alertes du vérificateur
+function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen, coupPropose, factCheckerAlertes) {
   const history = document.getElementById("coach-history");
   if (!history) return;
   
@@ -1391,6 +1433,12 @@ function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen,
   content.className = "coach-bubble-content";
   content.textContent = text;
   bubble.appendChild(content);
+  
+  // Alertes du vérificateur d'affirmations (issue #120)
+  const alertsContainer = _coachFormatFactCheckerAlertes(factCheckerAlertes);
+  if (alertsContainer) {
+    bubble.appendChild(alertsContainer);
+  }
   
   // Boutons de notation (issue #113, point 9)
   const ratingDiv = document.createElement("div");

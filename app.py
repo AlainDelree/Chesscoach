@@ -2151,7 +2151,7 @@ def on_exercise_answer(data):
         # Lancer Mistral dans un thread séparé sans attendre
         def call_mistral_and_emit():
             try:
-                mistral_response, mistral_error, mistral_log_id = llm_coach.get_mistral_response(
+                mistral_response, mistral_error, mistral_log_id, mistral_fact_checker_alertes = llm_coach.get_mistral_response(
                     messages, context, mistral_config
                 )
                 # Émettre vers la session spécifique depuis l'arrière-plan
@@ -2165,6 +2165,7 @@ def on_exercise_answer(data):
                         "model": config.CHESSCOACH_MISTRAL_MODEL,
                         "fen": fen_avant,
                         "coup_propose": coup_propose_san,
+                        "fact_checker_alertes": mistral_fact_checker_alertes,
                     },
                     room=session_sid
                 )
@@ -2180,6 +2181,7 @@ def on_exercise_answer(data):
                         "model": config.CHESSCOACH_MISTRAL_MODEL,
                         "fen": fen_avant,
                         "coup_propose": coup_propose_san,
+                        "fact_checker_alertes": [],
                     },
                     room=session_sid
                 )

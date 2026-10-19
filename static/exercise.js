@@ -1322,7 +1322,9 @@ if (typeof socket !== "undefined") {
       _coachRenderMistralErrorWithAgent(error, model, exerciseId);
     } else if (text) {
       // Afficher le commentaire de Mistral dans une bulle dédiée avec l'auteur
-      _coachRenderMistralBubbleWithAgent(stripMarkdownForChat(text), model, exerciseId, logId, fen, coupPropose);
+      // Issue #120 : extraire et passer les alertes du vérificateur
+      const factCheckerAlertes = (data && data.fact_checker_alertes) || [];
+      _coachRenderMistralBubbleWithAgent(stripMarkdownForChat(text), model, exerciseId, logId, fen, coupPropose, factCheckerAlertes);
     }
   });
 
