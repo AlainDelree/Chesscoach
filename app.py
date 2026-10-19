@@ -3569,6 +3569,8 @@ def on_signalement_envoyer(data):
         "move": (data.get("move") or "").strip(),
         "reponse": data.get("text") or "",
         "commentaire": (data.get("commentaire") or "").strip(),
+        "agent": (data.get("agent") or "").strip(),
+        "model": (data.get("model") or "").strip(),
         "traite": False,
     }
     _log_signalement(entry)

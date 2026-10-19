@@ -542,14 +542,16 @@
 }
 
 .rating-btn {
-  padding: 0.25rem 0.5rem;
+  padding: 0.5rem 1rem;
   border: 1px solid var(--cc-border);
   border-radius: 4px;
   background: var(--cc-neutral-100);
   color: var(--cc-text);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   transition: all 0.2s;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
 }
 
 .rating-btn:hover {
@@ -573,6 +575,7 @@
 .rating-btn.rating-1.selected {
   background: var(--cc-success);
   border-color: var(--cc-success);
+  color: white;
 }
 
 .rating-btn.rating-0.selected {

@@ -88,8 +88,14 @@ def _tronquer(texte: str, n: int = 160) -> str:
 
 def _afficher_resume(entree: dict, index_journal: dict | None = None) -> None:
     traite = " [traité]" if entree.get("traite") else ""
+    agent = entree.get("agent") or ""
+    model = entree.get("model") or ""
+    agent_info = f"  agent={agent}" if agent else ""
+    model_info = f"  model={model}" if model else ""
     print("=" * 78)
     print(f"id={entree.get('id', '?')}  {entree.get('horodatage', '?')}  mode={entree.get('mode_origine') or '?'}{traite}")
+    if agent_info or model_info:
+        print(f"{agent_info}{model_info}")
     if entree.get("fen"):
         print(f"Position (FEN) : {entree['fen']}")
     journal = _trouver_entree_journal(entree.get("log_id"), index_journal)
@@ -284,7 +290,12 @@ def _construire_resume(entree: dict, journal: dict | None, ligne_sf: str | None)
     (mode/FEN/coups/verdict/Stockfish) — jamais la ligne JSON brute de
     contexte, suivi d'un rappel de la commande pour le texte complet."""
     traite = " [traité]" if entree.get("traite") else ""
-    lignes = [f"=== Signalement {entree.get('id', '?')} — {entree.get('horodatage', '?')}{traite} ==="]
+    agent = entree.get("agent") or ""
+    model = entree.get("model") or ""
+    agent_model = f" — Agent: {agent}" if agent else ""
+    if model:
+        agent_model += f" (modèle: {model})"
+    lignes = [f"=== Signalement {entree.get('id', '?')} — {entree.get('horodatage', '?')}{traite}{agent_model} ==="]
 
     lignes.append("")
     lignes.append("Ce que tu as noté")
