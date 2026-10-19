@@ -39,10 +39,11 @@
 
 ## Fichiers modifiés
 
-- `static/board.css` : Correction style bouton 0 sélectionné
+- `static/board.css` : Correction style bouton 0 sélectionné, bouton 1 sélectionné lisible, boutons plus grands
 - `static/board.js` : Correction bouton Signaler, ajout paramètre agent, ajout bouton Signaler sous Mistral
 - `static/exercise.js` : Correction ordre paramètres, passage de l'agent pour Mistral
-- `app.py` : Ajout champ agent dans exercise_mistral_comment
+- `app.py` : Ajout champ agent dans exercise_mistral_comment, ajout champs agent/model dans on_signalement_envoyer
+- `lire_signalements.py` : Affichage de l'agent et du modèle dans les résumés de signalements
 
 ## Vérification
 
@@ -50,12 +51,15 @@ Les corrections ont été vérifiées par analyse de code :
 - L'en-tête des bulles affiche maintenant l'agent correct (Claude ou Mistral)
 - Les boutons 1/0 sont présents sous les deux types de bulles
 - Le bouton 0 sélectionné a un texte blanc sur fond brun
+- Le bouton 1 sélectionné a un texte blanc sur fond vert
+- Les boutons ont une taille confortable (min-width/height: 2.5rem, padding augmenté)
 - Le bouton Signaler est présent et fonctionnel sous les deux bulles
-- Les signalements incluent l'agent et le modèle dans les données envoyées
+- Les signalements incluent l'agent et le modèle dans les données envoyées et enregistrées
+- La fonction `sigcoach` (lire_signalements.py) affiche maintenant l'agent et le modèle dans le résumé
 
 **À vérifier par Alain sur GSM** :
 - L'affichage visuel des bulles avec les bons auteurs
-- Le fonctionnement des boutons de notation (enregistrement dans coach_ratings.jsonl)
-- Le fonctionnement du bouton Signaler (enregistrement dans data/logs/signalements.log)
-- La lisibilité du bouton 0 sélectionné
-- La fonction `sigcoach` affiche toujours correctement le dernier signalement avec l'agent
+- Le fonctionnement des boutons de notation (enregistrement dans coach_ratings.jsonl avec le bon agent)
+- Le fonctionnement du bouton Signaler (enregistrement dans data/logs/signalements.log avec le bon agent)
+- La lisibilité des boutons 0 et 1 sélectionnés
+- La fonction `sigcoach` affiche correctement le dernier signalement avec l'agent et le modèle
