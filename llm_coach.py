@@ -3002,11 +3002,12 @@ def get_mistral_response(messages, context, config):
       config       : dict avec au moins "mistral_api_key" et optionnellement
                      "mistral_model" (défaut : mistral-large-latest)
 
-    Retourne (réponse_mistral, erreur_mistral, log_id_mistral) — un seul de
-    réponse_mistral/erreur_mistral est non vide/non None. `log_id_mistral` est
-    l'identifiant de l'entrée écrite dans coach_calls.log pour cet appel.
-    Si MISTRAL_API_KEY est absente ou vide, retourne (None, None, None) sans
-    faire d'appel.
+    Retourne (réponse_mistral, erreur_mistral, log_id_mistral, fact_checker_alertes) —
+    un seul de réponse_mistral/erreur_mistral est non vide/non None. `log_id_mistral`
+    est l'identifiant de l'entrée écrite dans coach_calls.log pour cet appel.
+    `fact_checker_alertes` contient les alertes du vérificateur d'affirmations
+    (issue #117/#120). Si MISTRAL_API_KEY est absente ou vide, retourne
+    (None, None, None, []) sans faire d'appel.
     """
     mistral_api_key = (config or {}).get("mistral_api_key", "")
     # Consigne 5 : si MISTRAL_API_KEY est absente ou vide, aucun appel
@@ -3095,7 +3096,7 @@ def get_mistral_response(messages, context, config):
             log_path, prompt_sys, context, clean_messages, mode_origine,
             model=f"mistral:{mistral_model}", erreur=erreur, temperature=mistral_temperature_log
         )
-        return None, erreur, mistral_log_id
+        return None, erreur, mistral_log_id, []
 
     response = (response or "").strip()
 
@@ -3131,4 +3132,4 @@ def get_mistral_response(messages, context, config):
         fact_checker_affirmations_verifiees=fact_checker_affirmations_verifiees,
         fact_checker_affirmations_ignorees=fact_checker_affirmations_ignorees,
     )
-    return response, None, mistral_log_id
+    return response, None, mistral_log_id, fact_checker_alertes

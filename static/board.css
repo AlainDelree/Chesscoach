@@ -696,6 +696,25 @@
   .coach-fiabilite-wrap:hover .coach-fiabilite-detail { display: block; }
 }
 
+/* Alertes du vérificateur d'affirmations (issue #120) : mention discrète
+   sous la bulle de l'avis, une ligne par alerte. Style neutre (pas de
+   terracotta, réservée aux éléments cliquables) et lisible sur mobile.
+   Couleur : gris moyen pour rester discret mais lisible sur fond clair.
+   Taille : légèrement plus petite que le texte principal.
+   Espacement : marge réduite pour ne pas trop espacer les bulles.
+   Word-break : pour éviter le débordement sur mobile. */
+.coach-fact-checker-alerts {
+  margin-top: 4px;
+  font-size: 0.85rem;
+  color: #555;
+  line-height: 1.3;
+  word-break: break-word;
+  max-width: 100%;
+}
+.coach-fact-checker-alert {
+  margin-bottom: 2px;
+}
+
 /* Bouton "Signaler" sous chaque réponse du coach (issue #89) : terracotta
    (--cc-accent, réservé au cliquable, cf. en-tête de ce fichier), discret
    (texte souligné, pas un gros bouton plein) pour ne pas réduire la
