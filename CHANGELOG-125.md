@@ -69,8 +69,10 @@ Les six exemples annotés par Lichess ont été testés et donnent les résultat
 - Les seuils fixes en centipions sont conservés pour la détection des erreurs
 - Seul le verdict **affiché et transmis au coach** utilise la méthode officielle Lichess
 - Les anciens appels à `evaluate_move()` ont été adaptés pour utiliser le nouveau format de retour
+- Correction des appels oubliés dans `non_regression_coach.py` et `engine_stockfish.py` (méthode `get_punishment_line`)
 
 ## Points non couverts
 
 - Les scripts de bilan et tableaux des journaux n'ont pas été modifiés (à faire si nécessaire)
 - La vérification en conditions réelles avec des parties complètes n'a pas été testée (nécessite un environnement complet)
+- Le script `lire_journal_coach.py` affiche déjà automatiquement tous les champs du contexte, y compris les nouveaux champs Lichess (`verdict_qualite_officiel`, `eval_before_cp`, `eval_after_cp`, `win_prob_drop`)
