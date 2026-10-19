@@ -730,7 +730,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
-  margin-top: 6px;
+  margin-top: 0.75rem;
   max-width: 100%;
 }
 .coach-signaler-btn {
@@ -758,6 +758,12 @@
   gap: 6px;
   width: 100%;
   max-width: 260px;
+}
+
+.coach-signaler-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 .coach-signaler-textarea {
   box-sizing: border-box;
@@ -787,6 +793,26 @@
   cursor: pointer;
 }
 .coach-signaler-send-btn:hover { background: var(--cc-accent-hover); }
+
+.coach-signaler-cancel-btn {
+  align-self: flex-start;
+  margin: 0;
+  min-height: 0;
+  padding: 4px 14px;
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-bg);
+  color: var(--cc-text);
+  font-family: var(--cc-font-body);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.coach-signaler-cancel-btn:hover {
+  background: var(--cc-neutral-100);
+  border-color: var(--cc-neutral-200);
+}
 
 /* Séparateur discret entre deux parties/exercices dans le chat (issue #64) —
    les anciens échanges restent visibles à l'écran, seulement démarqués de la

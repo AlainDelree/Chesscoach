@@ -1028,11 +1028,13 @@ document.addEventListener("click", (e) => {
 // `container` : élément DOM où ajouter le bouton (bulle du chat ici, ou bloc
 // de commentaire par coup de l'analyse de partie, cf. static/game_analysis.js,
 // qui réutilise cette même fonction).
-// `meta` : {mode_origine, fen, move, text, log_id} — champs absents/vides
-// tolérés (ex. message canné sans contexte réel, ou réponse jamais
-// journalisée) : le signalement est alors enregistré avec ce qui est
-// disponible à l'écran, cf. app.py on_signalement_envoyer et
+// `meta` : {mode_origine, fen, move, text, log_id, agent, model} — champs
+// absents/vides tolérés (ex. message canné sans contexte réel, ou réponse
+// jamais journalisée) : le signalement est alors enregistré avec ce qui
+// est disponible à l'écran, cf. app.py on_signalement_envoyer et
 // lire_signalements.py (script de lecture, racine du projet).
+// Issue #122 : ajoute un champ de texte multiligne "Pourquoi ce signalement ?"
+// avec boutons "Envoyer le signalement" et "Annuler", et transmet agent/model.
 function _coachBuildSignalerUI(container, meta) {
   meta = meta || {};
   const wrap = document.createElement("div");
@@ -1050,18 +1052,38 @@ function _coachBuildSignalerUI(container, meta) {
   const textarea = document.createElement("textarea");
   textarea.className = "coach-signaler-textarea";
   textarea.rows = 2;
-  textarea.placeholder = "Commentaire (facultatif)...";
+  textarea.placeholder = "Pourquoi ce signalement ?";
+
+  const buttonsDiv = document.createElement("div");
+  buttonsDiv.className = "coach-signaler-buttons";
 
   const sendBtn = document.createElement("button");
   sendBtn.type = "button";
   sendBtn.className = "coach-signaler-send-btn";
-  sendBtn.textContent = "Envoyer";
+  sendBtn.textContent = "Envoyer le signalement";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "coach-signaler-cancel-btn";
+  cancelBtn.textContent = "Annuler";
+
+  buttonsDiv.appendChild(sendBtn);
+  buttonsDiv.appendChild(cancelBtn);
 
   form.appendChild(textarea);
-  form.appendChild(sendBtn);
+  form.appendChild(buttonsDiv);
 
   btn.addEventListener("click", () => {
     form.style.display = form.style.display === "none" ? "flex" : "none";
+    // Issue #122 : faire défiler jusqu'au champ pour que le clavier ne le
+    // masque pas sur téléphone
+    textarea.scrollIntoView({ behavior: "smooth", block: "center" });
+    textarea.focus();
+  });
+
+  cancelBtn.addEventListener("click", () => {
+    form.style.display = "none";
+    textarea.value = "";
   });
 
   sendBtn.addEventListener("click", () => {
@@ -1073,6 +1095,8 @@ function _coachBuildSignalerUI(container, meta) {
         text: meta.text || "",
         log_id: meta.log_id || null,
         commentaire: textarea.value.trim(),
+        agent: meta.agent || "",
+        model: meta.model || "",
       });
     }
     // Un signalement par message (issue #89) : le bouton grisé empêche tout
@@ -1377,32 +1401,14 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
     bubble.appendChild(alertsContainer);
   }
   
-  // Bouton Signaler (si présent)
+  // Bouton Signaler (si présent) — issue #122 : rétablir le champ de
+  // justification comme dans l'issue #89
   if (signalData && role === "assistant") {
-    const signalBtn = document.createElement("button");
-    signalBtn.className = "coach-signal-btn";
-    signalBtn.textContent = "Signaler";
-    signalBtn.title = "Signaler un problème avec ce commentaire";
-    signalBtn.onclick = () => {
-      // Issue #121 : corriger le bouton Signaler pour qu'il fonctionne
-      // Utiliser socket.emit directement comme dans _coachBuildSignalerUI
-      if (typeof socket !== "undefined" && socket.connected) {
-        socket.emit("signalement_envoyer", {
-          mode_origine: signalData.mode_origine || "",
-          fen: signalData.fen || "",
-          move: signalData.move || "",
-          text: text || "",
-          log_id: signalData.log_id || null,
-          commentaire: "",
-          agent: agent || "",
-          model: model || ""
-        });
-      }
-      // Marquer le bouton comme utilisé
-      signalBtn.textContent = "Signalé";
-      signalBtn.disabled = true;
-    };
-    bubble.appendChild(signalBtn);
+    _coachBuildSignalerUI(bubble, Object.assign({}, signalData || {}, {
+      text: text,
+      agent: agent,
+      model: model
+    }));
   }
   
   history.appendChild(bubble);
@@ -1487,36 +1493,19 @@ function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen,
   
   bubble.appendChild(ratingDiv);
   
-  // Bouton Signaler (issue #121)
-  // Construire signalData à partir des paramètres
+  // Bouton Signaler — issue #122 : rétablir le champ de justification
+  // comme dans l'issue #89
   const signalData = {
     mode_origine: "exercice",
     fen: fen || "",
     move: coupPropose || "",
     log_id: logId || null
   };
-  const signalBtn = document.createElement("button");
-  signalBtn.className = "coach-signal-btn";
-  signalBtn.textContent = "Signaler";
-  signalBtn.title = "Signaler un problème avec ce commentaire";
-  signalBtn.onclick = () => {
-    if (typeof socket !== "undefined" && socket.connected) {
-      socket.emit("signalement_envoyer", {
-        mode_origine: signalData.mode_origine || "",
-        fen: signalData.fen || "",
-        move: signalData.move || "",
-        text: text || "",
-        log_id: signalData.log_id || null,
-        commentaire: "",
-        agent: agent || "mistral",
-        model: model || ""
-      });
-    }
-    // Marquer le bouton comme utilisé
-    signalBtn.textContent = "Signalé";
-    signalBtn.disabled = true;
-  };
-  bubble.appendChild(signalBtn);
+  _coachBuildSignalerUI(bubble, Object.assign({}, signalData, {
+    text: text,
+    agent: agent,
+    model: model
+  }));
   
   history.appendChild(bubble);
   _coachScrollReveal(history, bubble, false);
