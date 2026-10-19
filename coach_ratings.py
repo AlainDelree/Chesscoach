@@ -15,8 +15,11 @@ Format : une ligne JSON par note, avec les champs :
   - fen : FEN de la position
   - coup_propose : coup joué (SAN)
   - mode : mode (ex: "exercice")
+  - version_info : dict avec commit_hash, commit_message, modified, last_issue, serie
+    (issue #124) — informations de version au moment où l'AVIS a été produit
 
 Issue #113, points 9-11.
+Issue #124 : Suite #120 — enregistrer la version du code et une étiquette de série.
 """
 
 import json
@@ -27,6 +30,66 @@ from pathlib import Path
 import config
 
 RATINGS_PATH = os.path.join(config.DATA_DIR, "coach_ratings.jsonl")
+
+
+def _get_coach_calls_files():
+    """Retourne la liste de tous les fichiers coach_calls*.log (y compris archives mensuelles)."""
+    log_dir = Path(config.COACH_CALLS_LOG_PATH).parent
+    log_base = Path(config.COACH_CALLS_LOG_PATH)
+    # Pattern : coach_calls.log et coach_calls-AAAA-MM.log
+    return sorted(log_dir.glob(f"{log_base.stem}*{log_base.suffix}"), key=lambda p: p.name)
+
+
+def _get_version_info_from_log_id(log_id: str) -> dict:
+    """Récupère les informations de version depuis une entrée de journal.
+    
+    Cherche dans tous les fichiers coach_calls*.log l'entrée avec l'ID donné
+    et retourne son champ version_info si présent, sinon un dict avec
+    toutes les valeurs à "inconnue"/None.
+    
+    Args:
+        log_id: identifiant de l'appel (champ "id" dans le journal)
+        
+    Returns:
+        Dict avec les clés : commit_hash, commit_message, modified, last_issue, serie
+        ou toutes les valeurs à "inconnue"/None si l'entrée n'est pas trouvée.
+    """
+    log_files = _get_coach_calls_files()
+    
+    for log_path in log_files:
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            entry = json.loads(line)
+                            if entry.get("id") == log_id:
+                                # Retourner version_info si présent, sinon valeurs par défaut
+                                version_info = entry.get("version_info")
+                                if version_info is not None:
+                                    return version_info
+                                else:
+                                    # Entrée ancienne sans version_info
+                                    return {
+                                        "commit_hash": "inconnue",
+                                        "commit_message": "inconnue",
+                                        "modified": False,
+                                        "last_issue": None,
+                                        "serie": "",
+                                    }
+            except Exception:
+                # Ignorer les erreurs de lecture et continuer avec le fichier suivant
+                continue
+    
+    # Si aucune entrée n'est trouvée, retourner "inconnue"
+    return {
+        "commit_hash": "inconnue",
+        "commit_message": "inconnue",
+        "modified": False,
+        "last_issue": None,
+        "serie": "",
+    }
 
 
 def _ensure_ratings_dir():
@@ -40,6 +103,11 @@ def record_rating(agent, model, rating, log_id, fen, coup_propose, mode="exercic
     Si une note existe déjà pour le même (agent, log_id), elle est remplacée
     (pas de doublon).
     
+    Issue #124 : Les informations de version (commit_hash, commit_message, modified,
+    last_issue, serie) sont lues depuis l'entrée de journal correspondante via
+    l'identifiant d'appel (log_id). Si l'entrée de journal est introuvable,
+    toutes les valeurs sont enregistrées comme "inconnue".
+    
     Args:
         agent: "claude" ou "mistral"
         model: modèle utilisé (ex: "claude-3-5-sonnet-20241022", "mistral-large-latest")
@@ -50,6 +118,9 @@ def record_rating(agent, model, rating, log_id, fen, coup_propose, mode="exercic
         mode: mode (ex: "exercice")
     """
     _ensure_ratings_dir()
+    
+    # Récupérer les informations de version depuis le journal (issue #124)
+    version_info = _get_version_info_from_log_id(log_id)
     
     # Lire les notes existantes
     existing_ratings = []
@@ -87,6 +158,7 @@ def record_rating(agent, model, rating, log_id, fen, coup_propose, mode="exercic
         "fen": fen,
         "coup_propose": coup_propose,
         "mode": mode,
+        "version_info": version_info,  # Issue #124
     }
     
     # Ajouter la nouvelle note

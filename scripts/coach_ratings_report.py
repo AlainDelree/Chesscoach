@@ -6,16 +6,26 @@ Script en ligne de commande qui lit data/coach_ratings.jsonl et affiche :
 - le total de 1 et de 0 par agent
 - la liste des cas où les deux agents divergent (l'un à 1, l'autre à 0)
   avec la position (FEN), le coup joué et le texte des deux avis
+- le regroupement par version (commit et dernière issue citée) avec,
+  par agent, le nombre de 1 et de 0 et la période couverte (issue #124)
 
 Usage :
-    python3 scripts/coach_ratings_report.py
+    python3 scripts/coach_ratings_report.py [--serie SERIE] [--group-by-version]
+
+Options :
+    --serie SERIE       Filtre les notes par étiquette de série
+    --group-by-version  Affiche le regroupement par version (désactivé par défaut
+                       pour maintenir la compatibilité)
 
 Issue #113, point 11.
+Issue #124 : Suite #120 — enregistrer la version du code et une étiquette de série.
 """
 
+import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Ajouter le répertoire parent au path pour importer config
@@ -24,6 +34,186 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 RATINGS_PATH = os.path.join(config.DATA_DIR, "coach_ratings.jsonl")
+
+
+def _get_version_key(rating: dict) -> str:
+    """Retourne une clé de version pour le regroupement.
+    
+    La clé est basée sur commit_hash et last_issue.
+    Si version_info est absent ou incomplet, retourne "inconnue (avant ce suivi)".
+    
+    Args:
+        rating: une note (dict) depuis coach_ratings.jsonl
+        
+    Returns:
+        Chaîne représentant la version.
+    """
+    version_info = rating.get("version_info")
+    
+    if version_info is None:
+        return "inconnue (avant ce suivi)"
+    
+    commit_hash = version_info.get("commit_hash", "inconnue")
+    last_issue = version_info.get("last_issue")
+    
+    # Si commit_hash est "inconnue", retourner la clé spéciale
+    if commit_hash == "inconnue":
+        return "inconnue (avant ce suivi)"
+    
+    # Construire la clé de version
+    parts = [commit_hash]
+    if last_issue:
+        parts.append(f"issue-{last_issue}")
+    
+    return " ".join(parts)
+
+
+def _get_serie(rating: dict) -> str:
+    """Retourne l'étiquette de série d'une note.
+    
+    Args:
+        rating: une note (dict) depuis coach_ratings.jsonl
+        
+    Returns:
+        L'étiquette de série ou une chaîne vide.
+    """
+    version_info = rating.get("version_info")
+    if version_info is None:
+        return ""
+    return version_info.get("serie", "")
+
+
+def _get_timestamp(rating: dict) -> datetime | None:
+    """Retourne le timestamp d'une note.
+    
+    Args:
+        rating: une note (dict) depuis coach_ratings.jsonl
+        
+    Returns:
+        Objet datetime ou None.
+    """
+    timestamp_str = rating.get("timestamp")
+    if timestamp_str:
+        try:
+            return datetime.fromisoformat(timestamp_str)
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
+def _group_by_version(ratings: list) -> dict:
+    """Regroupe les notes par version.
+    
+    Args:
+        ratings: liste de notes
+        
+    Returns:
+        Dict avec :
+          - clés : clés de version (ex: "a1b2c3d issue-124")
+          - valeurs : dict avec :
+              - agents : dict par agent (claude, mistral) avec counts de 1 et 0
+              - timestamps : liste de timestamps pour calculer la période
+              - series : set d'étiquettes de série
+    """
+    groups = {}
+    
+    for rating in ratings:
+        version_key = _get_version_key(rating)
+        agent = rating.get("agent", "").lower()
+        rating_value = rating.get("rating")
+        timestamp = _get_timestamp(rating)
+        serie = _get_serie(rating)
+        
+        # Ignorer les notes sans rating valide
+        if rating_value not in (0, 1) or agent not in ["claude", "mistral"]:
+            continue
+        
+        # Initialiser le groupe si nécessaire
+        if version_key not in groups:
+            groups[version_key] = {
+                "agents": {"claude": {"1": 0, "0": 0}, "mistral": {"1": 0, "0": 0}},
+                "timestamps": [],
+                "series": set(),
+            }
+        
+        # Mettre à jour les comptes
+        groups[version_key]["agents"][agent][str(rating_value)] += 1
+        
+        # Ajouter le timestamp
+        if timestamp is not None:
+            groups[version_key]["timestamps"].append(timestamp)
+        
+        # Ajouter la série
+        if serie:
+            groups[version_key]["series"].add(serie)
+    
+    return groups
+
+
+def _format_period(timestamps: list) -> str:
+    """Formate une période à partir d'une liste de timestamps.
+    
+    Args:
+        timestamps: liste d'objets datetime
+        
+    Returns:
+        Chaîne décrivant la période (ex: "2026-01-01 à 2026-01-15").
+    """
+    if not timestamps:
+        return "N/A"
+    
+    timestamps_sorted = sorted(timestamps)
+    start = timestamps_sorted[0]
+    end = timestamps_sorted[-1]
+    
+    if start.date() == end.date():
+        return start.strftime("%Y-%m-%d")
+    else:
+        return f"{start.strftime('%Y-%m-%d')} à {end.strftime('%Y-%m-%d')}"
+
+
+def _display_version_grouping(ratings: list, filter_serie: str | None = None):
+    """Affiche le regroupement par version.
+    
+    Args:
+        ratings: liste de toutes les notes
+        filter_serie: optionnel, filtre par étiquette de série
+    """
+    # Filtrer par série si demandé
+    if filter_serie is not None:
+        ratings = [r for r in ratings if _get_serie(r) == filter_serie]
+    
+    # Regrouper par version
+    groups = _group_by_version(ratings)
+    
+    if not groups:
+        print("Aucune note avec information de version trouvée.")
+        return
+    
+    print("Regroupement par version (issue #124) :")
+    print("-" * 80)
+    
+    # Trier les groupes par clé de version
+    sorted_versions = sorted(groups.keys())
+    
+    for version_key in sorted_versions:
+        group = groups[version_key]
+        
+        print(f"\n  Version : {version_key}")
+        print(f"    Période : {_format_period(group['timestamps'])}")
+        if group["series"]:
+            print(f"    Séries : {', '.join(sorted(group['series']))}")
+        
+        # Afficher les statistiques par agent
+        for agent in ["claude", "mistral"]:
+            counts = group["agents"][agent]
+            total_1 = counts["1"]
+            total_0 = counts["0"]
+            total = total_1 + total_0
+            if total > 0:
+                print(f"    {agent.capitalize()} : {total_1} × 1, {total_0} × 0 (total: {total})")
+    
+    print()
 
 
 def _get_coach_calls_files():
@@ -146,6 +336,24 @@ def _afficher_statistiques_fact_checker(calls):
 
 
 def main():
+    # Parser les arguments de ligne de commande
+    parser = argparse.ArgumentParser(
+        description="Rapport sur les notes Claude/Mistral avec regroupement par version (issue #124)"
+    )
+    parser.add_argument(
+        "--serie", "--série",
+        type=str,
+        default=None,
+        help="Filtre les notes par étiquette de série"
+    )
+    parser.add_argument(
+        "--group-by-version",
+        action="store_true",
+        default=False,
+        help="Affiche le regroupement par version (désactivé par défaut pour maintenir la compatibilité)"
+    )
+    args = parser.parse_args()
+    
     print("=" * 80)
     print("Rapport des notes Claude/Mistral")
     print("=" * 80)
@@ -242,6 +450,11 @@ def main():
             print()
     else:
         print("Aucun cas divergent trouvé.")
+    
+    # Afficher le regroupement par version si demandé (issue #124)
+    if args.group_by_version:
+        print()
+        _display_version_grouping(ratings, args.serie)
     
     print("=" * 80)
 

@@ -35,6 +35,7 @@ import config
 import coach_reliability
 import game_facts
 import fact_checker
+import version_info
 
 logger = logging.getLogger("chesscoach.llm_coach")
 
@@ -1962,7 +1963,8 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
                      fiabilite: dict = None, avertissement: str = None,
                      premiere_reponse: dict = None, temperature: str = None,
                      fact_checker_alertes: list = None, fact_checker_affirmations_verifiees: int = 0,
-                     fact_checker_affirmations_ignorees: int = 0) -> str | None:
+                     fact_checker_affirmations_ignorees: int = 0,
+                     version_info_param: dict = None) -> str | None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -2036,6 +2038,17 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     envoyé (comportement par défaut de l'API utilisé). Ce champ permet de
     tracer les conditions exactes de chaque appel pour une comparabilité
     future entre séries d'exercices.
+
+    Étendu par l'issue #124 : `version_info` (dict ou None) — informations de
+    version du code au moment de l'appel, contenant :
+      - commit_hash: identifiant court du commit HEAD
+      - commit_message: première ligne du message de commit
+      - modified: bool, True si des fichiers suivis ont des changements non commités
+      - last_issue: numéro de la dernière issue citée dans l'historique récent
+      - serie: étiquette de série depuis CHESSCOACH_SERIE
+    Ces informations sont enregistrées pour chaque appel afin de permettre un
+    regroupement et un filtrage par version dans les rapports ultérieurs.
+    Si version_info est None, les informations de version ne sont pas incluses.
     """
     if not log_path:
         return None
@@ -2067,6 +2080,19 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
             entry["fact_checker_affirmations_verifiees"] = fact_checker_affirmations_verifiees
         if fact_checker_affirmations_ignorees > 0:
             entry["fact_checker_affirmations_ignorees"] = fact_checker_affirmations_ignorees
+        # Ajouter les informations de version (issue #124)
+        # Si version_info_param n'est pas fourni, utiliser les informations globales
+        if version_info_param is None:
+            version_info_param = version_info.get_version_info()
+        
+        if version_info_param is not None:
+            entry["version_info"] = {
+                "commit_hash": version_info_param.get("commit_hash", "inconnue"),
+                "commit_message": version_info_param.get("commit_message", "inconnue"),
+                "modified": version_info_param.get("modified", False),
+                "last_issue": version_info_param.get("last_issue"),
+                "serie": version_info_param.get("serie", ""),
+            }
         with open(fichier_actif, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         _purge_vieux_logs_coach(log_path, fichier_actif)

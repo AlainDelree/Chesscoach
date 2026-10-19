@@ -29,6 +29,7 @@ import game_facts
 import lichess_puzzles
 import llm_coach
 import opening_book
+import version_info
 from engine_stockfish import (
     DEPTH_ANALYSE_PARTIE,
     DEPTH_EXERCICE_TEMPS_REEL,
@@ -93,6 +94,10 @@ class _FiltreAccesDistant:
 app.wsgi_app = _FiltreAccesDistant(app.wsgi_app)
 
 coach_memory = llm_coach.load_coach_memory(config.COACH_MEMORY_PATH)
+
+# Initialiser les informations de version du code (issue #124)
+# Calculé une fois au démarrage et mémorisé
+version_info.get_version_info()
 
 
 def _load_erreurs_detectees(path) -> list:
