@@ -149,6 +149,11 @@ let exerciseReponseAdverseMeilleurCoupTexte = null;
 // suivant" doit relancer la MÊME catégorie que l'exercice en cours même si
 // Alain a changé le sélecteur entre-temps sans relancer de tirage.
 let exerciseCurrentPhase   = "toutes";
+// Phase RÉELLE de l'exercice actuellement affiché (issue #123) — distincte de
+// exerciseCurrentPhase ci-dessus (le filtre DEMANDÉ par l'utilisateur).
+// Utilisée uniquement pour l'affichage dans la ligne d'information sous
+// l'échiquier (ex: "Blancs à jouer · Mes erreurs · milieu de partie").
+let exerciseActualPhase    = "toutes";
 
 // Source du dernier exercice tiré (issue #78 : "mes_erreurs", "lichess", ou
 // "position_precise" depuis l'issue #83), même rôle qu'exerciseCurrentPhase
@@ -516,15 +521,33 @@ function startExercise(phaseOverride, sourceOverride, categorieOverride, fenOver
   if (typeof _clearGameAnalysisDisplay === "function") _clearGameAnalysisDisplay();
   const statusEl = document.getElementById("exercise-status");
   if (statusEl) statusEl.textContent = "Chargement d'une position...";
+  // Mémoriser les filtres DEMANDÉS pour "Exercice suivant" (issue #123) —
+  // AVANT l'appel serveur, pour ne pas être écrasés par la réponse qui
+  // contient les valeurs RÉELLES (phase réelle, etc.). phaseOverride etc.
+  // sont fournis par startNextExercise pour relancer la même demande.
+  const phaseDemandee = phaseOverride || exercisePhaseFiltre();
+  const sourceDemandee = source;
+  const categorieDemandee = categorieOverride || exerciseCategorieFiltre();
+  const fenDemande = fenPrecis;
+  
   // phaseOverride/sourceOverride/categorieOverride/fenOverride (issue
   // #76/#78/#83, startNextExercise ci-dessous) : phase/source/catégorie/FEN
   // de l'exercice en cours plutôt que ceux des sélecteurs, quand fournis.
   socket.emit("exercise_new", {
-    phase: phaseOverride || exercisePhaseFiltre(),
-    source,
-    categorie: categorieOverride || exerciseCategorieFiltre(),
-    fen: fenPrecis,
+    phase: phaseDemandee,
+    source: sourceDemandee,
+    categorie: categorieDemandee,
+    fen: fenDemande,
   });
+  
+  // Mémorisation pour "Exercice suivant" (issue #123) : doit se faire
+  // SYNCHRONEMENT ici, avant que la réponse serveur n'arrive et ne déclenche
+  // le callback qui écrase ces variables. exerciseCurrentPhase etc. sont
+  // utilisées par startNextExercise pour relancer la même demande.
+  exerciseCurrentPhase = phaseDemandee;
+  exerciseCurrentSource = sourceDemandee;
+  exerciseCurrentCategorie = categorieDemandee;
+  exerciseCurrentFenPrecis = (sourceDemandee === "position_precise") ? fenDemande : null;
 }
 
 function startNextExercise() {
@@ -896,7 +919,9 @@ function _exerciseUpdateStatementLine() {
   } else if (exerciseCurrentSource === "position_precise") {
     texte = `${camp} à jouer · Position libre`;
   } else {
-    const phaseLibelle = EXERCISE_PHASE_LIBELLES[exerciseCurrentPhase] || exerciseCurrentPhase;
+    // Phase RÉELLE de l'exercice affiché (issue #123) — exerciseActualPhase,
+    // pas exerciseCurrentPhase (le filtre demandé).
+    const phaseLibelle = EXERCISE_PHASE_LIBELLES[exerciseActualPhase] || exerciseActualPhase;
     texte = `${camp} à jouer · Mes erreurs · ${phaseLibelle}`;
   }
   // Avertissement en une phrase (issue #83) si la phase demandée a dû être
@@ -1157,21 +1182,22 @@ if (typeof socket !== "undefined") {
     if (retryBtnReset) retryBtnReset.style.display = "none";
     exerciseFenAvant  = data.fen;
     exerciseCampAlain = data.camp_alain;
-    exerciseCurrentPhase  = data.phase || "toutes";
+    // Phase RÉELLE de l'exercice reçu (issue #123) — stockée séparément de
+    // exerciseCurrentPhase (le filtre DEMANDÉ, mémorisé dans startExercise
+    // avant l'appel serveur, ne doit pas être écrasé ici).
+    exerciseActualPhase = data.phase || "toutes";
     // Source de ce tirage (issue #78) — mémorisée pour "Exercice suivant"
-    // (exerciseCurrentSource) et pour l'affichage (libellé "Solution du
-    // problème", énoncé dédié).
-    exerciseCurrentSource = data.source || "mes_erreurs";
+    // dans startExercise avant l'appel serveur, comme exerciseCurrentPhase.
+    // Ne pas écraser ici avec data.source (même si c'est la même valeur).
     exerciseLichessCategorieLibelle = data.categorie_libelle || null;
     exerciseLichessRating           = (typeof data.rating === "number") ? data.rating : null;
     exerciseLichessNiveau           = (typeof data.niveau === "number") ? data.niveau : null;
     exerciseLichessThemes           = Array.isArray(data.themes) ? data.themes.join(" ") : null;
-    // Choix explicite de catégorie (issue #83) — absent (undefined) pour les
-    // deux autres sources, repli sur "automatique". FEN de la "Position
-    // précise" en cours — null pour les deux autres sources.
-    exerciseCurrentCategorie   = data.categorie_demandee || "automatique";
+    // Choix explicite de catégorie (issue #83) — mémorisé dans startExercise
+    // avant l'appel serveur, comme exerciseCurrentPhase. Ne pas écraser ici.
     exerciseLichessAvertissement = data.avertissement || null;
-    exerciseCurrentFenPrecis   = (data.source === "position_precise") ? data.fen : null;
+    // FEN de la "Position précise" en cours — mémorisé dans startExercise
+    // avant l'appel serveur, comme exerciseCurrentPhase. Ne pas écraser ici.
     _exerciseResetCoachLines();
     _exerciseUpdateDejaFaitDisplay(data);
     setActiveMode("exercise");
