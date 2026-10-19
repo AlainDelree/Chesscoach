@@ -1204,9 +1204,15 @@ def get_move_explanations(flagged_moves, camp_alain, config):
             "move": original.get("san"),
             "coup_plein": original.get("coup_plein"),
             "camp": original.get("camp"),
-            "verdict_qualite": original.get("qualite"),
+            # Issue #125 : utiliser le verdict officiel Lichess comme verdict principal
+            "verdict_qualite": original.get("qualite_officielle") or original.get("qualite"),
+            "verdict_qualite_ancien": original.get("qualite"),  # Pour comparaison/journal
             "verdict_delta_cp": original.get("delta_cp"),
             "meilleur_coup": original.get("meilleur_coup"),
+            # Nouveaux champs pour la méthode Lichess (issue #125)
+            "eval_before_cp": original.get("eval_before_cp"),
+            "eval_after_cp": original.get("eval_after_cp"),
+            "win_prob_drop": original.get("win_prob_drop"),
         }
         # log_id (issue #89) : retourné au bouton "Signaler" côté interface
         # via app.py (champ "log_id" de chaque choix) pour référencer sans
@@ -1464,8 +1470,14 @@ def _build_context_text(context) -> str:
     # que de rejuger lui-même la qualité du coup à partir des seuls noms de
     # coups — ce chiffre ne doit jamais être répété tel quel à Alain (cf.
     # _EXERCISE_SYSTEM_ADDENDUM).
+    # Issue #125 : utiliser le verdict officiel Lichess comme verdict principal
     verdict_qualite  = (context.get("verdict_qualite") or "").strip()
+    verdict_qualite_officiel = (context.get("verdict_qualite_officiel") or "").strip()
     verdict_delta_cp = context.get("verdict_delta_cp")
+    # Nouveaux champs pour la méthode Lichess (issue #125)
+    eval_before_cp = context.get("eval_before_cp")
+    eval_after_cp = context.get("eval_after_cp")
+    win_prob_drop = context.get("win_prob_drop")
     # Analyse Stockfish indisponible (issue #79) : panne moteur malgré la
     # reprise automatique de EngineManager (ou quota de relances épuisé),
     # distincte d'un contexte qui ne demande simplement aucune évaluation
@@ -1803,6 +1815,11 @@ def _build_context_text(context) -> str:
             "complète à appliquer ici)."
         )
     elif verdict_qualite:
+        # Issue #125 : utiliser le verdict officiel Lichess (basé sur la chute
+        # de probabilité de gain) comme verdict principal. Le verdict ancien
+        # (basé sur des seuils fixes en centipions) est gardé pour comparaison.
+        verdict_a_utiliser = verdict_qualite_officiel if verdict_qualite_officiel else verdict_qualite
+        
         # describe_perte_cp_clause (issue #75, point 1) : en mots dès que la
         # magnitude dépasse SEUIL_GRANDE_VALEUR_CP (ex. le delta sentinelle
         # DELTA_CP_MAT_CONTRE d'un coup qui permet un mat forcé contre
@@ -1811,10 +1828,24 @@ def _build_context_text(context) -> str:
         lines.append(
             "Verdict Stockfish déjà calculé pour ce coup exact (INTERNE — ne "
             f"jamais citer ce chiffre ni cette étiquette brute à Alain) : classé "
-            f"\"{verdict_qualite}\"{detail_cp}. Ce verdict est définitif : "
+            f"\"{verdict_a_utiliser}\"{detail_cp}. Ce verdict est définitif : "
             "explique pourquoi il est justifié, ne le confirme ni ne le "
             "contredis par ton propre jugement."
         )
+        
+        # Ajouter les évaluations avant/après et la chute de chances pour que
+        # le coach puisse expliquer la gravité réelle (issue #125)
+        if eval_before_cp is not None and eval_after_cp is not None:
+            lines.append(
+                f"Évaluation avant le coup (point de vue du joueur) : {eval_before_cp:+.1f}cp. "
+                f"Évaluation après le coup : {eval_after_cp:+.1f}cp. "
+                f"Chute de chances de gain : {win_prob_drop:.3f}."
+            )
+            lines.append(
+                "Utilise ces informations pour expliquer la gravité réelle du coup "
+                "(ex. : 'tu restes très largement mieux' si la chute est faible "
+                "malgré une perte en centipions)."
+            )
         # Données partielles (issue #79, point 5) : le verdict a été rendu,
         # mais un champ auxiliaire attendu peut manquer (panne ponctuelle
         # d'un appel moteur distinct, cf. app.py _eval_blancs_apres/

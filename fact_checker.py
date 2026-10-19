@@ -1041,7 +1041,8 @@ def verifier_affirmations(
     affirmations_verifiees += len(piece_attaquee_par_pion_alertes)
     
     # (c) Vérifier la cohérence verdict/texte
-    verdict = context.get('verdict_qualite') if isinstance(context.get('verdict_qualite'), str) else None
+    # Issue #125 : utiliser le verdict officiel Lichess pour la vérification
+    verdict = context.get('verdict_qualite_officiel') if isinstance(context.get('verdict_qualite_officiel'), str) else context.get('verdict_qualite') if isinstance(context.get('verdict_qualite'), str) else None
     meilleur_coup = context.get('meilleur_coup') if isinstance(context.get('meilleur_coup'), str) else None
     coup_propose = context.get('coup_propose') if isinstance(context.get('coup_propose'), str) else None
     

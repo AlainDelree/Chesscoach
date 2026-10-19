@@ -434,14 +434,21 @@ def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
         return result
     try:
         board = chess.Board(fen_avant)
-        verdict_qualite, verdict_delta_cp, meilleur_coup_uci, pv_info = engine_manager.evaluate_move(
+        eval_result = engine_manager.evaluate_move(
             board, move, depth=DEPTH_EXERCICE_TEMPS_REEL, always_return_best=True, return_pv=True
         )
-        result["verdict_qualite"] = verdict_qualite
-        result["verdict_delta_cp"] = verdict_delta_cp
-        result["pv_coup_propose"] = pv_info.get("pv_coup_propose", "")
-        result["pv_meilleur_coup"] = pv_info.get("pv_meilleur_coup", "")
-        result["analyse_indisponible"] = verdict_qualite is None
+        # eval_result est maintenant un dictionnaire (issue #125)
+        result["verdict_qualite"] = eval_result.get("qualite")
+        result["verdict_qualite_officiel"] = eval_result.get("qualite_officielle")
+        result["verdict_delta_cp"] = eval_result.get("delta_cp")
+        result["eval_before_cp"] = eval_result.get("eval_before_cp")
+        result["eval_after_cp"] = eval_result.get("eval_after_cp")
+        result["win_prob_drop"] = eval_result.get("win_prob_drop")
+        result["pv_coup_propose"] = eval_result.get("pv_coup_propose", "")
+        result["pv_meilleur_coup"] = eval_result.get("pv_meilleur_coup", "")
+        result["analyse_indisponible"] = eval_result.get("analyse_indisponible", False) or (eval_result.get("qualite") is None)
+        
+        meilleur_coup_uci = eval_result.get("meilleur_coup")
         if meilleur_coup_uci:
             try:
                 result["meilleur_coup"] = board.san(chess.Move.from_uci(meilleur_coup_uci))
@@ -1221,9 +1228,14 @@ def _stockfish_eval_cible(cible: dict) -> dict | None:
     try:
         board = chess.Board(cible["fen_avant"])
         move = board.parse_san(cible["san"])
-        _qualite, delta_cp, meilleur_coup_uci, pv_info = engine_manager.evaluate_move(
+        eval_result = engine_manager.evaluate_move(
             board, move, depth=STOCKFISH_CHECK_DEPTH, always_return_best=True, return_pv=True,
         )
+        # eval_result est maintenant un dictionnaire (issue #125)
+        delta_cp = eval_result.get("delta_cp")
+        meilleur_coup_uci = eval_result.get("meilleur_coup")
+        pv_info = {"pv_meilleur_coup": eval_result.get("pv_meilleur_coup", "")}
+        
         meilleur_coup_san = cible["san"]
         if meilleur_coup_uci:
             try:
@@ -1897,11 +1909,16 @@ def on_exercise_answer(data):
             # (issue #26) pour être réutilisé tel quel par les autres modes.
             eval_result = _evaluate_move_for_coach(fen_avant, move)
             verdict_qualite = eval_result["verdict_qualite"]
+            verdict_qualite_officiel = eval_result["verdict_qualite_officiel"]
             verdict_delta_cp = eval_result["verdict_delta_cp"]
             pv_coup_propose = eval_result["pv_coup_propose"]
             pv_meilleur_coup = eval_result["pv_meilleur_coup"]
             meilleur_coup_recalcule_san = eval_result["meilleur_coup"]
             analyse_indisponible = eval_result["analyse_indisponible"]
+            # Nouveaux champs pour la méthode Lichess (issue #125)
+            eval_before_cp = eval_result["eval_before_cp"]
+            eval_after_cp = eval_result["eval_after_cp"]
+            win_prob_drop = eval_result["win_prob_drop"]
             board.push(move)
             fen_apres = board.fen()
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
@@ -2116,8 +2133,15 @@ def on_exercise_answer(data):
         "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
         "eval_alain_cp": eval_alain_cp,
         "eval_alain_mat": eval_alain_mat,
-        "verdict_qualite": verdict_qualite,
+        # Issue #125 : utiliser le verdict officiel Lichess comme verdict principal
+        "verdict_qualite": verdict_qualite_officiel if verdict_qualite_officiel else verdict_qualite,
+        "verdict_qualite_officiel": verdict_qualite_officiel,
+        "verdict_qualite_ancien": verdict_qualite,
         "verdict_delta_cp": verdict_delta_cp,
+        # Nouveaux champs pour la méthode Lichess (issue #125)
+        "eval_before_cp": eval_before_cp,
+        "eval_after_cp": eval_after_cp,
+        "win_prob_drop": win_prob_drop,
         # Profondeur commune du recalcul à la volée (issue #19) du verdict et
         # du meilleur coup ci-dessus — n'entre pas dans le texte de contexte
         # envoyé au coach (cf. llm_coach._build_context_text, qui ignore les
@@ -2231,8 +2255,15 @@ def on_exercise_answer(data):
         # Transmis au client pour qu'il puisse enrichir le contexte d'une
         # question de suivi posée dans le chat libre (issue #17) — jamais
         # affiché tel quel côté UI (cf. exercise.js).
-        "verdict_qualite": verdict_qualite,
+        # Issue #125 : utiliser le verdict officiel Lichess comme verdict principal
+        "verdict_qualite": verdict_qualite_officiel if verdict_qualite_officiel else verdict_qualite_moteur,
+        "verdict_qualite_officiel": verdict_qualite_officiel,
+        "verdict_qualite_ancien": verdict_qualite_moteur,
         "verdict_delta_cp": verdict_delta_cp,
+        # Nouveaux champs pour la méthode Lichess (issue #125)
+        "eval_before_cp": eval_before_cp,
+        "eval_after_cp": eval_after_cp,
+        "win_prob_drop": win_prob_drop,
         # Idem pour la ligne (PV) calculée (issue #20) : sans ça, une
         # question de suivi dans le chat libre reperdrait l'ancrage sur
         # la ligne réellement calculée dès le tour suivant.
@@ -2331,9 +2362,14 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
             coup_propose_san = board.san(move)
             eval_result = _evaluate_move_for_coach(fen_avant, move)
             verdict_qualite_moteur = eval_result["verdict_qualite"]
+            verdict_qualite_officiel = eval_result["verdict_qualite_officiel"]
             verdict_delta_cp = eval_result["verdict_delta_cp"]
             pv_coup_propose = eval_result["pv_coup_propose"]
             analyse_indisponible = eval_result["analyse_indisponible"]
+            # Nouveaux champs pour la méthode Lichess (issue #125)
+            eval_before_cp = eval_result["eval_before_cp"]
+            eval_after_cp = eval_result["eval_after_cp"]
+            win_prob_drop = eval_result["win_prob_drop"]
             board.push(move)
             fen_apres = board.fen()
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)

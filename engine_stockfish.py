@@ -200,6 +200,81 @@ SEUIL_IMPRECISION = 100   # 50-100  → imprécision
 SEUIL_ERREUR      = 300   # 100-300 → erreur
                           # >= 300  → blunder
 
+# ── Classification officielle Lichess (issue #125) ────────────────────────────
+# Méthode de référence : classification basée sur la variation des chances
+# de gain (win probability) plutôt que sur des seuils fixes en centipions.
+# Formule : chances = 2 / (1 + exp(-0.00368208 * cp)) - 1
+# Plafond des évaluations à ±1000 cp.
+# Seuils sur la chute de chances : >= 0.1 = imprécision, >= 0.2 = erreur, >= 0.3 = gaffe
+
+import math
+
+
+def cp_to_win_probability(cp: int | float) -> float:
+    """Convertit une évaluation en centipawns en probabilité de gain.
+    
+    Formule Lichess (issue #125) : chances = 2 / (1 + exp(-0.00368208 * cp)) - 1
+    Plafond à ±1000 cp pour éviter les valeurs extrêmes.
+    
+    Args:
+        cp: évaluation en centipawns (du point de vue du joueur concerné)
+        
+    Returns:
+        Probabilité de gain dans l'intervalle [-1, 1] (négatif = avantage adverse)
+    """
+    cp_clamped = max(-1000, min(1000, float(cp)))
+    return 2 / (1 + math.exp(-0.00368208 * cp_clamped)) - 1
+
+
+def classify_move_lichess(
+    cp_before: int | float,
+    cp_after: int | float,
+    player_is_white: bool
+) -> str:
+    """Classe un coup selon la méthode officielle Lichess (issue #125).
+    
+    La classification est basée sur la chute des chances de gain du joueur
+    qui vient de jouer, pas sur des seuils fixes en centipions.
+    
+    Args:
+        cp_before: évaluation AVANT le coup (du point de vue des Blancs)
+        cp_after: évaluation APRÈS le coup (du point de vue des Blancs)
+        player_is_white: True si le joueur qui a joué est les Blancs
+        
+    Returns:
+        'bon', 'imprecision', 'erreur', ou 'gaffe'
+        
+    Exemple:
+        >>> classify_move_lichess(0, -65, True)  # Blancs jouent, 0 → -0.65
+        'imprecision'
+        >>> classify_move_lichess(27, 96, False)  # Noirs jouent, +0.27 → +0.96
+        'imprecision'
+    """
+    # Convertir les évaluations du point de vue des Blancs au point de vue du joueur
+    if player_is_white:
+        eval_before = float(cp_before)
+        eval_after = float(cp_after)
+    else:  # Noirs
+        eval_before = -float(cp_before)
+        eval_after = -float(cp_after)
+    
+    # Calculer les probabilités de gain
+    prob_before = cp_to_win_probability(eval_before)
+    prob_after = cp_to_win_probability(eval_after)
+    
+    # Calculer la chute de chances de gain (toujours positif ou nul)
+    drop = prob_before - prob_after
+    
+    # Classifier selon les seuils Lichess
+    if drop >= 0.3:
+        return 'gaffe'
+    elif drop >= 0.2:
+        return 'erreur'
+    elif drop >= 0.1:
+        return 'imprecision'
+    else:
+        return 'bon'
+
 # Plage Elo supportée par Stockfish via UCI_Elo
 ELO_MIN = 1320
 ELO_MAX = 3190
@@ -1035,7 +1110,7 @@ class EngineManager:
                       always_return_best: bool = False,
                       return_pv: bool = False,
                       pv_max_plies: int = 6,
-                      time_limit: float | None = None) -> tuple[str, int, str | None]:
+                      time_limit: float | None = None) -> dict:
         """
         Évalue la qualité d'un coup joué.
 
@@ -1044,41 +1119,45 @@ class EngineManager:
             appels internes à evaluate() (avant/après coup) à la place de
             depth — même usage que evaluate() (issue #57, vérification
             Stockfish courte et bornée du chat coach).
-          always_return_best : si True, le 3e élément retourné est toujours
-            le meilleur coup UCI pour la position AVANT le coup, même quand
-            il coïncide avec le coup joué (au lieu de None dans ce cas — cf.
-            comportement historique ci-dessous, conservé par défaut pour ne
-            pas changer le contrat des appelants existants). Utile quand
-            l'appelant a besoin du "meilleur coup" affichable pour la
-            position, pas seulement d'une alternative à mettre en avant
+          always_return_best : si True, le champ "meilleur_coup" retourné est
+            toujours le meilleur coup UCI pour la position AVANT le coup,
+            même quand il coïncide avec le coup joué (au lieu de None dans ce
+            cas — cf. comportement historique ci-dessous, conservé par
+            défaut pour ne pas changer le contrat des appelants existants).
+            Utile quand l'appelant a besoin du "meilleur coup" affichable pour
+            la position, pas seulement d'une alternative à mettre en avant
             (issue #19, mode "Exercice" : meilleur coup et verdict du coup
             proposé doivent provenir du même appel moteur, à la même
             profondeur).
-          return_pv : si True, ajoute un 4e élément au tuple retourné (cf.
-            ci-dessous) — la ligne (PV) réellement calculée par Stockfish
-            pour le coup proposé et pour le meilleur coup, en SAN (issue #20 :
-            le coach doit justifier une continuation réellement calculée,
-            pas improviser une explication tactique en prose à partir du
-            seul verdict chiffré). Désactivé par défaut pour ne pas changer
-            le contrat des appelants existants (ex. analyser_partie).
+          return_pv : si True, ajoute les champs "pv_coup_propose" et
+            "pv_meilleur_coup" au dictionnaire retourné — la ligne (PV)
+            réellement calculée par Stockfish pour le coup proposé et pour
+            le meilleur coup, en SAN (issue #20 : le coach doit justifier une
+            continuation réellement calculée, pas improviser une explication
+            tactique en prose à partir du seul verdict chiffré). Désactivé
+            par défaut pour ne pas changer le contrat des appelants
+            existants (ex. analyser_partie).
           pv_max_plies : nombre de demi-coups conservés dans chaque ligne
             retournée quand return_pv=True (au-delà, la PV Stockfish à
             depth=18 devient inutilement longue pour un commentaire).
 
-        Retourne (qualite, delta_cp, best_move_uci) ou, si return_pv=True,
-        (qualite, delta_cp, best_move_uci, pv_info) où pv_info est
-        {"pv_coup_propose": str, "pv_meilleur_coup": str} (SAN, "" si
-        indisponible) :
-          - qualite    : "bon" / "imprecision" / "erreur" / "blunder"
-          - delta_cp   : perte en centipawns (0 = parfait), plafonnée à
+        Retourne un dictionnaire avec les clés suivantes :
+          - "qualite" : "bon" / "imprecision" / "erreur" / "blunder" (ancienne méthode)
+          - "qualite_officielle" : "bon" / "imprecision" / "erreur" / "gaffe" (méthode Lichess, issue #125)
+          - "delta_cp" : perte en centipawns (0 = parfait), plafonnée à
             DELTA_CP_PLAFOND — ou DELTA_CP_MAT_CONTRE (sentinelle dédiée,
             hors échelle) quand ce coup permet un mat forcé contre le joueur
             (issue #75, point 2a)
-          - best_move  : par défaut, meilleur coup UCI si différent du coup
-            joué, sinon None ; toujours le meilleur coup si
-            always_return_best=True (cf. ci-dessus)
+          - "meilleur_coup" : meilleur coup UCI si différent du coup joué,
+            sinon None ; toujours le meilleur coup si always_return_best=True
+          - "eval_before_cp" : évaluation AVANT le coup en centipawns (point de vue du joueur)
+          - "eval_after_cp" : évaluation APRÈS le coup en centipawns (point de vue du joueur)
+          - "win_prob_drop" : chute de probabilité de gain (méthode Lichess)
+          - "pv_coup_propose" : ligne PV pour le coup proposé (si return_pv=True)
+          - "pv_meilleur_coup" : ligne PV pour le meilleur coup (si return_pv=True)
+          - "analyse_indisponible" : True si l'analyse a échoué (issue #79)
 
-        Issue #75 : la qualité et le delta sont désormais calculés sur un
+        Issue #75 : la qualité et le delta sont calculés sur un
         barème unique mat/cp (_score_valeur_joueur, même formule que
         build_patterns_erreurs.py/_analyse_full_game), plutôt que de
         toujours renvoyer "bon"/0 dès que l'évaluation après coup est un
@@ -1098,20 +1177,45 @@ class EngineManager:
 
         Issue #79 : si l'analyse est réellement indisponible (panne moteur
         malgré la reprise automatique, cf. evaluate()["indisponible"]) —
-        PAS une simple position terminale légitime —, qualite vaut None (et
-        delta_cp/best_move_uci valent aussi None, pv_info des chaînes vides
-        si return_pv=True). Avant ce correctif, ce cas de panne totale
-        retombait sur le même repli "bon", 0, None qu'une position
-        terminale normale : un verdict "bon" était donc rendu à l'appelant
-        (et transmis tel quel au coach) alors qu'aucune analyse réelle
-        n'avait eu lieu — un faux verdict, constaté en usage réel (cf.
-        rapport de clôture). Les appelants (app.py) doivent traiter
-        qualite is None comme "aucun verdict", jamais comme "bon".
+        PAS une simple position terminale légitime —, "qualite" et
+        "qualite_officielle" valent None (et delta_cp/meilleur_coup valent
+        aussi None). Avant ce correctif, ce cas de panne totale retombait
+        sur le même repli "bon", 0, None qu'une position terminale normale :
+        un verdict "bon" était donc rendu à l'appelant (et transmis tel quel
+        au coach) alors qu'aucune analyse réelle n'avait eu lieu — un faux
+        verdict, constaté en usage réel (cf. rapport de clôture). Les
+        appelants (app.py) doivent traiter qualite is None comme "aucun
+        verdict", jamais comme "bon".
+
+        Issue #125 : ajout de la classification officielle Lichess basée sur la
+        chute de probabilité de gain plutôt que sur des seuils fixes en
+        centipions. Voir classify_move_lichess() pour les détails.
         """
+        result = {
+            "qualite": None,
+            "qualite_officielle": None,
+            "delta_cp": None,
+            "meilleur_coup": None,
+            "eval_before_cp": None,
+            "eval_after_cp": None,
+            "win_prob_drop": None,
+            "analyse_indisponible": False,
+        }
+        
+        if return_pv:
+            result["pv_coup_propose"] = ""
+            result["pv_meilleur_coup"] = ""
+        
         if not self._analyse_active:
             if return_pv:
-                return "bon", 0, None, {"pv_coup_propose": "", "pv_meilleur_coup": ""}
-            return "bon", 0, None
+                result["qualite"] = "bon"
+                result["qualite_officielle"] = "bon"
+                result["delta_cp"] = 0
+            else:
+                result["qualite"] = "bon"
+                result["qualite_officielle"] = "bon"
+                result["delta_cp"] = 0
+            return result
 
         try:
             # Évaluation AVANT le coup
@@ -1133,24 +1237,65 @@ class EngineManager:
             val_apres_adversaire = _score_valeur_joueur(eval_apres)
             val_apres_joueur = -val_apres_adversaire if val_apres_adversaire is not None else None
 
-            def _finish(qualite_f, delta_f, best_f):
-                if return_pv:
-                    pv_meilleur = self._pv_to_san(board, pv_avant[:pv_max_plies])
-                    pv_propose  = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
-                    return qualite_f, delta_f, best_f, {"pv_coup_propose": pv_propose, "pv_meilleur_coup": pv_meilleur}
-                return qualite_f, delta_f, best_f
-
             if eval_avant.get("indisponible") or eval_apres.get("indisponible"):
                 # Panne moteur réelle (issue #79), distincte d'une position
                 # terminale légitime ci-dessous : aucun verdict inventé.
+                result["analyse_indisponible"] = True
+                result["qualite"] = None
+                result["qualite_officielle"] = None
+                result["delta_cp"] = None
+                result["meilleur_coup"] = None
+                result["eval_before_cp"] = None
+                result["eval_after_cp"] = None
+                result["win_prob_drop"] = None
                 if return_pv:
-                    return None, None, None, {"pv_coup_propose": "", "pv_meilleur_coup": ""}
-                return None, None, None
+                    result["pv_coup_propose"] = ""
+                    result["pv_meilleur_coup"] = ""
+                return result
 
             if val_avant is None or val_apres_joueur is None:
                 # Position terminale légitime (cas limite, ne devrait pas
                 # arriver en pratique sur un coup légal) : repli neutre.
-                return _finish("bon", 0, best_move if always_return_best else None)
+                result["qualite"] = "bon"
+                result["qualite_officielle"] = "bon"
+                result["delta_cp"] = 0
+                result["meilleur_coup"] = best_move if always_return_best else None
+                result["eval_before_cp"] = None
+                result["eval_after_cp"] = None
+                result["win_prob_drop"] = None
+                if return_pv:
+                    result["pv_coup_propose"] = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
+                    result["pv_meilleur_coup"] = self._pv_to_san(board, pv_avant[:pv_max_plies])
+                return result
+
+            # Stocker les évaluations avant/après du point de vue du joueur
+            player_is_white = (board.turn == chess.WHITE)
+            # val_avant et val_apres_joueur sont déjà du point de vue du joueur
+            result["eval_before_cp"] = val_avant
+            result["eval_after_cp"] = val_apres_joueur
+            
+            # Calculer le verdict officiel Lichess (issue #125)
+            # Convertir les évaluations du point de vue des Blancs pour la formule
+            # eval_avant_white = val_avant si player_is_white sinon -val_avant
+            # eval_after_white = val_apres_joueur si player_is_white sinon -val_apres_joueur
+            if player_is_white:
+                eval_before_white = val_avant
+                eval_after_white = val_apres_joueur
+            else:
+                eval_before_white = -val_avant
+                eval_after_white = -val_apres_joueur
+            
+            qualite_officielle = classify_move_lichess(
+                eval_before_white, eval_after_white, player_is_white
+            )
+            
+            # Calculer la chute de probabilité de gain
+            prob_before = cp_to_win_probability(val_avant)
+            prob_after = cp_to_win_probability(val_apres_joueur)
+            win_prob_drop = prob_before - prob_after
+            
+            result["qualite_officielle"] = qualite_officielle
+            result["win_prob_drop"] = win_prob_drop
 
             delta_brut = max(0, val_avant - val_apres_joueur)
             delta   = min(delta_brut, DELTA_CP_PLAFOND)
@@ -1195,13 +1340,31 @@ class EngineManager:
                 )
 
             best_final = (best if best is not None else best_move) if always_return_best else best
-            return _finish(qualite, delta, best_final)
+            
+            result["qualite"] = qualite
+            result["delta_cp"] = delta
+            result["meilleur_coup"] = best_final
+            
+            if return_pv:
+                result["pv_coup_propose"] = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
+                result["pv_meilleur_coup"] = self._pv_to_san(board, pv_avant[:pv_max_plies])
+            
+            return result
 
         except Exception as e:
             logger.error(f"Erreur evaluate_move : {e}")
+            result["analyse_indisponible"] = True
+            result["qualite"] = None
+            result["qualite_officielle"] = None
+            result["delta_cp"] = None
+            result["meilleur_coup"] = None
+            result["eval_before_cp"] = None
+            result["eval_after_cp"] = None
+            result["win_prob_drop"] = None
             if return_pv:
-                return "bon", 0, None, {"pv_coup_propose": "", "pv_meilleur_coup": ""}
-            return "bon", 0, None
+                result["pv_coup_propose"] = ""
+                result["pv_meilleur_coup"] = ""
+            return result
 
     def get_punishment_line(self, board: chess.Board, move: chess.Move,
                              depth: int = 12, max_moves: int = 3) -> list[str]:
