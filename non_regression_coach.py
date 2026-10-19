@@ -158,14 +158,20 @@ def _evaluer_coup_pour_coach(engine_manager, fen_avant: str, move: "chess.Move")
         "pv_coup_propose": "", "pv_meilleur_coup": "", "analyse_indisponible": True,
     }
     board = chess.Board(fen_avant)
-    verdict_qualite, verdict_delta_cp, meilleur_coup_uci, pv_info = engine_manager.evaluate_move(
+    eval_result = engine_manager.evaluate_move(
         board, move, depth=DEPTH_EXERCICE_TEMPS_REEL, always_return_best=True, return_pv=True
     )
-    result["verdict_qualite"] = verdict_qualite
-    result["verdict_delta_cp"] = verdict_delta_cp
-    result["pv_coup_propose"] = pv_info.get("pv_coup_propose", "")
-    result["pv_meilleur_coup"] = pv_info.get("pv_meilleur_coup", "")
-    result["analyse_indisponible"] = verdict_qualite is None
+    # eval_result est maintenant un dictionnaire (issue #125)
+    result["verdict_qualite"] = eval_result.get("qualite")
+    result["verdict_qualite_officiel"] = eval_result.get("qualite_officielle")
+    result["verdict_delta_cp"] = eval_result.get("delta_cp")
+    result["eval_before_cp"] = eval_result.get("eval_before_cp")
+    result["eval_after_cp"] = eval_result.get("eval_after_cp")
+    result["win_prob_drop"] = eval_result.get("win_prob_drop")
+    result["pv_coup_propose"] = eval_result.get("pv_coup_propose", "")
+    result["pv_meilleur_coup"] = eval_result.get("pv_meilleur_coup", "")
+    result["analyse_indisponible"] = eval_result.get("analyse_indisponible", False) or (eval_result.get("qualite") is None)
+    meilleur_coup_uci = eval_result.get("meilleur_coup")
     if meilleur_coup_uci:
         try:
             result["meilleur_coup"] = board.san(chess.Move.from_uci(meilleur_coup_uci))

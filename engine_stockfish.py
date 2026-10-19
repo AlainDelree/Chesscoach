@@ -1497,7 +1497,11 @@ class EngineManager:
             try:
                 move = chess.Move.from_uci(uci)
                 fen_avant = board.fen()
-                qualite, delta, best = self.evaluate_move(board, move, depth=8)
+                eval_result = self.evaluate_move(board, move, depth=8)
+                # eval_result est maintenant un dictionnaire (issue #125)
+                qualite = eval_result.get("qualite")
+                delta = eval_result.get("delta_cp")
+                best = eval_result.get("meilleur_coup")
                 # Calculer la séquence punitive pour les coups non-bons
                 punishment_line = []
                 if qualite != "bon" and best:
