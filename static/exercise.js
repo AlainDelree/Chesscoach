@@ -1270,7 +1270,8 @@ if (typeof socket !== "undefined") {
       // Verdict de l'exercice : Alain l'attend, la page doit défiler jusqu'à
       // lui sur mobile (issue #67, comportement voulu par la maquette).
       // Issue #113 : afficher l'auteur clairement
-      _coachRenderBubbleWithAgent("assistant", text, true, undefined, data && data.fiabilite, data && {
+      // Issue #121 : corriger l'ordre des paramètres (fiabilite, signalData, agent, model, exerciseId)
+      _coachRenderBubbleWithAgent("assistant", text, true, data && data.fiabilite, data && {
         mode_origine: data.mode_origine, fen: data.fen, move: data.coup_propose, log_id: data.log_id,
       }, agent, model, exerciseId);
       if (typeof _coachHistory !== "undefined") {
@@ -1319,12 +1320,16 @@ if (typeof socket !== "undefined") {
     
     if (error) {
       // Afficher un message discret en cas d'erreur Mistral
-      _coachRenderMistralErrorWithAgent(error, model, exerciseId);
+      // Issue #121 : passer l'agent
+      const agent = (data && data.agent) || "mistral";
+      _coachRenderMistralErrorWithAgent(error, model, exerciseId, agent);
     } else if (text) {
       // Afficher le commentaire de Mistral dans une bulle dédiée avec l'auteur
       // Issue #120 : extraire et passer les alertes du vérificateur
+      // Issue #121 : passer l'agent explicitement
       const factCheckerAlertes = (data && data.fact_checker_alertes) || [];
-      _coachRenderMistralBubbleWithAgent(stripMarkdownForChat(text), model, exerciseId, logId, fen, coupPropose, factCheckerAlertes);
+      const agent = (data && data.agent) || "mistral";
+      _coachRenderMistralBubbleWithAgent(stripMarkdownForChat(text), model, exerciseId, logId, fen, coupPropose, factCheckerAlertes, agent);
     }
   });
 

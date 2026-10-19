@@ -578,6 +578,7 @@
 .rating-btn.rating-0.selected {
   background: var(--cc-error);
   border-color: var(--cc-error);
+  color: white;
 }
 
 /* Bulle "Le coach réfléchit..." (issue #105, point 1) : même emplacement et

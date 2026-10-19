@@ -2166,6 +2166,7 @@ def on_exercise_answer(data):
                         "fen": fen_avant,
                         "coup_propose": coup_propose_san,
                         "fact_checker_alertes": mistral_fact_checker_alertes,
+                        "agent": "mistral",
                     },
                     room=session_sid
                 )
@@ -2182,6 +2183,7 @@ def on_exercise_answer(data):
                         "fen": fen_avant,
                         "coup_propose": coup_propose_san,
                         "fact_checker_alertes": [],
+                        "agent": "mistral",
                     },
                     room=session_sid
                 )

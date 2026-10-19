@@ -1275,13 +1275,15 @@ function _coachRenderCreditInsuffisant() {
 // aux éléments cliquables).
 function _coachRenderMistralBubble(text) {
   // Issue #113 : cette fonction est dépréciée, utiliser _coachRenderMistralBubbleWithAgent
-  _coachRenderMistralBubbleWithAgent(text, "mistral-large-latest", null, null, null, null);
+  // Issue #121 : passer l'agent explicitement
+  _coachRenderMistralBubbleWithAgent(text, "mistral-large-latest", null, null, null, null, null, "mistral");
 }
 
 // Message d'erreur discret pour Mistral (issue #112, consigne 6)
 function _coachRenderMistralError(error) {
   // Issue #113 : cette fonction est dépréciée, utiliser _coachRenderMistralErrorWithAgent
-  _coachRenderMistralErrorWithAgent(error, "mistral-large-latest", null);
+  // Issue #121 : passer l'agent explicitement
+  _coachRenderMistralErrorWithAgent(error, "mistral-large-latest", null, "mistral");
 }
 
 // Issue #113 : Afficher une bulle avec l'auteur clairement identifié et les boutons de notation
@@ -1382,9 +1384,23 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
     signalBtn.textContent = "Signaler";
     signalBtn.title = "Signaler un problème avec ce commentaire";
     signalBtn.onclick = () => {
-      if (typeof _coachSignalClick === "function") {
-        _coachSignalClick(signalData);
+      // Issue #121 : corriger le bouton Signaler pour qu'il fonctionne
+      // Utiliser socket.emit directement comme dans _coachBuildSignalerUI
+      if (typeof socket !== "undefined" && socket.connected) {
+        socket.emit("signalement_envoyer", {
+          mode_origine: signalData.mode_origine || "",
+          fen: signalData.fen || "",
+          move: signalData.move || "",
+          text: text || "",
+          log_id: signalData.log_id || null,
+          commentaire: "",
+          agent: agent || "",
+          model: model || ""
+        });
       }
+      // Marquer le bouton comme utilisé
+      signalBtn.textContent = "Signalé";
+      signalBtn.disabled = true;
     };
     bubble.appendChild(signalBtn);
   }
@@ -1399,14 +1415,15 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
 
 // Issue #113 : Afficher l'avis de Mistral avec l'auteur et les boutons de notation
 // Issue #120 : Ajout du paramètre factCheckerAlertes pour afficher les alertes du vérificateur
-function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen, coupPropose, factCheckerAlertes) {
+// Issue #121 : Ajout du paramètre agent et signalData pour uniformiser avec _coachRenderBubbleWithAgent
+function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen, coupPropose, factCheckerAlertes, agent = "mistral") {
   const history = document.getElementById("coach-history");
   if (!history) return;
   
   const bubble = document.createElement("div");
   bubble.className = "coach-bubble mistral";
   bubble.dataset.exerciseId = exerciseId || "";
-  bubble.dataset.agent = "mistral";
+  bubble.dataset.agent = agent || "mistral";
   bubble.dataset.model = model || "";
   bubble.dataset.logId = logId || "";
   bubble.dataset.fen = fen || "";
@@ -1418,7 +1435,7 @@ function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen,
   
   const agentSpan = document.createElement("span");
   agentSpan.className = "coach-agent";
-  agentSpan.textContent = "Mistral";
+  agentSpan.textContent = agent === "claude" ? "Claude" : "Mistral";
   header.appendChild(agentSpan);
   
   const modelSpan = document.createElement("span");
@@ -1448,7 +1465,7 @@ function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen,
   btn1.className = "rating-btn rating-1";
   btn1.textContent = "1";
   btn1.title = "Bonne réponse";
-  btn1.dataset.agent = "mistral";
+  btn1.dataset.agent = agent || "mistral";
   btn1.dataset.model = model;
   btn1.dataset.exerciseId = exerciseId || "";
   btn1.dataset.logId = logId || "";
@@ -1460,7 +1477,7 @@ function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen,
   btn0.className = "rating-btn rating-0";
   btn0.textContent = "0";
   btn0.title = "Moins bonne réponse";
-  btn0.dataset.agent = "mistral";
+  btn0.dataset.agent = agent || "mistral";
   btn0.dataset.model = model;
   btn0.dataset.exerciseId = exerciseId || "";
   btn0.dataset.logId = logId || "";
@@ -1470,19 +1487,51 @@ function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen,
   
   bubble.appendChild(ratingDiv);
   
+  // Bouton Signaler (issue #121)
+  // Construire signalData à partir des paramètres
+  const signalData = {
+    mode_origine: "exercice",
+    fen: fen || "",
+    move: coupPropose || "",
+    log_id: logId || null
+  };
+  const signalBtn = document.createElement("button");
+  signalBtn.className = "coach-signal-btn";
+  signalBtn.textContent = "Signaler";
+  signalBtn.title = "Signaler un problème avec ce commentaire";
+  signalBtn.onclick = () => {
+    if (typeof socket !== "undefined" && socket.connected) {
+      socket.emit("signalement_envoyer", {
+        mode_origine: signalData.mode_origine || "",
+        fen: signalData.fen || "",
+        move: signalData.move || "",
+        text: text || "",
+        log_id: signalData.log_id || null,
+        commentaire: "",
+        agent: agent || "mistral",
+        model: model || ""
+      });
+    }
+    // Marquer le bouton comme utilisé
+    signalBtn.textContent = "Signalé";
+    signalBtn.disabled = true;
+  };
+  bubble.appendChild(signalBtn);
+  
   history.appendChild(bubble);
   _coachScrollReveal(history, bubble, false);
 }
 
 // Issue #113 : Afficher une erreur Mistral avec l'auteur
-function _coachRenderMistralErrorWithAgent(error, model, exerciseId) {
+// Issue #121 : Ajout du paramètre agent pour uniformiser
+function _coachRenderMistralErrorWithAgent(error, model, exerciseId, agent = "mistral") {
   const history = document.getElementById("coach-history");
   if (!history) return;
   
   const bubble = document.createElement("div");
   bubble.className = "coach-bubble mistral-error";
   bubble.dataset.exerciseId = exerciseId || "";
-  bubble.dataset.agent = "mistral";
+  bubble.dataset.agent = agent || "mistral";
   bubble.dataset.model = model || "";
   
   // En-tête avec l'auteur
@@ -1491,7 +1540,7 @@ function _coachRenderMistralErrorWithAgent(error, model, exerciseId) {
   
   const agentSpan = document.createElement("span");
   agentSpan.className = "coach-agent";
-  agentSpan.textContent = "Mistral";
+  agentSpan.textContent = agent === "claude" ? "Claude" : "Mistral";
   header.appendChild(agentSpan);
   
   const modelSpan = document.createElement("span");
