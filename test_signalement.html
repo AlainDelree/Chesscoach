@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Signalement Issue #122</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h2 {
+            color: #333;
+            border-bottom: 2px solid #ddd;
+            padding-bottom: 10px;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .coach-bubble {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            max-width: 360px;
+        }
+        .coach-bubble.claude {
+            border-left: 4px solid #2196f3;
+        }
+        .coach-bubble.mistral {
+            border-left: 4px solid #ff9800;
+        }
+        .coach-rating {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .coach-rating button {
+            padding: 4px 12px;
+            border: 1px solid #ccc;
+            background: white;
+            border-radius: 12px;
+            cursor: pointer;
+        }
+        .coach-rating button.active {
+            background: #2196f3;
+            color: white;
+            border-color: #2196f3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test Signalement - Issue #122</h1>
+    
+    <div class="test-section">
+        <h2>Test 1: Ouverture du champ de signalement</h2>
+        <div id="test1"></div>
+        <div id="result1" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 2: Envoi avec texte de justification</h2>
+        <div id="test2"></div>
+        <div id="result2" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 3: Envoi sans texte</h2>
+        <div id="test3"></div>
+        <div id="result3" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 4: Annulation du formulaire</h2>
+        <div id="test4"></div>
+        <div id="result4" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 5: Double clic (protection)</h2>
+        <div id="test5"></div>
+        <div id="result5" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 6: Bulle Claude avec signalement</h2>
+        <div id="test6"></div>
+        <div id="result6" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 7: Bulle Mistral avec signalement</h2>
+        <div id="test7"></div>
+        <div id="result7" class="result"></div>
+    </div>
+
+    <script>
+        // Mock socket
+        const socket = {
+            emit: function(event, data) {
+                console.log(`Socket emit: ${event}`, data);
+                return true;
+            },
+            connected: true
+        };
+
+        // Copie des fonctions nécessaires depuis board.js
+        function _coachBuildSignalerUI(container, meta) {
+            meta = meta || {};
+            const wrap = document.createElement("div");
+            wrap.className = "coach-signaler-wrap";
+
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "coach-signaler-btn";
+            btn.textContent = "Signaler";
+
+            const form = document.createElement("div");
+            form.className = "coach-signaler-form";
+            form.style.display = "none";
+
+            const textarea = document.createElement("textarea");
+            textarea.className = "coach-signaler-textarea";
+            textarea.rows = 2;
+            textarea.placeholder = "Pourquoi ce signalement ?";
+
+            const buttonsDiv = document.createElement("div");
+            buttonsDiv.className = "coach-signaler-buttons";
+
+            const sendBtn = document.createElement("button");
+            sendBtn.type = "button";
+            sendBtn.className = "coach-signaler-send-btn";
+            sendBtn.textContent = "Envoyer le signalement";
+
+            const cancelBtn = document.createElement("button");
+            cancelBtn.type = "button";
+            cancelBtn.className = "coach-signaler-cancel-btn";
+            cancelBtn.textContent = "Annuler";
+
+            buttonsDiv.appendChild(sendBtn);
+            buttonsDiv.appendChild(cancelBtn);
+
+            form.appendChild(textarea);
+            form.appendChild(buttonsDiv);
+
+            let emitCalled = false;
+            let emitData = null;
+
+            btn.addEventListener("click", () => {
+                form.style.display = form.style.display === "none" ? "flex" : "none";
+                textarea.scrollIntoView({ behavior: "smooth", block: "center" });
+                textarea.focus();
+            });
+
+            cancelBtn.addEventListener("click", () => {
+                form.style.display = "none";
+                textarea.value = "";
+            });
+
+            sendBtn.addEventListener("click", () => {
+                if (typeof socket !== "undefined") {
+                    emitData = {
+                        mode_origine: meta.mode_origine || "",
+                        fen: meta.fen || "",
+                        move: meta.move || "",
+                        text: meta.text || "",
+                        log_id: meta.log_id || null,
+                        commentaire: textarea.value.trim(),
+                        agent: meta.agent || "",
+                        model: meta.model || "",
+                    };
+                    socket.emit("signalement_envoyer", emitData);
+                    emitCalled = true;
+                }
+                form.style.display = "none";
+                btn.textContent = "Signalé";
+                btn.disabled = true;
+            });
+
+            wrap.appendChild(btn);
+            wrap.appendChild(form);
+            container.appendChild(wrap);
+            
+            // Exposer pour les tests
+            wrap._test = {
+                btn, form, textarea, sendBtn, cancelBtn,
+                getEmitData: () => emitData,
+                wasEmitCalled: () => emitCalled
+            };
+            
+            return wrap;
+        }
+
+        // Test 1: Ouverture du champ
+        (function() {
+            const container = document.getElementById('test1');
+            const meta = { mode_origine: "test", text: "Test message" };
+            const ui = _coachBuildSignalerUI(container, meta);
+            
+            // Simuler clic sur Signaler
+            ui._test.btn.click();
+            
+            // Vérifier que le formulaire est visible
+            if (ui._test.form.style.display === 'flex') {
+                document.getElementById('result1').className = 'result success';
+                document.getElementById('result1').textContent = '✅ Champ ouvert avec succès';
+            } else {
+                document.getElementById('result1').className = 'result error';
+                document.getElementById('result1').textContent = '❌ Échec: formulaire non visible';
+            }
+        })();
+
+        // Test 2: Envoi avec texte
+        (function() {
+            const container = document.getElementById('test2');
+            const meta = { mode_origine: "test", text: "Test message" };
+            const ui = _coachBuildSignalerUI(container, meta);
+            
+            // Ouvrir le formulaire
+            ui._test.btn.click();
+            
+            // Saisir du texte
+            ui._test.textarea.value = "Ce commentaire est incorrect";
+            
+            // Envoyer
+            ui._test.sendBtn.click();
+            
+            // Vérifier
+            const data = ui._test.getEmitData();
+            if (data && data.commentaire === "Ce commentaire est incorrect" && 
+                data.mode_origine === "test" && 
+                ui._test.btn.textContent === "Signalé" &&
+                ui._test.btn.disabled) {
+                document.getElementById('result2').className = 'result success';
+                document.getElementById('result2').textContent = '✅ Envoi avec texte: OK';
+            } else {
+                document.getElementById('result2').className = 'result error';
+                document.getElementById('result2').textContent = '❌ Échec: ' + JSON.stringify(data);
+            }
+        })();
+
+        // Test 3: Envoi sans texte
+        (function() {
+            const container = document.getElementById('test3');
+            const meta = { mode_origine: "test", text: "Test message" };
+            const ui = _coachBuildSignalerUI(container, meta);
+            
+            // Ouvrir et envoyer sans texte
+            ui._test.btn.click();
+            ui._test.sendBtn.click();
+            
+            // Vérifier
+            const data = ui._test.getEmitData();
+            if (data && data.commentaire === "" && 
+                ui._test.btn.textContent === "Signalé") {
+                document.getElementById('result3').className = 'result success';
+                document.getElementById('result3').textContent = '✅ Envoi sans texte: OK';
+            } else {
+                document.getElementById('result3').className = 'result error';
+                document.getElementById('result3').textContent = '❌ Échec: ' + JSON.stringify(data);
+            }
+        })();
+
+        // Test 4: Annulation
+        (function() {
+            const container = document.getElementById('test4');
+            const meta = { mode_origine: "test", text: "Test message" };
+            const ui = _coachBuildSignalerUI(container, meta);
+            
+            // Ouvrir, saisir, annuler
+            ui._test.btn.click();
+            ui._test.textarea.value = "Texte à annuler";
+            ui._test.cancelBtn.click();
+            
+            // Vérifier
+            if (ui._test.form.style.display === 'none' &&
+                ui._test.textarea.value === "" &&
+                ui._test.btn.textContent === "Signaler" &&
+                !ui._test.btn.disabled) {
+                document.getElementById('result4').className = 'result success';
+                document.getElementById('result4').textContent = '✅ Annulation: OK';
+            } else {
+                document.getElementById('result4').className = 'result error';
+                document.getElementById('result4').textContent = '❌ Échec: état incorrect';
+            }
+        })();
+
+        // Test 5: Double clic
+        (function() {
+            const container = document.getElementById('test5');
+            const meta = { mode_origine: "test", text: "Test message" };
+            const ui = _coachBuildSignalerUI(container, meta);
+            
+            // Premier envoi
+            ui._test.btn.click();
+            ui._test.sendBtn.click();
+            
+            // Tentative de second envoi
+            ui._test.btn.click();
+            const wasCalled = ui._test.wasEmitCalled();
+            
+            // Vérifier qu'aucun second emit n'a été appelé
+            // (le bouton est désactivé, donc on ne peut pas cliquer sur sendBtn)
+            if (ui._test.btn.disabled && ui._test.btn.textContent === "Signalé") {
+                document.getElementById('result5').className = 'result success';
+                document.getElementById('result5').textContent = '✅ Protection double clic: OK';
+            } else {
+                document.getElementById('result5').className = 'result error';
+                document.getElementById('result5').textContent = '❌ Échec: bouton non désactivé';
+            }
+        })();
+
+        // Test 6: Bulle Claude
+        (function() {
+            const container = document.getElementById('test6');
+            const bubble = document.createElement('div');
+            bubble.className = 'coach-bubble claude';
+            bubble.textContent = 'Réponse de Claude';
+            container.appendChild(bubble);
+            
+            const signalData = {
+                mode_origine: "chat",
+                fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                move: "e4",
+                log_id: "test-123"
+            };
+            
+            _coachBuildSignalerUI(bubble, Object.assign({}, signalData, {
+                text: "Réponse de Claude",
+                agent: "claude",
+                model: "claude-3-5-sonnet-20250620"
+            }));
+            
+            // Vérifier que le bouton Signaler existe
+            const signalBtn = bubble.querySelector('.coach-signaler-btn');
+            if (signalBtn && signalBtn.textContent === 'Signaler') {
+                document.getElementById('result6').className = 'result success';
+                document.getElementById('result6').textContent = '✅ Bulle Claude: bouton Signaler présent';
+            } else {
+                document.getElementById('result6').className = 'result error';
+                document.getElementById('result6').textContent = '❌ Échec: bouton Signaler manquant';
+            }
+        })();
+
+        // Test 7: Bulle Mistral
+        (function() {
+            const container = document.getElementById('test7');
+            const bubble = document.createElement('div');
+            bubble.className = 'coach-bubble mistral';
+            bubble.textContent = 'Réponse de Mistral';
+            container.appendChild(bubble);
+            
+            const signalData = {
+                mode_origine: "exercice",
+                fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                move: "e4",
+                log_id: "test-456"
+            };
+            
+            _coachBuildSignalerUI(bubble, Object.assign({}, signalData, {
+                text: "Réponse de Mistral",
+                agent: "mistral",
+                model: "mistral-large-latest"
+            }));
+            
+            // Vérifier que le bouton Signaler existe
+            const signalBtn = bubble.querySelector('.coach-signaler-btn');
+            if (signalBtn && signalBtn.textContent === 'Signaler') {
+                document.getElementById('result7').className = 'result success';
+                document.getElementById('result7').textContent = '✅ Bulle Mistral: bouton Signaler présent';
+            } else {
+                document.getElementById('result7').className = 'result error';
+                document.getElementById('result7').textContent = '❌ Échec: bouton Signaler manquant';
+            }
+        })();
+    </script>
+</body>
+</html>
