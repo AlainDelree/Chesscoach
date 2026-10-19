@@ -2697,7 +2697,7 @@ def get_coach_response(messages, context, coach_memory, config):
     # Température pour Claude (issue #116) : uniquement en mode exercice
     claude_temperature = None
     if mode_origine == "exercice":
-        claude_temp_str = config.CHESSCOACH_CLAUDE_TEMPERATURE or ""
+        claude_temp_str = __import__("config").CHESSCOACH_CLAUDE_TEMPERATURE or ""
         if claude_temp_str:
             try:
                 claude_temperature = float(claude_temp_str)
@@ -3067,7 +3067,7 @@ def get_mistral_response(messages, context, config):
     )
 
     # Température pour Mistral (issue #116) : toujours configurable, valeur par défaut 0.0
-    mistral_temp_str = config.CHESSCOACH_MISTRAL_TEMPERATURE or "0.0"
+    mistral_temp_str = __import__("config").CHESSCOACH_MISTRAL_TEMPERATURE or "0.0"
     mistral_temperature = 0.0  # valeur par défaut
     if mistral_temp_str:
         try:
