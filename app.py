@@ -1855,7 +1855,7 @@ def on_exercise_answer(data):
         # la solution/mat/équivalent Stockfish, pas de coup réellement joué
         # à l'époque, mise à jour du niveau Elo-like de la catégorie) — cf.
         # _on_exercise_answer_lichess.
-        _on_exercise_answer_lichess((data or {}).get("uci", ""), exercise_id)
+        _on_exercise_answer_lichess((data or {}).get("uci", ""), (data or {}).get("exercise_id"))
         return
 
     # Issue #83 : une « Position précise » collée par Alain ne doit fausser
