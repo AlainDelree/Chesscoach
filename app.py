@@ -2256,9 +2256,9 @@ def on_exercise_answer(data):
         # question de suivi posée dans le chat libre (issue #17) — jamais
         # affiché tel quel côté UI (cf. exercise.js).
         # Issue #125 : utiliser le verdict officiel Lichess comme verdict principal
-        "verdict_qualite": verdict_qualite_officiel if verdict_qualite_officiel else verdict_qualite_moteur,
+        "verdict_qualite": verdict_qualite_officiel if verdict_qualite_officiel else verdict_qualite,
         "verdict_qualite_officiel": verdict_qualite_officiel,
-        "verdict_qualite_ancien": verdict_qualite_moteur,
+        "verdict_qualite_ancien": verdict_qualite,
         "verdict_delta_cp": verdict_delta_cp,
         # Nouveaux champs pour la méthode Lichess (issue #125)
         "eval_before_cp": eval_before_cp,
