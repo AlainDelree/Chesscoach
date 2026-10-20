@@ -789,7 +789,11 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "(5) Le coup joué à l'époque dans la partie : ne le juge (meilleur ou moins bon que le coup "
         "proposé) QUE si le contexte fournit son évaluation ; sinon décris-le sans le comparer et écris "
         "« non évalué ». (6) Ne confonds pas la perte (en centipions) avec une évaluation : cite une "
-        "évaluation seulement si elle est fournie comme telle."
+        "évaluation seulement si elle est fournie comme telle. "
+        "(7) Mise en page : écris un paragraphe distinct, séparé du précédent par une ligne vide, pour "
+        "chacun de ces éléments, dans cet ordre : ton coup (verdict et raison), le meilleur coup, le coup "
+        "joué à l'époque (seulement s'il diffère de ton coup), la conclusion. Ne regroupe jamais deux de "
+        "ces éléments dans le même paragraphe."
     )
 )
 
