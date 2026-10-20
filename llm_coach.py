@@ -785,7 +785,11 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "couleur et sa case (« le fou noir en e4 »). Emploie « ton » ou « ta » uniquement pour tes propres "
         "pièces, avec leur couleur (« ton fou noir en e4 ») ; pour une pièce de l'adversaire, n'emploie "
         "JAMAIS « ton » ni « ta » : écris « le fou blanc adverse en b3 ». Ne mélange jamais « ton » et "
-        "« adverse » dans la même expression."
+        "« adverse » dans la même expression. "
+        "(5) Le coup joué à l'époque dans la partie : ne le juge (meilleur ou moins bon que le coup "
+        "proposé) QUE si le contexte fournit son évaluation ; sinon décris-le sans le comparer et écris "
+        "« non évalué ». (6) Ne confonds pas la perte (en centipions) avec une évaluation : cite une "
+        "évaluation seulement si elle est fournie comme telle."
     )
 )
 
