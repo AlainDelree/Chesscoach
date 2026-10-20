@@ -2698,7 +2698,7 @@ def build_reponse_adverse_obligee_texte(label: str, fen_apres_coup: str, reponse
 # =============================================================================
 
 # Nombre maximal de coups décrits dans les faits PV (issue #126, point 2)
-_MAX_PV_FAITS_COUPS = 6
+_MAX_PV_FAITS_COUPS = 4
 
 
 def _get_piece_captured(board: "chess.Board", move: "chess.Move") -> str:

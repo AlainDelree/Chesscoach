@@ -1109,7 +1109,7 @@ class EngineManager:
                       depth: int = 8,
                       always_return_best: bool = False,
                       return_pv: bool = False,
-                      pv_max_plies: int = 6,
+                      pv_max_plies: int = 4,
                       time_limit: float | None = None) -> dict:
         """
         Évalue la qualité d'un coup joué.
@@ -1388,7 +1388,7 @@ class EngineManager:
 
     def get_multipv(self, board: chess.Board, n: int = 3,
                     depth: int = 12, with_pv: bool = False,
-                    pv_max_plies: int = 6) -> list[dict]:
+                    pv_max_plies: int = 4) -> list[dict]:
         """
         Retourne les n meilleurs coups avec leur évaluation.
         Utile pour l'écran d'analyse.
