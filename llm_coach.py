@@ -793,7 +793,10 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "(7) Mise en page : écris un paragraphe distinct, séparé du précédent par une ligne vide, pour "
         "chacun de ces éléments, dans cet ordre : ton coup (verdict et raison), le meilleur coup, le coup "
         "joué à l'époque (seulement s'il diffère de ton coup), la conclusion. Ne regroupe jamais deux de "
-        "ces éléments dans le même paragraphe."
+        "ces éléments dans le même paragraphe. "
+        "(8) Roques : « O-O » est le PETIT roque (côté roi, le roi va en g1 ou g8) et « O-O-O » le "
+        "GRAND roque (côté dame, le roi va en c1 ou c8) ; ne les confonds jamais, et ne parle de roque "
+        "que si le coup cité est bien « O-O » ou « O-O-O »."
     )
 )
 

@@ -2913,6 +2913,10 @@ def format_pv_facts(label: str, pv_facts: list[dict], camp_alain: str = "") -> s
     n_entete = len(lignes)
     for fait in pv_facts[:_MAX_PV_FAITS_COUPS]:
         parts = [f"coup {fait['san']}"]
+        if 'O-O-O' in fait['san']:
+            parts.append("grand roque (côté dame)")
+        elif 'O-O' in fait['san']:
+            parts.append("petit roque (côté roi)")
         if fait['piece_captured']:
             parts.append(f"capture {fait['piece_captured']}")
         if fait['is_checkmate']:
