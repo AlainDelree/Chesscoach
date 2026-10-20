@@ -774,7 +774,18 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "pièce est clouée pour ce camp ; si le bloc ne mentionne AUCUNE menace "
         "de mat, n'affirme JAMAIS qu'il y a une menace de mat. Ces faits sont "
         "calculés mécaniquement par python-chess sur la position réelle, "
-        "jamais devinés — ils font foi."
+        "jamais devinés — ils font foi. "
+        "Précisions de lecture : (1) le « solde pour toi » est exprimé de TON point de vue "
+        "(celui de l'utilisateur) : positif = avantage pour toi, négatif = avantage pour ton adversaire. "
+        "(2) Une pièce « en prise » est une pièce que l'adversaire peut gagner en la prenant, reprises "
+        "et clouages compris ; une pièce attaquée qui ne figure pas dans cette liste n'est pas en danger "
+        "réel : ne dis jamais qu'elle est « sans défense ». (3) Quand le seul défenseur d'une pièce est "
+        "cloué (le bloc le signale), dis-le : une pièce clouée ne peut pas reprendre, et c'est souvent la "
+        "vraie raison pour laquelle une pièce est perdue. (4) Désigne toujours une pièce par son type, sa "
+        "couleur et sa case (« le fou noir en e4 »). Emploie « ton » ou « ta » uniquement pour tes propres "
+        "pièces, avec leur couleur (« ton fou noir en e4 ») ; pour une pièce de l'adversaire, n'emploie "
+        "JAMAIS « ton » ni « ta » : écris « le fou blanc adverse en b3 ». Ne mélange jamais « ton » et "
+        "« adverse » dans la même expression."
     )
 )
 

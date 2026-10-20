@@ -2727,26 +2727,44 @@ def _get_new_attacks(board: "chess.Board", board_apres: "chess.Board", move: "ch
     return cibles
 
 
+def _gain_capture(board: "chess.Board", case: int, couleur_preneuse: bool, profondeur: int = 0) -> int:
+    """Gain net maximal (>= 0, en points) que `couleur_preneuse` obtient en capturant la
+    pièce située sur `case`, reprises comprises : à chaque étape, le camp qui prend le fait
+    avec sa pièce la moins chère, et chaque camp peut arrêter l'échange quand il veut.
+    Seules les captures LÉGALES comptent : un défenseur cloué ne peut pas reprendre."""
+    if profondeur > 8:
+        return 0
+    victime = board.piece_at(case)
+    if victime is None or victime.color == couleur_preneuse:
+        return 0
+    b = board.copy(stack=False)
+    b.turn = couleur_preneuse
+    b.ep_square = None
+    meilleur = None
+    for m in b.legal_moves:
+        if m.to_square != case:
+            continue
+        valeur = _VALEURS.get(b.piece_at(m.from_square).piece_type, 0)
+        if meilleur is None or valeur < meilleur[0]:
+            meilleur = (valeur, m)
+    if meilleur is None:
+        return 0
+    gain = _VALEURS.get(victime.piece_type, 0)
+    b.push(meilleur[1])
+    return max(0, gain - _gain_capture(b, case, not couleur_preneuse, profondeur + 1))
+
+
 def _get_insufficiently_defended(board: "chess.Board", camp: bool) -> list[str]:
-    """Retourne la liste des pièces attaquées et insuffisamment défendues pour un camp."""
+    """Pièces d'un camp « en prise » : l'adversaire gagne du matériel en les prenant, en
+    tenant compte des reprises et des clouages (calcul d'échange, issue #126 corrigée).
+    Une pièce attaquée mais bien défendue n'est PAS listée."""
     resultats = []
     for sq in chess.SQUARES:
         piece = board.piece_at(sq)
-        if piece is None or piece.color != camp:
+        if piece is None or piece.color != camp or piece.piece_type == chess.KING:
             continue
-        attaquants = board.attackers(not camp, sq)
-        if not attaquants:
-            continue
-        defenseurs = board.attackers(camp, sq)
-        # Insuffisamment défendue : attaquants > défenseurs (en valeur) ou défenseurs vides
-        if not defenseurs:
+        if _gain_capture(board, sq, not camp) > 0:
             resultats.append(f"{_NOM_PIECE_MAJ[piece.piece_type]} {chess.square_name(sq)}")
-        else:
-            # Comparer la valeur des attaquants vs défenseurs
-            valeur_attaquants = sum(_VALEURS.get(board.piece_at(a).piece_type, 0) for a in attaquants)
-            valeur_defenseurs = sum(_VALEURS.get(board.piece_at(d).piece_type, 0) for d in defenseurs)
-            if valeur_attaquants > valeur_defenseurs:
-                resultats.append(f"{_NOM_PIECE_MAJ[piece.piece_type]} {chess.square_name(sq)}")
     return resultats
 
 
@@ -2818,7 +2836,7 @@ def describe_pv_facts(fen_avant: str, pv_text: str, camp_alain: str = "",
             
             # Déterminer le numéro du coup
             if board.turn == chess.WHITE:
-                coup_num = str(move_number)
+                coup_num = str(move_number) + "."
             else:
                 coup_num = str(move_number) + "..."
             
@@ -2878,60 +2896,45 @@ def describe_pv_facts(fen_avant: str, pv_text: str, camp_alain: str = "",
 
 
 def format_pv_facts(label: str, pv_facts: list[dict], camp_alain: str = "") -> str:
-    """Formate les faits PV en texte compact et lisible (issue #126).
-    
-    Format : un bloc par coup, avec uniquement les faits non vides.
-    Plafonne le nombre de coups à _MAX_PV_FAITS_COUPS.
-    
-    Retourne une chaîne vide si pv_facts est vide."""
+    """Formate les faits PV en texte compact et lisible (issue #126, corrigée).
+
+    Un bloc par coup, avec uniquement les faits non vides. Une seule ligne d'en-tête dit
+    quel camp joue l'utilisateur et comment lire « en prise » et le solde ; les lignes
+    restent légères. Retourne une chaîne vide si pv_facts est vide."""
     if not pv_facts:
         return ""
-    
+
+    camp = (camp_alain or "").strip().lower()
     lignes = [f"{label} :"]
+    if camp in ("blancs", "noirs"):
+        lignes.append(
+            f"  (Tu joues les {camp.capitalize()}. « en prise » : l'adversaire y gagne du matériel, "
+            "reprises et clouages compris. Solde pour toi : positif = avantage pour toi.)")
+    n_entete = len(lignes)
     for fait in pv_facts[:_MAX_PV_FAITS_COUPS]:
-        parts = []
-        
-        # Coup en notation
-        parts.append(f"coup {fait['san']}")
-        
-        # Pièce capturée
+        parts = [f"coup {fait['san']}"]
         if fait['piece_captured']:
             parts.append(f"capture {fait['piece_captured']}")
-        
-        # Échec/mat
         if fait['is_checkmate']:
             parts.append("échec et mat")
         elif fait['is_check']:
             parts.append("échec")
-        
-        # Pièces adverses nouvellement attaquées
         if fait['new_attacks']:
             parts.append(f"attaque {', '.join(fait['new_attacks'])}")
-        
-        # Pièces attaquées et insuffisamment défendues
         if fait['insufficiently_defended_white']:
-            parts.append(f"Blancs: pièces attaquées non défendues: {', '.join(fait['insufficiently_defended_white'])}")
+            parts.append(f"Blancs: en prise: {', '.join(fait['insufficiently_defended_white'])}")
         if fait['insufficiently_defended_black']:
-            parts.append(f"Noirs: pièces attaquées non défendues: {', '.join(fait['insufficiently_defended_black'])}")
-        
-        # Menaces de mat
+            parts.append(f"Noirs: en prise: {', '.join(fait['insufficiently_defended_black'])}")
         if fait['mate_threat_white']:
             parts.append("Blancs: menace de mat en 1")
         if fait['mate_threat_black']:
             parts.append("Noirs: menace de mat en 1")
-        
-        # Clouages
         if fait['pinned_white']:
-            parts.append(f"Blancs: clouages absolus: {', '.join(fait['pinned_white'])}")
+            parts.append(f"Blancs: clouages: {', '.join(fait['pinned_white'])}")
         if fait['pinned_black']:
-            parts.append(f"Noirs: clouages absolus: {', '.join(fait['pinned_black'])}")
-        
-        # Solde matériel
+            parts.append(f"Noirs: clouages: {', '.join(fait['pinned_black'])}")
         if fait['material_balance'] is not None:
-            parts.append(f"solde matériel: {fait['material_balance']:+d} pts")
-        
-        # Joindre les parties non vides
-        if parts:
-            lignes.append(f"  {', '.join(parts)}")
-    
-    return "\n".join(lignes) if len(lignes) > 1 else ""
+            parts.append(f"solde pour toi : {fait['material_balance']:+d}")
+        lignes.append(f"  {', '.join(parts)}")
+
+    return "\n".join(lignes) if len(lignes) > n_entete else ""
