@@ -18,7 +18,7 @@ class TestDescribePvFacts(unittest.TestCase):
         
         facts = game_facts.describe_pv_facts(fen, pv, "blancs")
         self.assertEqual(len(facts), 1)
-        self.assertIn("1e4", facts[0]["san"])
+        self.assertIn("1.e4", facts[0]["san"])
         self.assertEqual(facts[0]["piece_captured"], "")
         self.assertFalse(facts[0]["is_check"])
         self.assertFalse(facts[0]["is_checkmate"])
@@ -232,13 +232,13 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("Faits python-chess par coup après le meilleur coup", pv_meilleur_coup_faits)
         
         # Vérifier que les coups sont présents
-        self.assertIn("1e4", pv_coup_propose_faits)
+        self.assertIn("1.e4", pv_coup_propose_faits)
         self.assertIn("1...Nf6", pv_coup_propose_faits)
-        self.assertIn("2Nc3", pv_coup_propose_faits)
-        
-        self.assertIn("1e4", pv_meilleur_coup_faits)
+        self.assertIn("2.Nc3", pv_coup_propose_faits)
+
+        self.assertIn("1.e4", pv_meilleur_coup_faits)
         self.assertIn("1...Nc6", pv_meilleur_coup_faits)
-        self.assertIn("2Nf3", pv_meilleur_coup_faits)
+        self.assertIn("2.Nf3", pv_meilleur_coup_faits)
         
         # Vérifier que le solde matériel est présent
         self.assertIn("solde matériel", pv_coup_propose_faits)

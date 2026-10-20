@@ -248,7 +248,7 @@ _FEMININ = {chess.QUEEN, chess.ROOK}
 # "+199,74"/"+34,56" pions) citées telles quelles par le coach, alors que
 # Stockfish peut reporter plusieurs milliers de centipawns dans une position
 # de gain forcé pas encore détectée comme un mat (score NNUE non borné, à la
-# différence d'un nombre de pions réel). describe_eval_alain_cp_clause /
+# différence d'un nombre de pions réel). describe_eval_blancs_cp_clause /
 # describe_perte_cp_clause reformulent systématiquement ces valeurs en mots
 # au-delà de ce seuil, jamais en nombre.
 SEUIL_GRANDE_VALEUR_CP = 1000
@@ -1191,32 +1191,30 @@ def build_coups_interroges_texte(message_text: str, positions: list, camp_alain:
     return "\n".join(blocs)
 
 
-def _materiel_alain(board: "chess.Board", camp_alain: str) -> int | None:
-    """Solde matériel (points classiques, pion=1...dame=9) du point de vue
-    d'Alain — positif = avantage pour Alain, négatif = avantage pour
-    l'adversaire. None si camp_alain n'est ni "blancs" ni "noirs" (solde
-    Blancs-Noirs non convertible sans ambiguïté, même garde-fou que
-    app._vers_point_de_vue_alain pour une évaluation Stockfish, issue #73)."""
-    if camp_alain not in ("blancs", "noirs"):
-        return None
+def _solde_blancs(board: "chess.Board") -> int:
+    """Solde matériel (points classiques, pion=1...dame=9), convention
+    Lichess (issue #128) : positif = avantage Blancs, négatif = avantage
+    Noirs, quel que soit le camp joué par l'utilisateur — toujours
+    calculable (pas de notion de camp_alain ici, donc jamais None,
+    contrairement à l'ancienne _materiel_alain qu'elle remplace)."""
     blancs, noirs = _materiel(board)
-    solde_blancs = blancs - noirs
-    return solde_blancs if camp_alain == "blancs" else -solde_blancs
+    return blancs - noirs
 
 
 def describe_pv_with_balance(fen_avant: str, pv_text: str, camp_alain: str = "",
                               max_plies: int = 4) -> list[dict]:
     """API publique (issue #75, point 3) : comme describe_pv_mechanically,
     mais ajoute à chaque demi-coup décrit le solde matériel CUMULÉ après ce
-    coup, du point de vue d'Alain (_materiel_alain) — sans ce solde, le coach
-    devait reconstituer de tête le bilan d'une ligne principale et s'est déjà
+    coup, convention Lichess (_solde_blancs, issue #128 : + = avantage
+    Blancs, − = avantage Noirs) — sans ce solde, le coach devait
+    reconstituer de tête le bilan d'une ligne principale et s'est déjà
     trompé sur un simple échange (ex. "tu as gagné la dame contre rien" sur
     Qh8+ Ke7 Qxd8+ Kxd8, qui échange les deux dames, solde net 0 ; "tu
     échanges ta tour contre le fou" sur Rxd5, qui gagne simplement le fou
     sans rien céder en retour).
 
     Retourne une liste de dicts {"san": str, "description": str,
-    "solde_alain": int | None} (un par demi-coup décrit, dans l'ordre de la
+    "solde_blancs": int} (un par demi-coup décrit, dans l'ordre de la
     ligne) — liste tronquée au premier coup illégal rencontré, vide si
     fen_avant/pv_text sont vides ou illisibles, comme describe_pv_mechanically."""
     fen_avant = (fen_avant or "").strip()
@@ -1266,7 +1264,7 @@ def describe_pv_with_balance(fen_avant: str, pv_text: str, camp_alain: str = "",
             resultat.append({
                 "san": san,
                 "description": description,
-                "solde_alain": _materiel_alain(board, camp_alain),
+                "solde_blancs": _solde_blancs(board),
             })
         return resultat
     except Exception as e:
@@ -1278,20 +1276,19 @@ def format_pv_with_balance(label: str, pv_descriptions: list[dict]) -> str:
     """Formate le résultat de describe_pv_with_balance en texte prêt à
     injecter dans le contexte du coach (issue #75, point 3) : une ligne par
     demi-coup, avec sa description mécanique et le solde matériel cumulé
-    pour Alain après ce coup précis — jamais après la ligne entière
-    seulement, pour que le coach puisse situer exactement À QUEL COUP un
-    échange se solde. Chaîne vide si pv_descriptions est vide."""
+    (convention Lichess, issue #128 : + = avantage Blancs, − = avantage
+    Noirs) après ce coup précis — jamais après la ligne entière seulement,
+    pour que le coach puisse situer exactement À QUEL COUP un échange se
+    solde. Chaîne vide si pv_descriptions est vide."""
     if not pv_descriptions:
         return ""
     lignes = [f"{label} :"]
     for d in pv_descriptions:
-        solde = d.get("solde_alain")
-        solde_txt = (
-            f"solde matériel cumulé pour Alain après ce coup : {solde:+d}"
-            if solde is not None
-            else "solde matériel cumulé pour Alain après ce coup : indéterminé (camp d'Alain inconnu)"
+        solde = d["solde_blancs"]
+        lignes.append(
+            f"  {d['san']} : {d['description']} "
+            f"(solde matériel cumulé après ce coup, convention Lichess : {solde:+d})"
         )
-        lignes.append(f"  {d['san']} : {d['description']} ({solde_txt})")
     return "\n".join(lignes)
 
 
@@ -1379,25 +1376,26 @@ def describe_pv_numerotee(fen_depart: str, pv_text: str, camp_alain: str = "") -
     }
 
 
-def describe_eval_alain_cp_clause(eval_alain_cp) -> str:
+def describe_eval_blancs_cp_clause(eval_blancs_cp) -> str:
     """Phrase complète décrivant l'évaluation Stockfish réelle d'une position,
-    du point de vue d'Alain (issue #75, point 1) — en mots dès que la
-    magnitude dépasse SEUIL_GRANDE_VALEUR_CP, jamais le chiffre brut dans ce
-    cas (voir le commentaire de SEUIL_GRANDE_VALEUR_CP ci-dessus). Chaîne
-    vide si eval_alain_cp n'est pas un nombre."""
-    if not isinstance(eval_alain_cp, (int, float)):
+    convention Lichess (issue #128 : + = avantage Blancs, − = avantage
+    Noirs, quel que soit le camp d'Alain) — en mots dès que la magnitude
+    dépasse SEUIL_GRANDE_VALEUR_CP, jamais le chiffre brut dans ce cas (voir
+    le commentaire de SEUIL_GRANDE_VALEUR_CP ci-dessus). Chaîne vide si
+    eval_blancs_cp n'est pas un nombre."""
+    if not isinstance(eval_blancs_cp, (int, float)):
         return ""
-    if abs(eval_alain_cp) > SEUIL_GRANDE_VALEUR_CP:
-        gagnant = "Alain" if eval_alain_cp > 0 else "l'adversaire"
+    if abs(eval_blancs_cp) > SEUIL_GRANDE_VALEUR_CP:
+        gagnant = "les Blancs" if eval_blancs_cp > 0 else "les Noirs"
         return (
             "Évaluation Stockfish réelle de la position résultant du coup "
             f"proposé : position gagnée de façon forcée pour {gagnant} (valeur "
             "extrême, à ne JAMAIS exprimer en centipawns ni en nombre de pions)."
         )
     return (
-        "Évaluation Stockfish réelle de la position résultant du coup proposé, "
-        "du point de vue d'Alain (positif = avantage pour Alain, négatif = "
-        f"avantage pour l'adversaire) : {eval_alain_cp:+d} centipawns."
+        "Évaluation Stockfish réelle de la position résultant du coup proposé "
+        "(convention Lichess : + = avantage Blancs, − = avantage Noirs) : "
+        f"{eval_blancs_cp:+d} centipawns."
     )
 
 
@@ -1472,7 +1470,17 @@ def describe_menace_adverse(menace_data: dict, fen_avant: str, camp_alain: str =
         if m.get("mate") is not None:
             eval_txt = f"mat en {abs(m['mate'])} coup(s) contre Alain"
         elif m.get("cp") is not None:
-            eval_txt = f"{m['cp']:+d} centipawns pour Alain"
+            # get_threats rend cp du point de vue du camp au trait original
+            # (camp_alain) — reconverti ici vers la convention Lichess
+            # (issue #128 : + = avantage Blancs, − = avantage Noirs) avant
+            # d'entrer dans le texte de contexte.
+            cp_alain = m["cp"]
+            if camp_alain == "blancs":
+                eval_txt = f"{cp_alain:+d} centipawns (convention Lichess)"
+            elif camp_alain == "noirs":
+                eval_txt = f"{-cp_alain:+d} centipawns (convention Lichess)"
+            else:
+                eval_txt = "indéterminée (camp au trait inconnu)"
         else:
             eval_txt = "indéterminée"
         if perte is None:
@@ -2803,7 +2811,12 @@ def describe_pv_facts(fen_avant: str, pv_text: str, camp_alain: str = "",
                       max_plies: int = _MAX_PV_FAITS_COUPS) -> list[dict]:
     """API publique (issue #126) : calcule les faits python-chess pour chaque
     coup de la ligne calculée (PV) à partir de `fen_avant`.
-    
+
+    `camp_alain` n'intervient plus dans le calcul de material_balance
+    depuis l'issue #128 (toujours en convention Lichess, indépendante du
+    camp joué) — gardé dans la signature pour rester compatible avec les
+    appelants existants (format_pv_facts l'utilise encore pour l'en-tête).
+
     Pour chaque coup de la PV, retourne un dictionnaire avec :
     - san: notation SAN du coup avec numéro
     - piece_captured: pièce capturée éventuelle
@@ -2816,7 +2829,8 @@ def describe_pv_facts(fen_avant: str, pv_text: str, camp_alain: str = "",
     - mate_threat_black: True si les Noirs ont une menace de mat en un coup
     - pinned_white: pièces blanches clouées absolument
     - pinned_black: pièces noires clouées absolument
-    - material_balance: solde matériel en points
+    - material_balance: solde matériel en points, convention Lichess
+      (issue #128) : + = avantage Blancs, − = avantage Noirs
     
     Retourne une liste de dicts (un par demi-coup), tronquée à max_plies.
     Liste vide si fen_avant/pv_text sont vides ou illisibles."""
@@ -2874,8 +2888,8 @@ def describe_pv_facts(fen_avant: str, pv_text: str, camp_alain: str = "",
             pinned_white = _get_pinned_pieces(board_apres, chess.WHITE)
             pinned_black = _get_pinned_pieces(board_apres, chess.BLACK)
             
-            # Solde matériel
-            material_balance = _materiel_alain(board_apres, camp_alain)
+            # Solde matériel (convention Lichess, issue #128)
+            material_balance = _solde_blancs(board_apres)
             
             # Construire le SAN avec numéro
             san_with_number = f"{coup_num}{san}"
@@ -2917,7 +2931,8 @@ def format_pv_facts(label: str, pv_facts: list[dict], camp_alain: str = "") -> s
     if camp in ("blancs", "noirs"):
         lignes.append(
             f"  (Tu joues les {camp.capitalize()}. « en prise » : l'adversaire y gagne du matériel, "
-            "reprises et clouages compris. Solde pour toi : positif = avantage pour toi.)")
+            "reprises et clouages compris. Évaluations et soldes : + = avantage Blancs, "
+            "− = avantage Noirs (convention de Lichess).)")
     n_entete = len(lignes)
     for fait in pv_facts:
         parts = [f"coup {fait['san']}"]
@@ -2946,7 +2961,7 @@ def format_pv_facts(label: str, pv_facts: list[dict], camp_alain: str = "") -> s
         if fait['pinned_black']:
             parts.append(f"Noirs: clouages: {', '.join(fait['pinned_black'])}")
         if fait['material_balance'] is not None:
-            parts.append(f"solde pour toi : {fait['material_balance']:+d}")
+            parts.append(f"solde matériel : {fait['material_balance']:+d}")
         lignes.append(f"  {', '.join(parts)}")
 
     return "\n".join(lignes) if len(lignes) > n_entete else ""

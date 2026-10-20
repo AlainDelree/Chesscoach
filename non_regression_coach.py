@@ -224,12 +224,6 @@ def _eval_blancs_apres(engine_manager, board: "chess.Board", depth: int = 8) -> 
     return None, None
 
 
-def _vers_point_de_vue_alain(valeur, camp_alain: str):
-    if valeur is None:
-        return None
-    return -valeur if camp_alain == "noirs" else valeur
-
-
 def _positions_pour_coup_interroge(context: dict) -> list:
     """Duplique délibérément app.py._positions_pour_coup_interroge (issue
     #96, même raison que les autres fonctions de cette section : jamais sur
@@ -317,8 +311,6 @@ def construire_contexte(engine_manager, cas: dict) -> tuple:
     board_apres.push(move)
     fen_apres = board_apres.fen()
     eval_blancs_cp, eval_mat = _eval_blancs_apres(engine_manager, board_apres)
-    eval_alain_cp = _vers_point_de_vue_alain(eval_blancs_cp, camp_alain)
-    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, camp_alain)
 
     meilleur_coup = eval_result["meilleur_coup"] or cas["meilleur_coup"].split("|")[0]
 
@@ -401,8 +393,8 @@ def construire_contexte(engine_manager, cas: dict) -> tuple:
         "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
         "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
         "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
-        "eval_alain_cp": eval_alain_cp,
-        "eval_alain_mat": eval_alain_mat,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_blancs_mat": eval_mat,
         "verdict_qualite": eval_result["verdict_qualite"],
         "verdict_delta_cp": eval_result["verdict_delta_cp"],
         "mode_exercice": True,
