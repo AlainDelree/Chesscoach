@@ -107,11 +107,12 @@ let exercisePvMeilleurCoupDetail = null;
 let exerciseCoupProposeDescriptionMecanique    = null;
 let exerciseCoupReelDescriptionMecanique       = null;
 let exerciseMeilleurCoupDescriptionMecanique   = null;
-// Évaluation Stockfish de la position résultant du coup proposé, point de
-// vue d'Alain (issue #73 : positif = avantage pour Alain), reçue du serveur
-// avec le verdict — transmise au chat libre comme le reste de ce contexte.
-let exerciseEvalAlainCp    = null;
-let exerciseEvalAlainMat   = null;
+// Évaluation Stockfish de la position résultant du coup proposé, convention
+// Lichess (issue #128 : + = avantage Blancs, − = avantage Noirs), reçue du
+// serveur avec le verdict — transmise au chat libre comme le reste de ce
+// contexte. Jamais affichée telle quelle côté UI (cf. commentaires plus bas).
+let exerciseEvalBlancsCp   = null;
+let exerciseEvalBlancsMat  = null;
 // Vrai juste après "Reprendre mon coup", tant qu'aucun nouveau coup n'a été
 // reproposé : signale au coach que le coup/verdict discutés plus tôt dans le
 // chat libre concernent une tentative annulée, pas l'état réel actuel.
@@ -415,8 +416,8 @@ function _exerciseResetTentative() {
   exerciseCoupProposeDescriptionMecanique  = null;
   exerciseCoupReelDescriptionMecanique     = null;
   exerciseMeilleurCoupDescriptionMecanique = null;
-  exerciseEvalAlainCp    = null;
-  exerciseEvalAlainMat   = null;
+  exerciseEvalBlancsCp  = null;
+  exerciseEvalBlancsMat = null;
 }
 
 function exerciseLineStopPlayback() {
@@ -861,8 +862,8 @@ function exerciseChatContextExtra() {
     pv_meilleur_coup: exercisePvMeilleurCoup || "",
     pv_coup_propose_detail: exercisePvCoupProposeDetail || "",
     pv_meilleur_coup_detail: exercisePvMeilleurCoupDetail || "",
-    eval_alain_cp: exerciseEvalAlainCp,
-    eval_alain_mat: exerciseEvalAlainMat,
+    eval_blancs_cp: exerciseEvalBlancsCp,
+    eval_blancs_mat: exerciseEvalBlancsMat,
     reprise_recente: exerciseJustReprised,
     // Listes de pièces, menace adverse et idées détectées (issue #80) —
     // même raison que les champs ci-dessus.
@@ -1261,8 +1262,8 @@ if (typeof socket !== "undefined") {
     exerciseCoupProposeDescriptionMecanique  = (data && data.coup_propose_description_mecanique) || null;
     exerciseCoupReelDescriptionMecanique     = (data && data.coup_reel_description_mecanique) || null;
     exerciseMeilleurCoupDescriptionMecanique = (data && data.meilleur_coup_description_mecanique) || null;
-    exerciseEvalAlainCp  = (data && typeof data.eval_alain_cp === "number") ? data.eval_alain_cp : null;
-    exerciseEvalAlainMat = (data && typeof data.eval_alain_mat === "number") ? data.eval_alain_mat : null;
+    exerciseEvalBlancsCp  = (data && typeof data.eval_blancs_cp === "number") ? data.eval_blancs_cp : null;
+    exerciseEvalBlancsMat = (data && typeof data.eval_blancs_mat === "number") ? data.eval_blancs_mat : null;
     // Listes de pièces, menace adverse et idées détectées (issue #80) —
     // mémorisées pour être réinjectées dans une question de suivi du chat
     // libre, comme les champs ci-dessus.

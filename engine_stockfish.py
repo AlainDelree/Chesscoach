@@ -1166,9 +1166,16 @@ class EngineManager:
             (issue #75, point 2a)
           - "meilleur_coup" : meilleur coup UCI si différent du coup joué,
             sinon None ; toujours le meilleur coup si always_return_best=True
-          - "eval_before_cp" : évaluation AVANT le coup en centipawns (point de vue du joueur)
-          - "eval_after_cp" : évaluation APRÈS le coup en centipawns (point de vue du joueur)
-          - "win_prob_drop" : chute de probabilité de gain (méthode Lichess)
+          - "eval_before_cp" : évaluation AVANT le coup en centipawns, convention
+            Lichess (issue #128) : + = avantage Blancs, − = avantage Noirs, quel
+            que soit le camp qui a joué (plus "point de vue du joueur" — un
+            chiffre dont le signe dépend du camp s'est déjà révélé ambigu une
+            fois transmis au coach, cf. CONTEXTE.md)
+          - "eval_after_cp" : évaluation APRÈS le coup en centipawns, même
+            convention
+          - "win_prob_drop" : chute de probabilité de gain (méthode Lichess),
+            toujours >= 0, du point de vue du joueur qui vient de jouer —
+            inchangé par l'issue #128, ce n'est pas une évaluation signée
           - "pv_coup_propose" : ligne PV pour le coup proposé (si return_pv=True)
           - "pv_meilleur_coup" : ligne PV pour le meilleur coup (si return_pv=True)
           - "analyse_indisponible" : True si l'analyse a échoué (issue #79)
@@ -1284,23 +1291,23 @@ class EngineManager:
                     result["pv_meilleur_coup"] = self._pv_to_san(board, _couper_pv(board, pv_avant, pv_max_plies))
                 return result
 
-            # Stocker les évaluations avant/après du point de vue du joueur
+            # val_avant et val_apres_joueur sont du point de vue du joueur qui
+            # vient de jouer — converties ci-dessous vers le point de vue des
+            # Blancs (convention Lichess, issue #128) avant d'être stockées
+            # dans le résultat : plus aucun chiffre "point de vue du joueur"
+            # n'est transmis au coach, un tel chiffre s'est déjà révélé
+            # ambigu une fois lu sans connaître le camp (cf. CONTEXTE.md).
             player_is_white = (board.turn == chess.WHITE)
-            # val_avant et val_apres_joueur sont déjà du point de vue du joueur
-            result["eval_before_cp"] = val_avant
-            result["eval_after_cp"] = val_apres_joueur
-            
-            # Calculer le verdict officiel Lichess (issue #125)
-            # Convertir les évaluations du point de vue des Blancs pour la formule
-            # eval_avant_white = val_avant si player_is_white sinon -val_avant
-            # eval_after_white = val_apres_joueur si player_is_white sinon -val_apres_joueur
             if player_is_white:
                 eval_before_white = val_avant
                 eval_after_white = val_apres_joueur
             else:
                 eval_before_white = -val_avant
                 eval_after_white = -val_apres_joueur
-            
+            result["eval_before_cp"] = eval_before_white
+            result["eval_after_cp"] = eval_after_white
+
+            # Calculer le verdict officiel Lichess (issue #125)
             qualite_officielle = classify_move_lichess(
                 eval_before_white, eval_after_white, player_is_white
             )

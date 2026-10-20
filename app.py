@@ -358,9 +358,15 @@ def _eval_blancs_apres(board: chess.Board, depth: int = 8) -> tuple[int | None, 
     EngineManager.evaluate() retourne cp/mate du point de vue du joueur au
     trait dans `board` (donc l'adversaire d'Alain juste après son coup) : on
     inverse le signe si ce joueur est Noir, pour obtenir une convention non
-    ambiguë quel que soit le camp d'Alain ou le mode d'entraînement — valeur
-    intermédiaire, encore à convertir vers le point de vue d'Alain (voir
-    _vers_point_de_vue_alain ci-dessous) avant transmission au coach.
+    ambiguë quel que soit le camp d'Alain ou le mode d'entraînement.
+
+    C'est la convention finale transmise au coach (issue #128, convention
+    Lichess : + = avantage Blancs, − = avantage Noirs) — plus aucune
+    conversion ultérieure vers le point de vue d'Alain : un chiffre "point
+    de vue d'Alain" transmis sans le dire explicitement s'est lui aussi
+    révélé ambigu en usage réel (ex. "+132"/"+12" cités tels quels par le
+    coach pour un exercice joué avec les Noirs, alors que Lichess aurait
+    affiché "−1,3"/"−0,1" pour la même position — cf. CONTEXTE.md).
 
     Retourne (eval_blancs_cp, eval_mat) — un seul des deux est non None
     (sauf position déjà terminée, où les deux sont None)."""
@@ -373,28 +379,6 @@ def _eval_blancs_apres(board: chess.Board, depth: int = 8) -> tuple[int | None, 
     if eval_info["cp"] is not None:
         return sign * eval_info["cp"], None
     return None, None
-
-
-def _vers_point_de_vue_alain(valeur: int | None, camp_alain: str) -> int | None:
-    """Convertit un centipawn/mat "point de vue des Blancs" (_eval_blancs_apres
-    ou équivalent) vers le point de vue d'Alain — positif = avantage pour
-    Alain, négatif = avantage pour l'adversaire (issue #73).
-
-    Un chiffre "point de vue des Blancs" transmis tel quel au contexte du
-    coach s'est déjà révélé ambigu en usage réel : un -131 a été lu comme
-    "légèrement en faveur des Blancs" alors que camp_alain="noirs" signifiait
-    en réalité +131, un avantage pour Alain. llm_coach._build_context_text
-    n'accepte plus que des évaluations déjà exprimées de ce point de vue
-    (eval_alain_cp / eval_alain_mat).
-
-    Repli sur le signe Blancs (valeur inchangée) si camp_alain n'est ni
-    "blancs" ni "noirs" — n'arrive pas en pratique dans les modes qui
-    appellent cette fonction, chacun suit déjà localement le camp d'Alain."""
-    if valeur is None:
-        return None
-    if camp_alain == "noirs":
-        return -valeur
-    return valeur
 
 
 def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
@@ -1058,11 +1042,6 @@ def on_coach_comment_on_demand(data):
     # client transmet donc le camp suivi côté JS pour le mode en cours
     # (pedagogicCampAlain / openingCampAlain / finaleCampAlain).
     camp_alain = ((data or {}).get("camp_alain") or "").strip()
-    # Conversion vers le point de vue d'Alain (issue #73) — cf.
-    # _vers_point_de_vue_alain, plus aucun chiffre "point de vue des Blancs"
-    # transmis au coach.
-    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, camp_alain)
-    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, camp_alain)
     theme_finale = ((data or {}).get("theme_finale") or "").strip()
     # Mode d'origine transmis par le client (issue #26, cf. static/board.js
     # askCoachOnDemand) — pour le logging uniquement (part. 3), ce handler
@@ -1081,8 +1060,8 @@ def on_coach_comment_on_demand(data):
         "fen": fen,
         "camp_alain": camp_alain,
         "meilleur_coup": meilleur_coup_san,
-        "eval_alain_cp": eval_alain_cp,
-        "eval_alain_mat": eval_alain_mat,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_blancs_mat": eval_mat,
         "theme_finale": theme_finale,
         "mode_origine": mode_origine,
         # Issue #79 : True si l'évaluation générique ci-dessus (profondeur 8,
@@ -1098,7 +1077,7 @@ def on_coach_comment_on_demand(data):
     # ni la position de DÉPART de l'exercice ni les descriptions mécaniques
     # des coups déjà discutés, contrairement à une question posée dans le
     # chat libre pendant le même exercice (coach_ask, qui fusionne déjà ce
-    # contexte côté client). meilleur_coup/eval_alain_cp/eval_alain_mat
+    # contexte côté client). meilleur_coup/eval_blancs_cp/eval_mat
     # calculés ci-dessus (profondeur 8, générique à tous les modes) sont
     # remplacés par la valeur de l'exercice quand elle est disponible — issue
     # du dernier verdict rendu, à DEPTH_EXERCICE_TEMPS_REEL, donc plus fiable.
@@ -1119,7 +1098,7 @@ def on_coach_comment_on_demand(data):
         valeur = (data or {}).get(champ)
         if valeur:
             context[champ] = valeur
-    for champ in ("verdict_delta_cp", "eval_alain_cp", "eval_alain_mat"):
+    for champ in ("verdict_delta_cp", "eval_blancs_cp", "eval_blancs_mat"):
         valeur = (data or {}).get(champ)
         if isinstance(valeur, (int, float)):
             context[champ] = valeur
@@ -1938,12 +1917,9 @@ def on_exercise_answer(data):
             config.EXERCICE_HISTORIQUE_PATH, fen_avant, verdict_qualite == "bon"
         )
 
-    # Conversion vers le point de vue d'Alain (issue #73) — cf.
-    # _vers_point_de_vue_alain, plus aucun chiffre "point de vue des Blancs"
-    # transmis au coach (un -131 a déjà été lu comme "en faveur des Blancs"
-    # alors que camp_alain="noirs" signifiait +131, un avantage pour Alain).
-    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, camp_alain)
-    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, camp_alain)
+    # eval_blancs_cp/eval_mat (calculés plus haut par _eval_blancs_apres)
+    # sont transmis tels quels au coach — convention Lichess (issue #128) :
+    # + = avantage Blancs, − = avantage Noirs, quel que soit camp_alain.
 
     coup_reel = _current_exercise.get("coup_joue_san") or _current_exercise.get("coup_joue_uci", "")
     # Meilleur coup recalculé ci-dessus à la même profondeur que le verdict
@@ -2020,7 +1996,8 @@ def on_exercise_answer(data):
     )
 
     # Détail mécanique coup par coup des deux lignes principales (coup
-    # proposé / meilleur coup), avec le solde matériel CUMULÉ pour Alain
+    # proposé / meilleur coup), avec le solde matériel CUMULÉ (convention
+    # Lichess, issue #128 : + = avantage Blancs, − = avantage Noirs)
     # après chaque demi-coup (issue #75, point 3) — au moins les 4 premiers
     # demi-coups. Sans ce détail, le coach racontait le bilan matériel d'une
     # ligne de mémoire et s'est déjà trompé sur un simple échange (ex. "tu as
@@ -2151,8 +2128,8 @@ def on_exercise_answer(data):
         # au point de calcul ci-dessus.
         "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
         "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
-        "eval_alain_cp": eval_alain_cp,
-        "eval_alain_mat": eval_alain_mat,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_blancs_mat": eval_mat,
         # Issue #125 : utiliser le verdict officiel Lichess comme verdict principal
         "verdict_qualite": verdict_qualite_officiel if verdict_qualite_officiel else verdict_qualite,
         "verdict_qualite_officiel": verdict_qualite_officiel,
@@ -2290,7 +2267,7 @@ def on_exercise_answer(data):
         "pv_coup_propose": pv_coup_propose,
         "pv_meilleur_coup": pv_meilleur_coup,
         # Détail coup par coup (description mécanique + solde matériel
-        # cumulé pour Alain, issue #75 point 3) des deux lignes
+        # cumulé, convention Lichess — issue #75 point 3, #128) des deux lignes
         # ci-dessus — même raison que pv_coup_propose/pv_meilleur_coup
         # ci-dessus : sans ça, une question de suivi perdrait l'ancrage
         # sur le bilan matériel réel de la ligne.
@@ -2303,7 +2280,7 @@ def on_exercise_answer(data):
         "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
         "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
         # Position de départ, descriptions mécaniques des trois coups et
-        # évaluation point de vue d'Alain (issue #73) : transmis au
+        # évaluation (convention Lichess, issue #128) : transmis au
         # client pour qu'une question de suivi posée dans le chat libre
         # (exerciseChatContextExtra, exercise.js) dispose du même
         # contexte complet que ce premier verdict, sans jamais confondre
@@ -2312,8 +2289,8 @@ def on_exercise_answer(data):
         "coup_propose_description_mecanique": coup_propose_description_mecanique,
         "coup_reel_description_mecanique": coup_reel_description_mecanique,
         "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
-        "eval_alain_cp": eval_alain_cp,
-        "eval_alain_mat": eval_alain_mat,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_blancs_mat": eval_mat,
         # Listes de pièces, menace adverse et idées détectées (issue
         # #80) : mêmes raisons que les champs ci-dessus — sans eux, une
         # question de suivi posée dans le chat libre perdrait ce
@@ -2421,9 +2398,6 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
             _lichess_niveaux, config.LICHESS_NIVEAUX_PATH, categorie,
             _current_exercise.get("rating"), coup_reussi,
         ))
-
-    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, camp_alain)
-    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, camp_alain)
 
     # "Meilleur coup" affiché = premier coup de la SOLUTION du problème
     # (donnée Lichess, "coup unique" par construction), jamais le meilleur
@@ -2552,8 +2526,8 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
         # sources) : cf. commentaire au point de calcul ci-dessus.
         "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
         "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
-        "eval_alain_cp": eval_alain_cp,
-        "eval_alain_mat": eval_alain_mat,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_blancs_mat": eval_mat,
         # Verdict reformulé en "bon"/"erreur" simple (issue #78) plutôt que la
         # classification brute du moteur (verdict_qualite_moteur) : le seuil
         # d'équivalence d'un problème Lichess (30cp) diffère de celui utilisé
@@ -2616,8 +2590,8 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
             "coup_propose_description_mecanique": coup_propose_description_mecanique,
             "coup_reel_description_mecanique": "",
             "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
-            "eval_alain_cp": eval_alain_cp,
-            "eval_alain_mat": eval_alain_mat,
+            "eval_blancs_cp": eval_blancs_cp,
+            "eval_blancs_mat": eval_mat,
             "pieces_depart_texte": pieces_depart_texte,
             "pieces_actuelles_texte": pieces_actuelles_texte,
             "materiel_resume_texte": materiel_resume_texte,
@@ -2727,11 +2701,9 @@ def on_pedagogic_move(data):
     board.push(move)
 
     # Évaluation Stockfish réelle de la position résultant du coup d'Alain
-    # (issue #12 point 3), avant que l'adversaire ne rejoue. Convertie vers
-    # le point de vue d'Alain (issue #73) — cf. _vers_point_de_vue_alain.
+    # (issue #12 point 3), avant que l'adversaire ne rejoue — convention
+    # Lichess (issue #128) : + = avantage Blancs, − = avantage Noirs.
     eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
-    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, _pedagogic_camp_alain or "")
-    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, _pedagogic_camp_alain or "")
 
     # Réponse automatique de Stockfish (force réduite) si la partie continue.
     game_over_info = _game_over_info(board)
@@ -2767,8 +2739,8 @@ def on_pedagogic_move(data):
         "camp_alain": _pedagogic_camp_alain or "",
         "coup_propose": coup_alain_san,
         "meilleur_coup": meilleur_coup_san,
-        "eval_alain_cp": eval_alain_cp,
-        "eval_alain_mat": eval_alain_mat,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_blancs_mat": eval_mat,
         "verdict_qualite": eval_result["verdict_qualite"],
         "verdict_delta_cp": eval_result["verdict_delta_cp"],
         "pv_coup_propose": eval_result["pv_coup_propose"],
@@ -3004,11 +2976,9 @@ def on_opening_move(data):
     board.push(move)
 
     # Évaluation Stockfish réelle de la position résultant du coup d'Alain
-    # (issue #12 point 3), avant que l'adversaire ne rejoue. Convertie vers
-    # le point de vue d'Alain (issue #73) — cf. _vers_point_de_vue_alain.
+    # (issue #12 point 3), avant que l'adversaire ne rejoue — convention
+    # Lichess (issue #128) : + = avantage Blancs, − = avantage Noirs.
     eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
-    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, _opening_camp_alain or "")
-    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, _opening_camp_alain or "")
 
     # Réponse automatique de l'adversaire : livre tant que la partie y reste,
     # sinon Stockfish affaibli (mode pédagogique).
@@ -3071,8 +3041,8 @@ def on_opening_move(data):
         "camp_alain": _opening_camp_alain or "",
         "coup_propose": coup_alain_san,
         "meilleur_coup": meilleur_coup_san,
-        "eval_alain_cp": eval_alain_cp,
-        "eval_alain_mat": eval_alain_mat,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_blancs_mat": eval_mat,
         "dans_le_livre": dans_le_livre,
         "popularite_pct": popularite_pct,
         "coup_livre_recommande": coup_livre_top_san or "",
@@ -3515,11 +3485,9 @@ def on_finale_move(data):
     board.push(move)
 
     # Évaluation Stockfish réelle de la position résultant du coup d'Alain
-    # (issue #12 point 3), avant que l'adversaire ne rejoue. Convertie vers
-    # le point de vue d'Alain (issue #73) — cf. _vers_point_de_vue_alain.
+    # (issue #12 point 3), avant que l'adversaire ne rejoue — convention
+    # Lichess (issue #128) : + = avantage Blancs, − = avantage Noirs.
     eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
-    eval_alain_cp  = _vers_point_de_vue_alain(eval_blancs_cp, _finale_camp_alain or "")
-    eval_alain_mat = _vers_point_de_vue_alain(eval_mat, _finale_camp_alain or "")
 
     # Réponse automatique de l'adversaire à pleine force, sans plafond Elo
     # (issue #32 — instance dédiée get_move_finales, séparée du moteur
@@ -3560,8 +3528,8 @@ def on_finale_move(data):
         "camp_alain": _finale_camp_alain or "",
         "coup_propose": coup_alain_san,
         "meilleur_coup": meilleur_coup_san,
-        "eval_alain_cp": eval_alain_cp,
-        "eval_alain_mat": eval_alain_mat,
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_blancs_mat": eval_mat,
         "theme_finale": _finale_description or "",
         "verdict_qualite": eval_result["verdict_qualite"],
         "verdict_delta_cp": eval_result["verdict_delta_cp"],

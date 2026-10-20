@@ -177,6 +177,17 @@ _SYSTEM_PROMPT = (
     "relie tes réponses à ces objectifs quand c'est pertinent. "
     "Réponds en français."
     "\n\n"
+    "Convention de signe des évaluations et des soldes matériel (issue "
+    "#128) : TOUS les chiffres d'évaluation (centipawns) et de solde "
+    "matériel fournis dans ce contexte suivent la convention de Lichess : "
+    "+ = avantage Blancs, − = avantage Noirs, quel que soit le camp "
+    "d'Alain. Ne dis JAMAIS « pour toi », « pour Alain » ou « pour "
+    "l'adversaire » à propos d'un de ces chiffres, et n'inverse JAMAIS son "
+    "signe : reprends-le tel quel, puis nomme explicitement le camp "
+    "concerné (Blancs/Noirs) si tu veux le commenter. Si la valeur absolue "
+    "d'une évaluation est inférieure à 30 centipions, dis que la position "
+    "est égale, sans parler d'avantage pour quiconque."
+    "\n\n"
     "Isolation stricte d'une partie à l'autre (issue #64) : l'historique de "
     "conversation qui t'est transmis peut, à l'écran d'Alain, afficher aussi "
     "des échanges sur une partie ou un exercice précédent, séparés par un "
@@ -497,8 +508,9 @@ _MATERIEL_ADDENDUM = (
     "\n\n"
     "Qualifier le résultat d'une ligne par son solde réel, jamais une "
     "impression (issue #92, tâche 4i) : quand le contexte fournit le solde "
-    "matériel cumulé d'une ligne (\"solde matériel cumulé pour Alain\") ou "
-    "le résultat matériel réel d'une suite de coups cités, ne parle "
+    "matériel cumulé d'une ligne (\"solde matériel cumulé après ce coup\", "
+    "convention Lichess) ou le résultat matériel réel d'une suite de coups "
+    "cités, ne parle "
     "d'\"équilibre\", de \"matériel égal\" ou d'\"égalité\" que si ce solde "
     "est proche de zéro (une petite fraction de pion, jamais 2 points ou "
     "plus dans un sens). Un solde de 2 points ou plus en faveur d'un camp "
@@ -670,8 +682,8 @@ _EXERCISE_SYSTEM_ADDENDUM = (
     "Bilan matériel d'une ligne principale (issue #75, point 3) : quand le "
     "contexte fournit le détail coup par coup d'une ligne (\"Suite "
     "réellement calculée par Stockfish...\" suivie d'un bloc détaillé avec "
-    "un \"solde matériel cumulé pour Alain\" après chaque demi-coup), ce "
-    "solde EST le résultat réel de la ligne à ce stade précis — n'annonce "
+    "un \"solde matériel cumulé après ce coup\" en convention Lichess, issue "
+    "#128), ce solde EST le résultat réel de la ligne à ce stade précis — n'annonce "
     "JAMAIS toi-même qu'un camp \"gagne\" ou \"perd\" une pièce sur cette "
     "ligne si le solde cumulé fourni après ce coup ne le confirme pas (par "
     "exemple ne dis jamais \"tu gagnes la dame\" sur un coup suivi d'une "
@@ -775,8 +787,13 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "de mat, n'affirme JAMAIS qu'il y a une menace de mat. Ces faits sont "
         "calculés mécaniquement par python-chess sur la position réelle, "
         "jamais devinés — ils font foi. "
-        "Précisions de lecture : (1) le « solde pour toi » est exprimé de TON point de vue "
-        "(celui de l'utilisateur) : positif = avantage pour toi, négatif = avantage pour ton adversaire. "
+        "Précisions de lecture : (1) toutes les évaluations et tous les soldes matériel de ce contexte "
+        "(ici et ailleurs) suivent la convention de Lichess : + = avantage Blancs, − = avantage Noirs, "
+        "quel que soit le camp que tu joues. Ne dis JAMAIS « pour toi », « pour Alain » ni « pour "
+        "l'adversaire » à propos d'un de ces chiffres, et ne modifie JAMAIS son signe toi-même : reprends "
+        "le chiffre et son signe tels quels, puis nomme explicitement le camp concerné (« Blancs »/« "
+        "Noirs ») si tu veux le commenter. Si la valeur absolue d'une évaluation est inférieure à 30 "
+        "centipions, dis que la position est égale, sans parler d'avantage pour l'un ou l'autre camp. "
         "(2) Une pièce « en prise » est une pièce que l'adversaire peut gagner en la prenant, reprises "
         "et clouages compris ; une pièce attaquée qui ne figure pas dans cette liste n'est pas en danger "
         "réel : ne dis jamais qu'elle est « sans défense ». (3) Quand le seul défenseur d'une pièce est "
@@ -1556,7 +1573,8 @@ def _build_context_text(context) -> str:
     pv_coup_propose  = (context.get("pv_coup_propose") or "").strip()
     pv_meilleur_coup = (context.get("pv_meilleur_coup") or "").strip()
     # Détail mécanique coup par coup de ces deux lignes, avec le solde
-    # matériel CUMULÉ pour Alain après chaque demi-coup (issue #75, point 3,
+    # matériel CUMULÉ (convention Lichess, issue #128) après chaque
+    # demi-coup (issue #75, point 3,
     # cf. app.py/game_facts.describe_pv_with_balance+format_pv_with_balance)
     # — déjà formaté en texte prêt à l'emploi. Sans ce détail, le coach
     # racontait le bilan matériel d'une ligne de mémoire et s'est déjà trompé
@@ -1585,16 +1603,14 @@ def _build_context_text(context) -> str:
     reprise_recente = bool(context.get("reprise_recente"))
     # Évaluation Stockfish réelle de la position résultant du coup proposé
     # (issue #12 point 3), en complément de la seule comparaison à
-    # meilleur_coup. Transmise du point de vue d'Alain (issue #73, positif =
-    # avantage pour Alain, négatif = avantage pour l'adversaire), déjà
-    # convertie côté app.py depuis le point de vue des Blancs en fonction de
-    # camp_alain : un signe "point de vue des Blancs" transmis tel quel s'est
-    # déjà révélé ambigu en usage réel (un -131 lu comme "en faveur des "
-    # "Blancs" alors que camp_alain="noirs" signifiait +131, donc un avantage
-    # pour Alain). Plus aucun nombre dont le signe dépend de la couleur n'est
-    # transmis ici.
-    eval_alain_cp  = context.get("eval_alain_cp")
-    eval_alain_mat = context.get("eval_alain_mat")
+    # meilleur_coup. Convention Lichess depuis l'issue #128 : + = avantage
+    # Blancs, − = avantage Noirs, quel que soit camp_alain — l'ancienne
+    # convention "point de vue d'Alain" (issue #73) s'est elle aussi révélée
+    # ambiguë en usage réel : un "+132"/"+12" cités tels quels par le coach
+    # pour un exercice joué avec les Noirs, alors que Lichess afficherait
+    # "−1,3"/"−0,1" pour la même position (cf. CONTEXTE.md).
+    eval_blancs_cp  = context.get("eval_blancs_cp")
+    eval_blancs_mat = context.get("eval_blancs_mat")
     # Mode "Travail d'ouverture" (issue #9) : statut par rapport au livre
     # Polyglot de référence (gm2001.bin), en complément de meilleur_coup.
     dans_le_livre          = context.get("dans_le_livre")
@@ -1878,9 +1894,11 @@ def _build_context_text(context) -> str:
         # le coach puisse expliquer la gravité réelle (issue #125)
         if eval_before_cp is not None and eval_after_cp is not None:
             lines.append(
-                f"Évaluation avant le coup (point de vue du joueur) : {eval_before_cp:+.1f}cp. "
+                "Évaluation avant le coup (convention Lichess : + = avantage "
+                f"Blancs, − = avantage Noirs) : {eval_before_cp:+.1f}cp. "
                 f"Évaluation après le coup : {eval_after_cp:+.1f}cp. "
-                f"Chute de chances de gain : {win_prob_drop:.3f}."
+                "Chute de chances de gain (perte réelle du joueur qui vient "
+                f"de jouer, toujours positive) : {win_prob_drop:.3f}."
             )
             lines.append(
                 "Utilise ces informations pour expliquer la gravité réelle du coup "
@@ -1893,7 +1911,7 @@ def _build_context_text(context) -> str:
         # _evaluate_move_for_coach) — l'indiquer explicitement champ par
         # champ plutôt que de laisser le prompt en inventer une valeur
         # plausible à partir du seul verdict.
-        if eval_alain_cp is None and eval_alain_mat is None:
+        if eval_blancs_cp is None and eval_blancs_mat is None:
             lines.append(
                 "Évaluation de la position résultant de ce coup proposé : "
                 "indisponible. N'invente AUCUN chiffre ni mot d'ampleur "
@@ -1942,19 +1960,19 @@ def _build_context_text(context) -> str:
             "inchangée. Le coup et le verdict éventuellement discutés plus tôt "
             "dans cette conversation ne s'appliquent plus à l'état actuel."
         )
-    if eval_alain_mat is not None:
-        cible = "Alain" if eval_alain_mat > 0 else "l'adversaire"
+    if eval_blancs_mat is not None:
+        cible = "Blancs" if eval_blancs_mat > 0 else "Noirs"
         lines.append(
             f"Évaluation Stockfish réelle de la position résultant du coup proposé : "
-            f"mat forcé en {abs(eval_alain_mat)} coup(s) en faveur de {cible}."
+            f"mat forcé en {abs(eval_blancs_mat)} coup(s) en faveur des {cible}."
         )
-    elif eval_alain_cp is not None:
-        # describe_eval_alain_cp_clause (issue #75, point 1) : en mots dès
-        # que la magnitude dépasse SEUIL_GRANDE_VALEUR_CP — jamais le chiffre
-        # brut dans ce cas (constat réel : "+199,74"/"+34,56" pions cités
-        # tels quels à Alain, pour des évaluations de 19974/3456 centipawns
-        # dans des positions de gain forcé).
-        lines.append(game_facts.describe_eval_alain_cp_clause(eval_alain_cp))
+    elif eval_blancs_cp is not None:
+        # describe_eval_blancs_cp_clause (issue #75, point 1 ; #128) : en mots
+        # dès que la magnitude dépasse SEUIL_GRANDE_VALEUR_CP — jamais le
+        # chiffre brut dans ce cas (constat réel : "+199,74"/"+34,56" pions
+        # cités tels quels à Alain, pour des évaluations de 19974/3456
+        # centipawns dans des positions de gain forcé).
+        lines.append(game_facts.describe_eval_blancs_cp_clause(eval_blancs_cp))
     if dans_le_livre is not None:
         statut = "dans le livre d'ouvertures" if dans_le_livre else "hors du livre d'ouvertures"
         lines.append(f"Statut par rapport au livre de référence : {statut}")
@@ -2852,7 +2870,7 @@ def get_coach_response(messages, context, coach_memory, cfg):
     analyse_indisponible_ctx = bool((context or {}).get("analyse_indisponible"))
     verdict_qualite_ctx = (context or {}).get("verdict_qualite")
     verdict_partiel_ctx = bool(verdict_qualite_ctx) and (
-        (context.get("eval_alain_cp") is None and context.get("eval_alain_mat") is None)
+        (context.get("eval_blancs_cp") is None and context.get("eval_blancs_mat") is None)
         or not (context.get("meilleur_coup") or "").strip()
         or (bool((context.get("coup_propose") or "").strip()) and not (context.get("pv_coup_propose") or "").strip())
         or (bool((context.get("meilleur_coup") or "").strip()) and not (context.get("pv_meilleur_coup") or "").strip())
