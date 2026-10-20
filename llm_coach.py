@@ -1049,7 +1049,7 @@ _MOVE_SELECTION_SYSTEM_PROMPT = (
 )
 
 
-def get_move_explanations(flagged_moves, camp_alain, config):
+def get_move_explanations(flagged_moves, camp_alain, cfg):
     """Sélectionne jusqu'à 5 coups décisifs parmi les coups flagués d'une
     partie et fournit une explication en langage naturel pour chacun (issue
     #42, module d'explications narratives du rapport d'analyse post-partie
@@ -1102,7 +1102,7 @@ def get_move_explanations(flagged_moves, camp_alain, config):
     "aucun_coup_flague", "reponse_invalide", ou le message de l'exception
     réseau.
     """
-    api_key = (config or {}).get("llm_api_key", "")
+    api_key = (cfg or {}).get("llm_api_key", "")
     if not api_key:
         return None, "no_api_key"
 
@@ -1113,7 +1113,7 @@ def get_move_explanations(flagged_moves, camp_alain, config):
     if camp_alain not in ("blancs", "noirs"):
         camp_alain = ""
 
-    model = (config or {}).get("llm_model", "")
+    model = (cfg or {}).get("llm_model", "")
     # "fen_avant" (issue #85, part. 1) : transmis par l'appelant (app.py
     # _prepare_flagged_moves_for_coach) UNIQUEMENT pour permettre une entrée
     # de log par coup ci-dessous, cohérente avec les entrées "fen"/"move" du
@@ -1132,7 +1132,7 @@ def get_move_explanations(flagged_moves, camp_alain, config):
     data_text = json.dumps(data_obj, ensure_ascii=False, indent=2)
     prompt_user = f"Coups flagués de la partie (JSON) :\n{data_text}"
 
-    usage_path = (config or {}).get("usage_path")
+    usage_path = (cfg or {}).get("usage_path")
     # Journalisation (issue #85, part. 1) : ce point d'appel (étape 1 du
     # module d'explications narratives, on_analyse_choisir_coups_decisifs)
     # n'écrivait jusqu'ici jamais dans coach_calls.log — c'est l'origine du
@@ -1142,8 +1142,8 @@ def get_move_explanations(flagged_moves, camp_alain, config):
     # coup (cf. boucle sur `resultat` ci-dessous) — pas une entrée unique
     # pour tout l'appel, qui aurait mélangé plusieurs coups sous un seul
     # "fen"/"move".
-    log_path = (config or {}).get("coach_log_path")
-    timeout_s = (config or {}).get("coach_timeout_s") or 90
+    log_path = (cfg or {}).get("coach_log_path")
+    timeout_s = (cfg or {}).get("coach_timeout_s") or 90
     try:
         raw = _call_claude(_MOVE_SELECTION_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path, timeout_s=timeout_s)
     except CreditInsuffisantError as e:
@@ -2474,7 +2474,7 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
     raise ValueError(f"Aucun contenu textuel dans la réponse Mistral : {data!r}")
 
 
-def get_opening_moves(opening_name: str, config):
+def get_opening_moves(opening_name: str, cfg):
     """Identifie les 2 à 6 premiers coups caractéristiques d'une ouverture
     nommée par Alain (issue #9), via un appel dédié à Claude — indépendant du
     chat coach multi-tours, pas de mémoire ni de contexte de partie injectés.
@@ -2492,20 +2492,20 @@ def get_opening_moves(opening_name: str, config):
     if not opening_name:
         return None, "nom_vide"
 
-    api_key = (config or {}).get("llm_api_key", "")
+    api_key = (cfg or {}).get("llm_api_key", "")
     if not api_key:
         return None, "no_api_key"
 
-    model = (config or {}).get("llm_model", "")
-    usage_path = (config or {}).get("usage_path")
+    model = (cfg or {}).get("llm_model", "")
+    usage_path = (cfg or {}).get("usage_path")
     # Journalisation (issue #85, part. 1) : ce point d'appel n'écrivait
     # jusqu'ici jamais dans coach_calls.log, contrairement à get_coach_response
     # — même mécanisme (_log_coach_call), mode_origine dédié "ouverture_coups"
     # pour le distinguer du mode_origine "ouverture" du chat coach pendant
     # l'entraînement d'ouverture lui-même (cf. on_opening_move).
-    log_path = (config or {}).get("coach_log_path")
+    log_path = (cfg or {}).get("coach_log_path")
     contexte_log = {"opening_name": opening_name}
-    timeout_s = (config or {}).get("coach_timeout_s") or 90
+    timeout_s = (cfg or {}).get("coach_timeout_s") or 90
 
     try:
         raw = _call_claude(_OPENING_SYSTEM_PROMPT, opening_name, api_key, model, usage_path, timeout_s=timeout_s)
@@ -2554,7 +2554,7 @@ def get_opening_moves(opening_name: str, config):
     return [m.strip() for m in moves[:6]], None
 
 
-def get_training_program(patterns_erreurs, repertoire_ouvertures, config):
+def get_training_program(patterns_erreurs, repertoire_ouvertures, cfg):
     """Établit un programme d'entraînement de 2 à 3 priorités concrètes
     (issue #14, bouton "Établir mon programme d'entraînement"), via un appel
     dédié à Claude — indépendant du chat coach multi-tours, à partir des
@@ -2571,28 +2571,28 @@ def get_training_program(patterns_erreurs, repertoire_ouvertures, config):
     "donnees_insuffisantes", "reponse_invalide", ou le message de
     l'exception réseau.
     """
-    api_key = (config or {}).get("llm_api_key", "")
+    api_key = (cfg or {}).get("llm_api_key", "")
     if not api_key:
         return None, "no_api_key"
 
     if not patterns_erreurs and not repertoire_ouvertures:
         return None, "donnees_insuffisantes"
 
-    model = (config or {}).get("llm_model", "")
+    model = (cfg or {}).get("llm_model", "")
     data_text = json.dumps({
         "patterns_erreurs": patterns_erreurs or {},
         "repertoire_ouvertures": repertoire_ouvertures or {},
     }, ensure_ascii=False, indent=2)
     prompt_user = f"Données du joueur (JSON) :\n{data_text}"
-    usage_path = (config or {}).get("usage_path")
+    usage_path = (cfg or {}).get("usage_path")
     # Journalisation (issue #85, part. 1) : même lacune que get_opening_moves
     # ci-dessus, même correctif — mode_origine dédié "programme_entrainement".
-    log_path = (config or {}).get("coach_log_path")
+    log_path = (cfg or {}).get("coach_log_path")
     contexte_log = {
         "patterns_erreurs": patterns_erreurs or {},
         "repertoire_ouvertures": repertoire_ouvertures or {},
     }
-    timeout_s = (config or {}).get("coach_timeout_s") or 90
+    timeout_s = (cfg or {}).get("coach_timeout_s") or 90
 
     try:
         raw = _call_claude(_TRAINING_PROGRAM_SYSTEM_PROMPT, prompt_user, api_key, model, usage_path, timeout_s=timeout_s)
@@ -2641,7 +2641,7 @@ def get_training_program(patterns_erreurs, repertoire_ouvertures, config):
     return [o.strip() for o in objectifs[:3]], None
 
 
-def get_coach_response(messages, context, coach_memory, config):
+def get_coach_response(messages, context, coach_memory, cfg):
     """Répond à un tour de conversation multi-tours avec le coach.
 
     Paramètres :
@@ -2663,7 +2663,7 @@ def get_coach_response(messages, context, coach_memory, config):
     "Signaler" côté interface à référencer sans ambiguïté cette entrée.
     Pas de cache : conversation libre, contexte changeant à chaque tour.
     """
-    api_key = (config or {}).get("llm_api_key", "")
+    api_key = (cfg or {}).get("llm_api_key", "")
     if not api_key:
         return None, "no_api_key", None, None
 
@@ -2691,7 +2691,7 @@ def get_coach_response(messages, context, coach_memory, config):
     if (context or {}).get("mode_exercice") and not (context or {}).get("verdict_qualite"):
         return None, "pas_de_verdict_exercice", None, None
 
-    model = (config or {}).get("llm_model", "")
+    model = (cfg or {}).get("llm_model", "")
     prompt_sys = _SYSTEM_PROMPT
     if (context or {}).get("mode_exercice"):
         prompt_sys = f"{prompt_sys}\n\n{_EXERCISE_SYSTEM_ADDENDUM}"
@@ -2765,13 +2765,13 @@ def get_coach_response(messages, context, coach_memory, config):
     mode_origine = (context or {}).get("mode_origine") or (
         "exercice" if (context or {}).get("mode_exercice") else "chat_libre"
     )
-    log_path = (config or {}).get("coach_log_path")
-    usage_path = (config or {}).get("usage_path")
+    log_path = (cfg or {}).get("coach_log_path")
+    usage_path = (cfg or {}).get("usage_path")
 
     # Température pour Claude (issue #116) : uniquement en mode exercice
     claude_temperature = None
     if mode_origine == "exercice":
-        claude_temp_str = __import__("config").CHESSCOACH_CLAUDE_TEMPERATURE or ""
+        claude_temp_str = config.CHESSCOACH_CLAUDE_TEMPERATURE or ""
         if claude_temp_str:
             try:
                 claude_temperature = float(claude_temp_str)
@@ -2792,7 +2792,7 @@ def get_coach_response(messages, context, coach_memory, config):
     # app.py dans chaque llm_config (clé "coach_timeout_s"). Repris tel quel
     # pour la relance automatique de fiabilité ci-dessous : elle compte donc
     # dans le délai total vu par l'interface.
-    timeout_s = (config or {}).get("coach_timeout_s") or 90
+    timeout_s = (cfg or {}).get("coach_timeout_s") or 90
     
     # Déterminer la température à logger (issue #116, #118)
     model_resolu = model or "claude-haiku-4-5"
@@ -3062,7 +3062,7 @@ def get_coach_response(messages, context, coach_memory, config):
     return response, None, fiabilite, log_id
 
 
-def get_mistral_response(messages, context, config):
+def get_mistral_response(messages, context, cfg):
     """Obtient un second avis du coach via l'API Mistral (issue #112).
     Appelée uniquement en mode exercice, en parallèle de get_coach_response
     (Claude). Reçoit exactement le même contexte et les mêmes consignes
@@ -3083,7 +3083,7 @@ def get_mistral_response(messages, context, config):
     (issue #117/#120). Si MISTRAL_API_KEY est absente ou vide, retourne
     (None, None, None, []) sans faire d'appel.
     """
-    mistral_api_key = (config or {}).get("mistral_api_key", "")
+    mistral_api_key = (cfg or {}).get("mistral_api_key", "")
     # Consigne 5 : si MISTRAL_API_KEY est absente ou vide, aucun appel
     if not mistral_api_key:
         return None, None, None
@@ -3121,7 +3121,7 @@ def get_mistral_response(messages, context, config):
         prompt_sys = f"{prompt_sys}\n\n{_CLOUAGE_ADDENDUM}"
 
     # Ajouter la mémoire du coach comme pour Claude
-    memory_text = _build_memory_text((config or {}).get("coach_memory", {}))
+    memory_text = _build_memory_text((cfg or {}).get("coach_memory", {}))
     if memory_text:
         prompt_sys = f"{prompt_sys}\n\n{memory_text}"
 
@@ -3131,9 +3131,9 @@ def get_mistral_response(messages, context, config):
         prompt_sys = f"{prompt_sys}\n\nContexte de la position en cours :\n{context_text}"
 
     # Configuration Mistral
-    mistral_model = (config or {}).get("mistral_model", "mistral-large-latest")
-    log_path = (config or {}).get("coach_log_path")
-    timeout_s = (config or {}).get("coach_timeout_s") or 90
+    mistral_model = (cfg or {}).get("mistral_model", "mistral-large-latest")
+    log_path = (cfg or {}).get("coach_log_path")
+    timeout_s = (cfg or {}).get("coach_timeout_s") or 90
     # Consigne 6 : timeout généreux
     mistral_timeout_s = timeout_s
 
@@ -3142,7 +3142,7 @@ def get_mistral_response(messages, context, config):
     )
 
     # Température pour Mistral (issue #116) : toujours configurable, valeur par défaut 0.0
-    mistral_temp_str = __import__("config").CHESSCOACH_MISTRAL_TEMPERATURE or "0.0"
+    mistral_temp_str = config.CHESSCOACH_MISTRAL_TEMPERATURE or "0.0"
     mistral_temperature = 0.0  # valeur par défaut
     if mistral_temp_str:
         try:
