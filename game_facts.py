@@ -1228,7 +1228,11 @@ def describe_pv_with_balance(fen_avant: str, pv_text: str, camp_alain: str = "",
         resultat = []
         case_premier_coup = None
         camp_premier_coup = None
-        for i, san in enumerate(pv_text.split()[:max_plies]):
+        _jetons = pv_text.split()
+        _gardes = _jetons[:max_plies]
+        while _gardes and 'x' in _gardes[-1] and len(_gardes) < len(_jetons) and len(_gardes) < max_plies + 2:
+            _gardes.append(_jetons[len(_gardes)])
+        for i, san in enumerate(_gardes):
             move = _parse_coup(board, san)
             if move is None:
                 break
@@ -2826,7 +2830,11 @@ def describe_pv_facts(fen_avant: str, pv_text: str, camp_alain: str = "",
         resultat = []
         move_number = board.fullmove_number
         
-        for i, san in enumerate(pv_text.split()[:max_plies]):
+        _jetons = pv_text.split()
+        _gardes = _jetons[:max_plies]
+        while _gardes and 'x' in _gardes[-1] and len(_gardes) < len(_jetons) and len(_gardes) < max_plies + 2:
+            _gardes.append(_jetons[len(_gardes)])
+        for i, san in enumerate(_gardes):
             move = _parse_coup(board, san)
             if move is None:
                 break
@@ -2911,7 +2919,7 @@ def format_pv_facts(label: str, pv_facts: list[dict], camp_alain: str = "") -> s
             f"  (Tu joues les {camp.capitalize()}. « en prise » : l'adversaire y gagne du matériel, "
             "reprises et clouages compris. Solde pour toi : positif = avantage pour toi.)")
     n_entete = len(lignes)
-    for fait in pv_facts[:_MAX_PV_FAITS_COUPS]:
+    for fait in pv_facts:
         parts = [f"coup {fait['san']}"]
         if 'O-O-O' in fait['san']:
             parts.append("grand roque (côté dame)")

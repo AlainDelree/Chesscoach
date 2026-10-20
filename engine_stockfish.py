@@ -404,6 +404,22 @@ def score_to_cp(score: chess.engine.Score, joueur: chess.Color) -> int | None:
         return -cp
 
 
+def _couper_pv(board, coups, n, extra=2):
+    """Premiers `n` coups d'une ligne calculée, prolongés d'au plus `extra` coups tant que le dernier
+    coup retenu est une capture : on ne coupe jamais au milieu d'un échange (sinon le solde matériel
+    de la fin de ligne est faux). `coups` : liste de chess.Move jouables depuis `board`."""
+    b = board.copy()
+    gardes = []
+    derniere_capture = False
+    for i, m in enumerate(coups):
+        if i >= n + extra or (i >= n and not derniere_capture):
+            break
+        derniere_capture = b.is_capture(m)
+        b.push(m)
+        gardes.append(m)
+    return gardes
+
+
 class EngineManager:
     """
     Gestionnaire universel de moteur UCI (utilisé ici uniquement avec Stockfish).
@@ -1264,8 +1280,8 @@ class EngineManager:
                 result["eval_after_cp"] = None
                 result["win_prob_drop"] = None
                 if return_pv:
-                    result["pv_coup_propose"] = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
-                    result["pv_meilleur_coup"] = self._pv_to_san(board, pv_avant[:pv_max_plies])
+                    result["pv_coup_propose"] = self._pv_to_san(board, _couper_pv(board, [move] + pv_apres, pv_max_plies))
+                    result["pv_meilleur_coup"] = self._pv_to_san(board, _couper_pv(board, pv_avant, pv_max_plies))
                 return result
 
             # Stocker les évaluations avant/après du point de vue du joueur
@@ -1346,8 +1362,8 @@ class EngineManager:
             result["meilleur_coup"] = best_final
             
             if return_pv:
-                result["pv_coup_propose"] = self._pv_to_san(board, [move] + pv_apres[:max(0, pv_max_plies - 1)])
-                result["pv_meilleur_coup"] = self._pv_to_san(board, pv_avant[:pv_max_plies])
+                result["pv_coup_propose"] = self._pv_to_san(board, _couper_pv(board, [move] + pv_apres, pv_max_plies))
+                result["pv_meilleur_coup"] = self._pv_to_san(board, _couper_pv(board, pv_avant, pv_max_plies))
             
             return result
 

@@ -796,7 +796,9 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "ces éléments dans le même paragraphe. "
         "(8) Roques : « O-O » est le PETIT roque (côté roi, le roi va en g1 ou g8) et « O-O-O » le "
         "GRAND roque (côté dame, le roi va en c1 ou c8) ; ne les confonds jamais, et ne parle de roque "
-        "que si le coup cité est bien « O-O » ou « O-O-O »."
+        "que si le coup cité est bien « O-O » ou « O-O-O ». "
+        "(9) Coup joué à l'époque sans évaluation fournie : décris seulement ce qu'il fait, sans aucun "
+        "jugement (« passif », « même défaut », « moins bon »…)."
     )
 )
 
