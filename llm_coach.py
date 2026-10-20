@@ -769,7 +769,7 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "SUR TOUS ces sujets (attaques, captures, clouages, échecs, menaces de "
         "mat, soldes matériels), appuie-toi UNIQUEMENT sur ces faits fournis "
         "— pour tout ce qui n'y figure pas explicitement, écris \"non vérifié\" "
-        "ou n'en parle pas, JAMAIS n'invente pas un fait. Par exemple : si le "
+        "ou n'en parle pas, N'invente JAMAIS un fait. Par exemple : si le "
         "bloc ne mentionne AUCUN clouage pour un camp, n'affirme JAMAIS qu'une "
         "pièce est clouée pour ce camp ; si le bloc ne mentionne AUCUNE menace "
         "de mat, n'affirme JAMAIS qu'il y a une menace de mat. Ces faits sont "
