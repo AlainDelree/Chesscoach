@@ -176,6 +176,17 @@ d'une phrase mécanique par ailleurs longue — le coach a quand même affirmé,
     qui vient de jouer, et toutes les pièces attaquées (deux camps) — avec
     une phrase explicite si la pièce du demi-coup précédent n'est PAS parmi
     ces cibles.
+
+Ajouté par l'issue #126 (suite #125) :
+  - describe_pv_facts : calcule les faits python-chess pour chaque coup de
+    la ligne calculée (PV) — coup légal en notation avec numéro, pièce
+    capturée, échec/mat, pièces adverses nouvellement attaquées, pièces
+    attaquées et insuffisamment défendues, menaces de mat en un coup,
+    clouages absolus, solde matériel. Format compact, plafonné à
+    _MAX_PV_FAITS_COUPS coups.
+  - format_pv_facts : formate ces faits en texte prêt à injecter dans le
+    contexte du coach, avec uniquement les faits non vides pour minimiser
+    la taille du contexte.
 """
 
 import io
@@ -2679,3 +2690,248 @@ def build_reponse_adverse_obligee_texte(label: str, fen_apres_coup: str, reponse
         f"{detail}. N'invente AUCUNE autre raison : c'est la vraie raison pour "
         "laquelle cette réponse est forcée."
     )
+
+
+# =============================================================================
+# NOUVELLES FONCTIONS POUR ISSUE #126
+# Faits python-chess par coup de la ligne calculée
+# =============================================================================
+
+# Nombre maximal de coups décrits dans les faits PV (issue #126, point 2)
+_MAX_PV_FAITS_COUPS = 6
+
+
+def _get_piece_captured(board: "chess.Board", move: "chess.Move") -> str:
+    """Retourne la description de la pièce capturée par `move` sur `board`, ou chaîne vide."""
+    piece_capturee = board.piece_at(move.to_square)
+    est_ep = board.is_en_passant(move)
+    if piece_capturee is None and est_ep:
+        piece_capturee = chess.Piece(chess.PAWN, not board.turn)
+    if piece_capturee is not None:
+        return _nom_piece_capturee(piece_capturee.piece_type)
+    return ""
+
+
+def _get_new_attacks(board: "chess.Board", board_apres: "chess.Board", move: "chess.Move") -> list[str]:
+    """Retourne la liste des pièces adverses nouvellement attaquées par la pièce qui vient de jouer."""
+    piece = board_apres.piece_at(move.to_square)
+    if piece is None:
+        return []
+    
+    # Pièces adverses attaquées par la pièce qui vient de jouer
+    cibles = []
+    for sq in board_apres.attacks(move.to_square):
+        cible = board_apres.piece_at(sq)
+        if cible is not None and cible.color != piece.color and cible.piece_type != chess.KING:
+            cibles.append(f"{_NOM_PIECE_MAJ[cible.piece_type]} {chess.square_name(sq)}")
+    return cibles
+
+
+def _get_insufficiently_defended(board: "chess.Board", camp: bool) -> list[str]:
+    """Retourne la liste des pièces attaquées et insuffisamment défendues pour un camp."""
+    resultats = []
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece is None or piece.color != camp:
+            continue
+        attaquants = board.attackers(not camp, sq)
+        if not attaquants:
+            continue
+        defenseurs = board.attackers(camp, sq)
+        # Insuffisamment défendue : attaquants > défenseurs (en valeur) ou défenseurs vides
+        if not defenseurs:
+            resultats.append(f"{_NOM_PIECE_MAJ[piece.piece_type]} {chess.square_name(sq)}")
+        else:
+            # Comparer la valeur des attaquants vs défenseurs
+            valeur_attaquants = sum(_VALEURS.get(board.piece_at(a).piece_type, 0) for a in attaquants)
+            valeur_defenseurs = sum(_VALEURS.get(board.piece_at(d).piece_type, 0) for d in defenseurs)
+            if valeur_attaquants > valeur_defenseurs:
+                resultats.append(f"{_NOM_PIECE_MAJ[piece.piece_type]} {chess.square_name(sq)}")
+    return resultats
+
+
+def _get_pinned_pieces(board: "chess.Board", camp: bool) -> list[str]:
+    """Retourne la liste des pièces clouées absolument pour un camp."""
+    resultats = []
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece is None or piece.color != camp or piece.piece_type == chess.KING:
+            continue
+        # Une pièce est clouée absolument si elle ne peut pas bouger légalement
+        # sans exposer le roi au échec
+        if board.is_pinned(camp, sq):
+            resultats.append(f"{_NOM_PIECE_MAJ[piece.piece_type]} {chess.square_name(sq)}")
+    return resultats
+
+
+def _has_mate_threat(board: "chess.Board", camp: bool) -> bool:
+    """Retourne True si le camp a une menace de mat en un coup."""
+    # Vérifier si le camp peut mater en un coup
+    # Un camp a une menace de mat en 1 si l'adversaire est en échec et mat après
+    # n'importe quel coup légal
+    for move in board.legal_moves:
+        board_test = board.copy()
+        board_test.push(move)
+        if board_test.is_checkmate():
+            return True
+    return False
+
+
+def describe_pv_facts(fen_avant: str, pv_text: str, camp_alain: str = "",
+                      max_plies: int = _MAX_PV_FAITS_COUPS) -> list[dict]:
+    """API publique (issue #126) : calcule les faits python-chess pour chaque
+    coup de la ligne calculée (PV) à partir de `fen_avant`.
+    
+    Pour chaque coup de la PV, retourne un dictionnaire avec :
+    - san: notation SAN du coup avec numéro
+    - piece_captured: pièce capturée éventuelle
+    - is_check: True si le coup donne échec
+    - is_checkmate: True si le coup donne échec et mat
+    - new_attacks: pièces adverses nouvellement attaquées
+    - insufficiently_defended_white: pièces blanches attaquées et insuffisamment défendues
+    - insufficiently_defended_black: pièces noires attaquées et insuffisamment défendues
+    - mate_threat_white: True si les Blancs ont une menace de mat en un coup
+    - mate_threat_black: True si les Noirs ont une menace de mat en un coup
+    - pinned_white: pièces blanches clouées absolument
+    - pinned_black: pièces noires clouées absolument
+    - material_balance: solde matériel en points
+    
+    Retourne une liste de dicts (un par demi-coup), tronquée à max_plies.
+    Liste vide si fen_avant/pv_text sont vides ou illisibles."""
+    fen_avant = (fen_avant or "").strip()
+    pv_text = (pv_text or "").strip()
+    if not fen_avant or not pv_text:
+        return []
+    
+    try:
+        board = chess.Board(fen_avant)
+        resultat = []
+        move_number = board.fullmove_number
+        
+        for i, san in enumerate(pv_text.split()[:max_plies]):
+            move = _parse_coup(board, san)
+            if move is None:
+                break
+            
+            board_apres = board.copy()
+            board_apres.push(move)
+            
+            # Déterminer le numéro du coup
+            if board.turn == chess.WHITE:
+                coup_num = str(move_number)
+            else:
+                coup_num = str(move_number) + "..."
+            
+            # Mettre à jour le numéro pour le prochain coup
+            if board.turn == chess.BLACK:
+                move_number += 1
+            
+            # Pièce capturée
+            piece_captured = _get_piece_captured(board, move)
+            
+            # Échec et mat
+            is_check = board_apres.is_check()
+            is_checkmate = board_apres.is_checkmate()
+            
+            # Pièces adverses nouvellement attaquées
+            new_attacks = _get_new_attacks(board, board_apres, move)
+            
+            # Pièces attaquées et insuffisamment défendues
+            insufficiently_defended_white = _get_insufficiently_defended(board_apres, chess.WHITE)
+            insufficiently_defended_black = _get_insufficiently_defended(board_apres, chess.BLACK)
+            
+            # Menaces de mat en un coup
+            mate_threat_white = _has_mate_threat(board_apres, chess.WHITE)
+            mate_threat_black = _has_mate_threat(board_apres, chess.BLACK)
+            
+            # Clouages absolus
+            pinned_white = _get_pinned_pieces(board_apres, chess.WHITE)
+            pinned_black = _get_pinned_pieces(board_apres, chess.BLACK)
+            
+            # Solde matériel
+            material_balance = _materiel_alain(board_apres, camp_alain)
+            
+            # Construire le SAN avec numéro
+            san_with_number = f"{coup_num}{san}"
+            
+            resultat.append({
+                "san": san_with_number,
+                "piece_captured": piece_captured,
+                "is_check": is_check,
+                "is_checkmate": is_checkmate,
+                "new_attacks": new_attacks,
+                "insufficiently_defended_white": insufficiently_defended_white,
+                "insufficiently_defended_black": insufficiently_defended_black,
+                "mate_threat_white": mate_threat_white,
+                "mate_threat_black": mate_threat_black,
+                "pinned_white": pinned_white,
+                "pinned_black": pinned_black,
+                "material_balance": material_balance,
+            })
+            
+            board = board_apres
+        
+        return resultat
+    except Exception as e:
+        logger.warning(f"[GAME_FACTS] describe_pv_facts a échoué : {e}")
+        return []
+
+
+def format_pv_facts(label: str, pv_facts: list[dict], camp_alain: str = "") -> str:
+    """Formate les faits PV en texte compact et lisible (issue #126).
+    
+    Format : un bloc par coup, avec uniquement les faits non vides.
+    Plafonne le nombre de coups à _MAX_PV_FAITS_COUPS.
+    
+    Retourne une chaîne vide si pv_facts est vide."""
+    if not pv_facts:
+        return ""
+    
+    lignes = [f"{label} :"]
+    for fait in pv_facts[:_MAX_PV_FAITS_COUPS]:
+        parts = []
+        
+        # Coup en notation
+        parts.append(f"coup {fait['san']}")
+        
+        # Pièce capturée
+        if fait['piece_captured']:
+            parts.append(f"capture {fait['piece_captured']}")
+        
+        # Échec/mat
+        if fait['is_checkmate']:
+            parts.append("échec et mat")
+        elif fait['is_check']:
+            parts.append("échec")
+        
+        # Pièces adverses nouvellement attaquées
+        if fait['new_attacks']:
+            parts.append(f"attaque {', '.join(fait['new_attacks'])}")
+        
+        # Pièces attaquées et insuffisamment défendues
+        if fait['insufficiently_defended_white']:
+            parts.append(f"Blancs: pièces attaquées non défendues: {', '.join(fait['insufficiently_defended_white'])}")
+        if fait['insufficiently_defended_black']:
+            parts.append(f"Noirs: pièces attaquées non défendues: {', '.join(fait['insufficiently_defended_black'])}")
+        
+        # Menaces de mat
+        if fait['mate_threat_white']:
+            parts.append("Blancs: menace de mat en 1")
+        if fait['mate_threat_black']:
+            parts.append("Noirs: menace de mat en 1")
+        
+        # Clouages
+        if fait['pinned_white']:
+            parts.append(f"Blancs: clouages absolus: {', '.join(fait['pinned_white'])}")
+        if fait['pinned_black']:
+            parts.append(f"Noirs: clouages absolus: {', '.join(fait['pinned_black'])}")
+        
+        # Solde matériel
+        if fait['material_balance'] is not None:
+            parts.append(f"solde matériel: {fait['material_balance']:+d} pts")
+        
+        # Joindre les parties non vides
+        if parts:
+            lignes.append(f"  {', '.join(parts)}")
+    
+    return "\n".join(lignes) if len(lignes) > 1 else ""

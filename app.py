@@ -2035,6 +2035,23 @@ def on_exercise_answer(data):
         game_facts.describe_pv_with_balance(fen_avant, pv_meilleur_coup, camp_alain, max_plies=4),
     )
 
+    # Faits python-chess par coup de la ligne calculée (issue #126)
+    # Pour chaque coup de la PV après le coup proposé et après le meilleur coup,
+    # calculer et ajouter au contexte un bloc de faits : coup légal en notation
+    # avec numéro, pièce capturée, échec, pièces adverses nouvellement attaquées,
+    # pièces attaquées et insuffisamment défendues, menaces de mat, clouages,
+    # solde matériel. Format compact, plafonné à 6 coups.
+    pv_coup_propose_faits = game_facts.format_pv_facts(
+        "Faits python-chess par coup après le coup proposé",
+        game_facts.describe_pv_facts(fen_avant, pv_coup_propose, camp_alain),
+        camp_alain,
+    )
+    pv_meilleur_coup_faits = game_facts.format_pv_facts(
+        "Faits python-chess par coup après le meilleur coup",
+        game_facts.describe_pv_facts(fen_avant, pv_meilleur_coup, camp_alain),
+        camp_alain,
+    )
+
     # Réponses adverses alternatives (issue #91, point 1) : pour le coup
     # proposé ET pour le meilleur coup, dit si la réponse adverse de la
     # ligne principale ci-dessus est la SEULE qui évite une perte nette ou
@@ -2127,6 +2144,9 @@ def on_exercise_answer(data):
         "pv_meilleur_coup": pv_meilleur_coup,
         "pv_coup_propose_detail": pv_coup_propose_detail,
         "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
+        # Faits python-chess par coup de la ligne calculée (issue #126)
+        "pv_coup_propose_faits": pv_coup_propose_faits,
+        "pv_meilleur_coup_faits": pv_meilleur_coup_faits,
         # Réponses adverses alternatives (issue #91, point 1) : cf. commentaire
         # au point de calcul ci-dessus.
         "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,

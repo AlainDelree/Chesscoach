@@ -758,6 +758,23 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "question porte clairement sur un coup précis — jamais quand il "
         "est présent, même si son verdict est \"mauvais\" ou \"illégal "
         "partout\"."
+        "\n\n"
+        "Faits python-chess par coup de la ligne calculée (issue #126) : quand le "
+        "contexte fournit un bloc \"Faits python-chess par coup...\" pour une ligne "
+        "(coup proposé ou meilleur coup), ce bloc contient pour CHAQUE coup de "
+        "cette ligne : le coup en notation avec numéro, la pièce capturée éventuelle, "
+        "si le coup donne échec ou mat, les pièces adverses nouvellement attaquées, "
+        "les pièces attaquées et insuffisamment défendues, les menaces de mat en "
+        "un coup, les clouages absolus, et le solde matériel en points. "
+        "SUR TOUS ces sujets (attaques, captures, clouages, échecs, menaces de "
+        "mat, soldes matériels), appuie-toi UNIQUEMENT sur ces faits fournis "
+        "— pour tout ce qui n'y figure pas explicitement, écris \"non vérifié\" "
+        "ou n'en parle pas, JAMAIS n'invente pas un fait. Par exemple : si le "
+        "bloc ne mentionne AUCUN clouage pour un camp, n'affirme JAMAIS qu'une "
+        "pièce est clouée pour ce camp ; si le bloc ne mentionne AUCUNE menace "
+        "de mat, n'affirme JAMAIS qu'il y a une menace de mat. Ces faits sont "
+        "calculés mécaniquement par python-chess sur la position réelle, "
+        "jamais devinés — ils font foi."
     )
 )
 
