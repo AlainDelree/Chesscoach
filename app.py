@@ -2382,14 +2382,9 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
             coup_propose_san = board.san(move)
             eval_result = _evaluate_move_for_coach(fen_avant, move)
             verdict_qualite_moteur = eval_result["verdict_qualite"]
-            verdict_qualite_officiel = eval_result["verdict_qualite_officiel"]
             verdict_delta_cp = eval_result["verdict_delta_cp"]
             pv_coup_propose = eval_result["pv_coup_propose"]
             analyse_indisponible = eval_result["analyse_indisponible"]
-            # Nouveaux champs pour la méthode Lichess (issue #125)
-            eval_before_cp = eval_result["eval_before_cp"]
-            eval_after_cp = eval_result["eval_after_cp"]
-            win_prob_drop = eval_result["win_prob_drop"]
             board.push(move)
             fen_apres = board.fen()
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)

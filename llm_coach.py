@@ -2285,7 +2285,7 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
             try:
                 with urllib.request.urlopen(req_sans_temp, timeout=timeout_s) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-            except urllib.error.HTTPError as e2:
+            except urllib.error.HTTPError:
                 # Si le réessai échoue aussi, propager l'erreur originale
                 # (celle du premier appel, qui était plus informative)
                 raise
@@ -2438,7 +2438,7 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
             try:
                 with urllib.request.urlopen(req_sans_temp, timeout=timeout_s) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-            except urllib.error.HTTPError as e2:
+            except urllib.error.HTTPError:
                 # Si le réessai échoue aussi, propager l'erreur originale
                 raise
         else:
