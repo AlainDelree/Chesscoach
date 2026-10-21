@@ -36,6 +36,7 @@ import coach_reliability
 import game_facts
 import fact_checker
 import version_info
+import avis_format
 
 logger = logging.getLogger("chesscoach.llm_coach")
 
@@ -833,10 +834,9 @@ _EXERCISE_SYSTEM_ADDENDUM = (
         "proposé) QUE si le contexte fournit son évaluation ; sinon décris-le sans le comparer et écris "
         "« non évalué ». (6) Ne confonds pas la perte (en centipions) avec une évaluation : cite une "
         "évaluation seulement si elle est fournie comme telle. "
-        "(7) Mise en page : écris un paragraphe distinct, séparé du précédent par une ligne vide, pour "
-        "chacun de ces éléments, dans cet ordre : ton coup (verdict et raison), le meilleur coup, le coup "
-        "joué à l'époque (seulement s'il diffère de ton coup), la conclusion. Ne regroupe jamais deux de "
-        "ces éléments dans le même paragraphe. "
+        "(7) Mise en page : utilise le format à titres fixes imposé par le complément dédié ci-dessous "
+        "(issue #135) — jamais un paragraphe libre sans titre pour ton coup, le meilleur coup, le coup "
+        "de l'époque ou la conclusion. "
         "(8) Roques : « O-O » est le PETIT roque (côté roi, le roi va en g1 ou g8) et « O-O-O » le "
         "GRAND roque (côté dame, le roi va en c1 ou c8) ; ne les confonds jamais, et ne parle de roque "
         "que si le coup cité est bien « O-O » ou « O-O-O ». "
@@ -860,28 +860,97 @@ _LONGUEUR_MAX_MOTS_REPONSE_EXERCICE = 120
 # "pardon, le fou adverse" — les Blancs n'ont pourtant aucun fou dans cette
 # position), a qualifié d'"échange" un gain net de dame contre une tour, et
 # a jugé "équilibré" un échange qui perdait en fait une tour contre un fou.
-# Ce complément impose une structure courte en 4 parties et interdit ces
-# trois inventions, en plus d'exploiter la nouvelle donnée "réponse adverse
-# forcée" (issue #91, point 1, cf. _build_context_text ci-dessous).
+# Ce complément impose un format et interdit ces trois inventions, en plus
+# d'exploiter la nouvelle donnée "réponse adverse forcée" (issue #91, point
+# 1, cf. _build_context_text ci-dessous).
+#
+# Remplacé par l'issue #135 (suite #125) : la structure en 4 paragraphes
+# SANS titre (ci-dessus avant cette issue) laissait les deux IA libres de
+# tout regrouper dans un seul paragraphe — constat réel sur certains avis de
+# Mistral, où "le meilleur coup était..." et "à l'époque, tu avais joué..."
+# se suivaient sans coupure, rendant la lecture confuse sur téléphone (trois
+# coups différents sont en jeu : le coup proposé, le meilleur coup
+# Stockfish, le coup réellement joué à l'époque). Claude et Mistral
+# reçoivent désormais EXACTEMENT le même gabarit de titres fixes (cf.
+# avis_format.py, qui découpe la réponse selon ces mêmes titres côté
+# serveur pour l'affichage séparé et le journal).
 _REPONSE_STRUCTUREE_ADDENDUM = (
-    f"Réponse courte et structurée (issue #91) : {_LONGUEUR_MAX_MOTS_REPONSE_EXERCICE} "
-    "mots au maximum (indicatif, vise nettement moins si le verdict et la "
-    "position s'y prêtent), en 4 parties dans cet ordre, sans titre ni "
-    "numérotation visible : "
-    "(1) le verdict reformulé en une phrase ; "
-    "(2) pourquoi le coup proposé est une erreur ou une bonne idée, en "
-    "t'appuyant sur la réponse adverse RÉELLE de la ligne principale (ce "
-    "qu'elle capture ou évite d'après les données fournies, jamais une "
-    "justification positionnelle générique improvisée) ; "
-    "(3) l'idée du meilleur coup en une ou deux phrases SEULEMENT — y "
-    "compris, quand le contexte le précise explicitement (bloc \"Réponse "
-    "adverse après...\"), le fait que la réponse adverse qu'il entraîne est "
-    "FORCÉE (seule réponse qui évite un mat ou une perte nette) : dans ce "
-    "cas, dis-le et nomme la menace évitée telle que décrite dans ce bloc, "
-    "sans l'ignorer ni la minimiser en simple alternative parmi d'autres ; "
-    "si ce bloc indique au contraire que plusieurs réponses se valent, ne "
-    "prétends JAMAIS qu'une réponse est forcée ; "
-    "(4) une seule phrase de conseil. "
+    f"Format imposé, identique pour les deux IA (issue #135) : réponds "
+    f"UNIQUEMENT avec les titres suivants, chacun seul sur sa propre ligne, "
+    f"DANS CET ORDRE EXACT, en {_LONGUEUR_MAX_MOTS_REPONSE_EXERCICE} mots "
+    "maximum au total (indicatif, vise nettement moins si le verdict et la "
+    "position s'y prêtent) :\n\n"
+    "## Coup joué\n"
+    "### Évaluation rapide\n"
+    "### Points négatifs\n"
+    "### Points positifs\n"
+    "## Meilleur coup\n"
+    "### Explication\n"
+    "## Coup de l'époque\n"
+    "## Conclusion\n\n"
+    "Un titre de section commence par \"## \" (deux dièses, un espace), "
+    "une sous-rubrique par \"### \" (trois dièses, un espace), seuls sur "
+    "leur ligne — recopie ces préfixes et ces intitulés EXACTEMENT tels "
+    "quels (accents compris), jamais reformulés, traduits, ni fusionnés "
+    "avec le texte qui suit sur la même ligne. "
+    "\"## Coup de l'époque\" est OMIS EN ENTIER (titre et contenu) si le "
+    "coup réellement joué à l'époque dans la partie d'origine est "
+    "identique au coup proposé, ou si cette notion n'existe pas pour cette "
+    "tentative (aucune partie d'origine — position précise, problème "
+    "Lichess) ; dans tous les autres cas, il est présent. "
+    "\n\n"
+    "Contenu de chaque rubrique : "
+    "\"Évaluation rapide\" (sous \"Coup joué\") : UNE SEULE phrase, qui "
+    "reprend EXACTEMENT le mot du verdict officiel fourni ci-dessus (sans "
+    "l'atténuer ni le durcir, cf. règle sur le mot de qualité plus haut) ; "
+    "elle peut citer les évaluations en centipions avant et après le coup "
+    "quand elles sont fournies. "
+    "\"Points négatifs\" et \"Points positifs\" (sous \"Coup joué\") : une "
+    "liste à puces (\"- \" en début de ligne) de TROIS ÉLÉMENTS AU PLUS "
+    "chacune, jamais plus ; chaque élément est concret et rattaché à un "
+    "coup précis de la ligne calculée fournie dans le contexte, jamais une "
+    "généralité improvisée (pas de \"développe tes pièces\") ; une liste "
+    "peut être plus courte, ou réduite à un seul élément \"Aucun.\" si tu "
+    "n'as vraiment rien de factuel à y mettre. "
+    "\"Explication\" (sous \"Meilleur coup\") : si le coup proposé EST déjà "
+    "le meilleur coup, dis-le en une seule phrase (par exemple \"C'est "
+    "justement le coup que tu as joué.\"), sans rien ajouter d'autre dans "
+    "cette rubrique ; sinon, explique l'idée du meilleur coup en "
+    "t'appuyant sur sa ligne principale réelle, y compris, quand le "
+    "contexte le précise explicitement (bloc \"Réponse adverse après...\"), "
+    "le fait que la réponse adverse qu'il entraîne est FORCÉE (seule "
+    "réponse qui évite un mat ou une perte nette) : dans ce cas, dis-le et "
+    "nomme la menace évitée telle que décrite dans ce bloc, sans l'ignorer "
+    "ni la minimiser en simple alternative parmi d'autres ; si ce bloc "
+    "indique au contraire que plusieurs réponses se valent, ne prétends "
+    "JAMAIS qu'une réponse est forcée. "
+    "\"Coup de l'époque\" (quand elle est présente) : décris ce coup ; ne "
+    "le compare au coup proposé ou au meilleur coup QUE si son évaluation "
+    "est fournie dans le contexte ; si elle ne l'est pas, écris \"non "
+    "évalué\" plutôt que de risquer un jugement sans donnée. "
+    "\"Conclusion\" : un seul conseil, précis et réutilisable pour une "
+    "prochaine partie, jamais une généralité vague (\"reste concentré\", "
+    "\"fais attention à tes pièces\")."
+    "\n\n"
+    "Règles de rédaction communes à toute la réponse (issue #135) : "
+    "(1) tout coup cité est précédé de son numéro, EXACTEMENT comme fourni "
+    "dans le contexte ci-dessous (\"31.Re7\" pour un coup des Blancs, "
+    "\"30...Rxb6\" pour un coup des Noirs) — ne recalcule et n'invente "
+    "jamais ce numéro toi-même, reprends celui donné. "
+    "(2) chaque coup cité est nommé avec son rôle explicite : \"ton coup "
+    "31.Re7\", \"le meilleur coup 31.Qb3\", \"le coup de l'époque "
+    "30...e4\" — jamais un coup cité sans préciser lequel des trois il "
+    "est. "
+    "(3) n'attribue JAMAIS une intention à Alain (\"tu voulais...\", \"ton "
+    "idée était...\") et ne prédis JAMAIS ce qu'il jouera ensuite : décris "
+    "uniquement ce que les coups font, jamais ce qu'il pense ou fera. "
+    "(4) tout terme technique (fourchette, clouage, répétition de coups, "
+    "pion fixé, zwischenzug...) est expliqué en quelques mots à son "
+    "PREMIER emploi dans la réponse, au niveau d'un joueur amateur — "
+    "jamais supposé déjà connu. "
+    "(5) pour tout fait absent des données fournies dans ce contexte, "
+    "écris \"non vérifié\" ou n'en parle pas du tout, jamais une "
+    "supposition."
     "\n\n"
     "Interdiction de se reprendre en cours de réponse (issue #91) : "
     "n'écris jamais une affirmation que tu corriges ou annules dans la "
@@ -925,16 +994,27 @@ _REPONSE_STRUCTUREE_ADDENDUM = (
 # partie d'origine ni coup réellement joué à mentionner, et la réponse doit
 # rester courte — un problème Lichess n'appelle pas la même profondeur
 # d'explication qu'une erreur personnelle.
+#
+# Révisé par l'issue #135 : ne dit plus de répondre "de façon courte, 2 à 4
+# phrases, sans titre" — cela contredisait le format à titres fixes imposé
+# par _REPONSE_STRUCTUREE_ADDENDUM (ajouté avant celui-ci, cf.
+# get_coach_response/get_mistral_response), qui doit rester identique pour
+# les trois sources de l'exercice. Seule la rubrique "Coup de l'époque" est
+# explicitement exclue ici (déjà omise par la règle générique "aucune partie
+# d'origine" de l'autre complément, répétée ici pour éviter toute
+# invention).
 _EXERCISE_LICHESS_ADDENDUM = (
     "Cette tentative porte sur un problème tiré de la base ouverte de "
     "problèmes Lichess (licence CC0), pas sur une erreur passée d'Alain : il "
     "n'existe donc AUCUN \"coup réellement joué à l'époque\" ni partie "
-    "d'origine à mentionner ou à supposer. Réponds de façon COURTE (2 à 4 "
-    "phrases) : dis d'abord si le coup proposé est juste, puis explique "
-    "l'idée de la solution en t'appuyant uniquement sur la ligne de "
-    "solution et les descriptions mécaniques fournies dans le contexte — "
-    "n'invente aucun motif tactique, thème ou menace qui n'en ferait pas "
-    "partie."
+    "d'origine à mentionner ou à supposer — la rubrique \"## Coup de "
+    "l'époque\" du format imposé est donc TOUJOURS omise ici (jamais "
+    "inventée). Garde le reste du format imposé, mais reste aussi concis "
+    "que possible : dis d'abord si le coup proposé est juste (rubrique "
+    "\"Évaluation rapide\"), puis explique l'idée de la solution dans "
+    "\"Explication\" en t'appuyant uniquement sur la ligne de solution et "
+    "les descriptions mécaniques fournies dans le contexte — n'invente "
+    "aucun motif tactique, thème ou menace qui n'en ferait pas partie."
 )
 
 # Complément de system prompt pour les modes de partie avec un historique réel
@@ -1529,6 +1609,16 @@ def _build_context_text(context) -> str:
     coup_propose  = (context.get("coup_propose") or "").strip()
     coup_reel     = (context.get("coup_reel") or "").strip()
     meilleur_coup = (context.get("meilleur_coup") or "").strip()
+    # Numéro de coup au format PGN standard ("31." ou "30...", issue #135) —
+    # coup_propose/coup_reel/meilleur_coup sont tous les trois des
+    # alternatives à la MÊME position de départ (fen_depart_exercice en mode
+    # exercice, sinon `fen` — ex. mode "analyse_partie", qui ne transmet que
+    # `fen`), donc le même numéro/camp pour les trois. Calculé une seule
+    # fois ici, mécaniquement (game_facts.numero_coup_depuis_fen, lu
+    # directement depuis le FEN), pour que le prompt impose aux deux IA de
+    # le RECOPIER plutôt que de le recalculer elles-mêmes (cf.
+    # _REPONSE_STRUCTUREE_ADDENDUM, règle de rédaction (1)).
+    numero_coup_texte = game_facts.numero_coup_depuis_fen(fen_depart_exercice or fen)
     # Description mécanique de chacun de ces trois coups (issue #73, en
     # remplacement des champs piece/capture de l'issue #18) : quelle pièce
     # joue, sa case de départ, la pièce capturée (avec sa case, si elle était
@@ -1776,7 +1866,9 @@ def _build_context_text(context) -> str:
         # venait de le proposer dans la tentative en cours.
         lines.append(
             "Coup que le joueur vient de proposer MAINTENANT, dans cette "
-            f"tentative d'exercice : {coup_propose}"
+            f"tentative d'exercice : {numero_coup_texte}{coup_propose} "
+            "(reprends ce numéro de coup EXACTEMENT ainsi si tu le cites, "
+            "issue #135)."
         )
         if coup_propose_description_mecanique:
             lines.append(
@@ -1817,7 +1909,9 @@ def _build_context_text(context) -> str:
         lines.append(
             "Coup que le joueur avait réellement joué À L'ÉPOQUE, dans la "
             "partie d'origine dont cet exercice est tiré — PAS le coup qu'il "
-            f"vient de proposer ci-dessus : {coup_reel}"
+            f"vient de proposer ci-dessus : {numero_coup_texte}{coup_reel} "
+            "(même numéro de coup que le coup proposé ci-dessus, issue "
+            "#135 : les deux partent de la même position)."
         )
         if coup_reel_description_mecanique:
             lines.append(
@@ -1827,7 +1921,10 @@ def _build_context_text(context) -> str:
         if idees_coup_reel_texte:
             lines.append(idees_coup_reel_texte)
     if meilleur_coup:
-        detail = f"Meilleur coup selon Stockfish : {meilleur_coup}."
+        detail = (
+            f"Meilleur coup selon Stockfish : {numero_coup_texte}{meilleur_coup} "
+            "(même numéro de coup que ci-dessus, issue #135)."
+        )
         lines.append(detail)
         if meilleur_coup_description_mecanique:
             lines.append(
@@ -2080,7 +2177,9 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
                      premiere_reponse: dict = None, temperature: str = None,
                      fact_checker_alertes: list = None, fact_checker_affirmations_verifiees: int = 0,
                      fact_checker_affirmations_ignorees: int = 0,
-                     version_info_param: dict = None) -> str | None:
+                     version_info_param: dict = None,
+                     avis_sections: dict = None, avis_format_conforme: bool = None,
+                     avis_format_version: int = None) -> str | None:
     """Journalise un appel complet au coach (issue #18, étendu à tous les
     modes par l'issue #26 — plus seulement le mode "Exercice") : horodatage,
     mode d'origine, system prompt complet, contexte construit (tous les
@@ -2165,6 +2264,19 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
     Ces informations sont enregistrées pour chaque appel afin de permettre un
     regroupement et un filtrage par version dans les rapports ultérieurs.
     Si version_info est None, les informations de version ne sont pas incluses.
+
+    Étendu par l'issue #135 (suite #125) : `avis_sections` (dict ou None) —
+    les rubriques lues par avis_format.parser_avis dans la réponse d'un
+    appel en mode exercice (coup_joue_evaluation_rapide/coup_joue_points_
+    negatifs/coup_joue_points_positifs/meilleur_coup_explication/
+    coup_epoque/conclusion), None si le format à titres fixes n'a pas été
+    respecté ou si ce mode n'en impose aucun. `avis_format_conforme` (bool
+    ou None) : indicateur de conformité au format, enregistré même quand il
+    est False (pour pouvoir compter les réponses non conformes sans avoir à
+    relire le texte brut). `avis_format_version` (int ou None) : numéro de
+    version du format de prompt au moment de cet appel (avis_format.
+    FORMAT_AVIS_VERSION), pour regrouper les avis du journal par version de
+    format dans un rapport ultérieur.
     """
     if not log_path:
         return None
@@ -2196,6 +2308,15 @@ def _log_coach_call(log_path, system_prompt: str, context: dict, messages, mode_
             entry["fact_checker_affirmations_verifiees"] = fact_checker_affirmations_verifiees
         if fact_checker_affirmations_ignorees > 0:
             entry["fact_checker_affirmations_ignorees"] = fact_checker_affirmations_ignorees
+        # Sections lues dans la réponse et conformité au format à titres
+        # fixes (issue #135, suite #125) — avis_format_conforme est
+        # enregistré même à False (compte des réponses non conformes).
+        if avis_format_conforme is not None:
+            entry["avis_format_conforme"] = avis_format_conforme
+        if avis_sections is not None:
+            entry["avis_sections"] = avis_sections
+        if avis_format_version is not None:
+            entry["avis_format_version"] = avis_format_version
         # Ajouter les informations de version (issue #124)
         # Si version_info_param n'est pas fourni, utiliser les informations globales
         if version_info_param is None:
@@ -3118,7 +3239,19 @@ def get_coach_response(messages, context, coach_memory, cfg):
                         fiabilite.get("raison", "") + 
                         "; " if fiabilite.get("raison") else ""
                     ) + f"{len(fact_checker_alertes)} affirmation(s) factuelle(s) à vérifier"
-    
+
+    # Lecture du format à titres fixes (issue #135, suite #125) — uniquement
+    # en mode exercice, seul mode où _REPONSE_STRUCTUREE_ADDENDUM impose ce
+    # format. avis_format_conforme reste None (jamais écrit dans le
+    # journal) hors de ce mode, plutôt que de compter à tort une non-
+    # conformité sur un format qui n'a jamais été demandé.
+    avis_sections = None
+    avis_format_conforme = None
+    if (context or {}).get("mode_exercice"):
+        avis_parse = avis_format.parser_avis(response)
+        avis_format_conforme = avis_parse["conforme"]
+        avis_sections = avis_parse["sections"] if avis_parse["conforme"] else None
+
     log_id = _log_coach_call(
         log_path, prompt_sys, context, clean_messages, mode_origine, model=model,
         reponse=response, usage=usage_appel, fiabilite=fiabilite, avertissement=avertissement,
@@ -3126,6 +3259,8 @@ def get_coach_response(messages, context, coach_memory, cfg):
         fact_checker_alertes=fact_checker_alertes,
         fact_checker_affirmations_verifiees=fact_checker_affirmations_verifiees,
         fact_checker_affirmations_ignorees=fact_checker_affirmations_ignorees,
+        avis_sections=avis_sections, avis_format_conforme=avis_format_conforme,
+        avis_format_version=(avis_format.FORMAT_AVIS_VERSION if avis_format_conforme is not None else None),
     )
     return response, None, fiabilite, log_id
 
@@ -3263,6 +3398,16 @@ def get_mistral_response(messages, context, cfg):
             fact_checker_affirmations_verifiees = result.get("affirmations_verifiees", 0)
             fact_checker_affirmations_ignorees = result.get("affirmations_ignorees", 0)
 
+    # Lecture du format à titres fixes (issue #135, suite #125) — même
+    # logique que get_coach_response ci-dessus (Claude et Mistral reçoivent
+    # exactement le même prompt système, donc le même format imposé).
+    avis_sections = None
+    avis_format_conforme = None
+    if (context or {}).get("mode_exercice"):
+        avis_parse = avis_format.parser_avis(response)
+        avis_format_conforme = avis_parse["conforme"]
+        avis_sections = avis_parse["sections"] if avis_parse["conforme"] else None
+
     # Journalisation (consigne 7) : enregistrer l'appel Mistral avec réponse
     # et usage (issue #119) : usage_mistral peut être None si la réponse n'avait
     # pas d'information de consommation
@@ -3273,5 +3418,7 @@ def get_mistral_response(messages, context, cfg):
         fact_checker_alertes=fact_checker_alertes,
         fact_checker_affirmations_verifiees=fact_checker_affirmations_verifiees,
         fact_checker_affirmations_ignorees=fact_checker_affirmations_ignorees,
+        avis_sections=avis_sections, avis_format_conforme=avis_format_conforme,
+        avis_format_version=(avis_format.FORMAT_AVIS_VERSION if avis_format_conforme is not None else None),
     )
     return response, None, mistral_log_id, fact_checker_alertes

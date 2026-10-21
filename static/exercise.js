@@ -1298,9 +1298,10 @@ if (typeof socket !== "undefined") {
       // lui sur mobile (issue #67, comportement voulu par la maquette).
       // Issue #113 : afficher l'auteur clairement
       // Issue #121 : corriger l'ordre des paramètres (fiabilite, signalData, agent, model, exerciseId)
+      // Issue #135 : sections découpées par titre fixe, pour un affichage séparé.
       _coachRenderBubbleWithAgent("assistant", text, true, data && data.fiabilite, data && {
         mode_origine: data.mode_origine, fen: data.fen, move: data.coup_propose, log_id: data.log_id,
-      }, agent, model, exerciseId);
+      }, agent, model, exerciseId, data && data.avis_sections, data && data.avis_format_conforme);
       if (typeof _coachHistory !== "undefined") {
         _coachHistory.push({ role: "assistant", content: text, agent: agent, model: model });
       }
@@ -1356,7 +1357,8 @@ if (typeof socket !== "undefined") {
       // Issue #121 : passer l'agent explicitement
       const factCheckerAlertes = (data && data.fact_checker_alertes) || [];
       const agent = (data && data.agent) || "mistral";
-      _coachRenderMistralBubbleWithAgent(stripMarkdownForChat(text), model, exerciseId, logId, fen, coupPropose, factCheckerAlertes, agent);
+      // Issue #135 : sections découpées par titre fixe, pour un affichage séparé.
+      _coachRenderMistralBubbleWithAgent(stripMarkdownForChat(text), model, exerciseId, logId, fen, coupPropose, factCheckerAlertes, agent, data && data.avis_sections, data && data.avis_format_conforme);
     }
   });
 
