@@ -8,591 +8,145 @@ entre les sessions (comme un vrai coach qui se souvient de la progression).
 
 ## Architecture
 Projet séparé d'AlChess : dépôt AlainDelree/Chesscoach, périmètre ~/ChessCoach.
-Réutilise des modules adaptés d'AlChess, débarrassés de tout ce qui est
-spécifique à AlChess (trilingue FR/EN/DE, mode pédagogique débutant, hardware
-Chessnut).
+Application mono-utilisateur, sans i18n ni support Chessnut (historique de la
+migration/adaptation des modules AlChess : voir CHANGELOG.md).
 
-## Modules déjà présents (export_chesscoach/)
-- library_manager.py — import PGN mono/multi-parties
-- socketio_pgn_handlers.py — 6 handlers SocketIO (register_pgn_library_handlers)
-- llm_coach.py — adapté de llm_explainer.py AlChess (issue #196) : system
-  prompt + appel Claude + conversation multi-tours + load_coach_memory/
-  save_coach_memory (fichier mémoire JSON externe)
-- engine_stockfish.py — EngineManager (UCI générique), Maia/Rodent IV retirés
-- static/board.js, static/board.css — plateau, matériel, flèches, barre
-  d'éval, chat coach (renommé coach*) ; i18n, sync Chessnut, sauvegarde
-  NicLink retirés
+## Carte des fichiers
+Tous les modules sont à la racine du dépôt — le dossier `export_chesscoach/`
+évoqué dans d'anciennes notes n'existe pas :
+- `app.py` — serveur Flask, routes, handlers SocketIO, logique de jeu
+- `engine_stockfish.py` — `EngineManager`, moteurs UCI (jeu, finales, éval)
+- `llm_coach.py` — appels Claude/Mistral, construction du contexte, mémoire
+  du coach
+- `game_facts.py` — faits de position formatés en texte pour le coach
+- `lichess_puzzles.py` — pool et niveau adaptatif des problèmes Lichess
+- `library_manager.py` — import PGN mono/multi-parties
+- `socketio_pgn_handlers.py` — handlers SocketIO (`register_pgn_library_handlers`)
+- `config.py` — chemins, variables d'environnement, choix de modèle LLM
+- `static/*.js`, `templates/index.html` — plateau, chat coach, interface
+
+(et d'autres scripts utilitaires à la racine : préparation de données,
+rapports, tests — voir le dépôt.)
 
 ## Données personnelles
 Deux fichiers PGN (Chess.com + Lichess, ~1 an de parties d'Alain) déposés dans
 data/pgn_import/. DATA_DIR (dossier data/) doit être gitignoré — le dépôt est
 public, les données personnelles ne doivent jamais y être committées.
 
-## Tables de finales Syzygy (issue #32)
-Chemin exact : `~/ChessCoach/engines/syzygy/` (SYZYGY_PATH dans config.py,
-créé automatiquement s'il n'existe pas, gitignoré). Alain y dépose
-manuellement les fichiers Syzygy 3-4-5 pièces (depuis
-https://tablebase.lichess.ovh/tables/standard/, ~1 Go) — pas de
-téléchargement automatisé par CCL. engine_stockfish.py détecte leur présence
-au démarrage de chaque instance moteur et configure l'option UCI SyzygyPath
-en conséquence ; dossier vide ou absent → dégradation gracieuse (log
-informatif, pas d'erreur), même pattern que le livre Polyglot (issue #9).
-Le moteur dédié au mode "travail de finales" (jeu normal et démonstration,
-`get_move_finales` dans engine_stockfish.py) n'est plus plafonné en Elo
-(UCI_LimitStrength désactivé) — avant l'issue #32 il réutilisait par erreur
-le moteur Elo limité (~1500) du bouton "Coup Stockfish" du mode partie
-libre, ce qui dégradait les techniques de mat longues et précises.
-
-## Mémoire du coach (coach_memory.json, dans DATA_DIR)
-Schéma : profil, patterns_erreurs (ouverture / milieu_de_partie / finale),
-repertoire_ouvertures (blancs / noirs), historique_sessions (résumés par
-session, pas les parties complètes), objectifs_courants.
-
-## Compteur de tokens consommés (usage_tokens.json, dans DATA_DIR — issue #54)
-Le solde restant de la clé API n'est pas lisible par programme (il n'existe
-que sur la Console platform.claude.com) et Alain préfère ne pas maintenir de
-table de prix par modèle côté ChessCoach : le compteur affiche donc
-uniquement des tokens bruts, sans aucun prix ni équivalent en argent — à
-charge pour lui de rapprocher ce compte du solde réel affiché sur la
-Console.
-
-À chaque appel réussi à l'API Claude (tous les chemins : chat du coach,
-explications de coups, programme d'entraînement, commentaires des modes
-ouverture/finales/pédagogique/exercice), `_call_claude` (llm_coach.py) relève
-les tokens d'entrée/de sortie/de cache (création et lecture) déjà présents
-dans la réponse de l'API (`usage`, aucun appel supplémentaire) et les cumule
-dans `data/usage_tokens.json` via `_record_usage`/`_save_usage`, par modèle
-réellement utilisé (`data["model"]` de la réponse, pas le paramètre d'entrée
-qui peut être un alias ou vide). Le fichier garde aussi une date de départ du
-cumul et le détail du dernier appel ; il survit donc à un redémarrage de
-l'appli (comme coach_memory.json), et reste hors du dépôt (sous DATA_DIR,
-gitignoré).
-
-Côté interface, l'en-tête affiche un texte discret à côté du lien
-« Coût API » (`#usage-tokens-widget` dans templates/index.html, logique dans
-static/usage_tokens.js) : tokens du dernier appel et total cumulé depuis la
-date de départ, entrée/sortie séparées. Le détail par modèle apparaît au
-survol (desktop) ou au tap (mobile, via une bascule de classe CSS) — un token
-n'a pas le même « coût » selon le modèle utilisé, ce détail doit donc rester
-consultable même si le résumé affiché est compact. Sur écran étroit (media
-query `max-width: 900px`), le texte bascule vers une forme courte
-(`Σ … in / … out`) pour ne pas déborder de l'en-tête. Un bouton « Remettre le
-compteur à zéro » (dans le détail, avec confirmation `confirm()` légère)
-réinitialise le fichier entier, y compris la date de départ.
-
-Quand l'API répond que le crédit est épuisé, `_call_claude` lève
-`CreditInsuffisantError` plutôt que la `ValueError` générique ; tous les
-gestionnaires SocketIO renvoient alors `error: "credit_insuffisant"` et le
-client affiche un message clair (bulle dédiée dans le chat coach, ou message
-inline selon le mode) avec un lien vers la Console pour recharger, au lieu
-d'une erreur technique. Détection tolérante (issue #60) plutôt que basée sur
-un unique couple (code HTTP, type) : `error.type == "billing_error"` quel que
-soit le code HTTP, ou HTTP 402, ou HTTP 400 `invalid_request_error` dont le
-message mentionne le solde/les crédits (ex. « credit balance », « Plans &
-Billing »), insensible à la casse — la forme exacte renvoyée par l'API pour
-ce cas n'est pas garantie stable dans le temps et ne peut pas être vérifiée
-sans épuiser réellement un crédit. Les vraies erreurs de permission (403
-`permission_error`) et les vraies requêtes invalides (400 sans mention de
-crédit) restent distinguées et ne déclenchent pas ce message.
-
-Chaque appel loggé dans `data/logs/coach_calls.log` porte désormais aussi son
-propre champ `usage` (tokens de cet appel précis, ou `null` si l'appel n'a
-pas abouti), en complément du compteur cumulé, pour le diagnostic. Depuis
-l'issue #61, chaque entrée porte aussi un champ `model` explicite (le
-paramètre transmis à cet appel précis), y compris sur les entrées d'erreur où
-`usage` est absent — ce qui garde traçable, ligne à ligne, quel modèle a
-réellement servi même après un changement de modèle en cours de session.
-
-## Enregistrement des jetons Mistral et estimation du coût (issue #119)
-Depuis l'issue #119, les appels à l'API Mistral enregistrent aussi leur
-consommation de jetons (jetons d'entrée et de sortie, et jetons en cache si
-l'API les indique) dans le champ `usage` de chaque entrée du journal
-`coach_calls*.log`, avec la même structure que celle utilisée pour Claude.
-La consommation est extraite directement de la réponse de l'API Mistral
-(champ `usage` avec `prompt_tokens` et `completion_tokens`), sans appel
-supplémentaire. Une réponse sans information de consommation ne casse rien
-: le champ `usage` vaut alors `null` dans le journal.
-
-Le compteur de jetons affiché dans l'en-tête de l'appli reste celui de
-Claude uniquement (via `usage_tokens.json`) — les jetons de Mistral sont
-comptés à part et ne sont pas ajoutés au compteur existant, conformément à
-la demande d'Alain.
-
-Un fichier de données modifiable à la main, `data/token_prices.json`, contient
-le tableau de prix par modèle : prix par million de jetons en entrée et en
-sortie, devise, date de dernière vérification, indication « vérifié »
-(vrai/faux) et note sur la source. Ce fichier est pré-rempli avec les valeurs
-connues (Claude Sonnet 5, Claude Haiku 4.5, Mistral Large latest/2512/4/4-0),
-toutes marquées « à vérifier » initialement. Un modèle absent du tableau n'a
-jamais de prix inventé : le script affiche « prix inconnu », jamais 0.
-
-Le script `scripts/estimer_cout_api.py` lit tous les fichiers `coach_calls*.log`
-et affiche, pour un jour donné (aujourd'hui par défaut, avec options `--date`,
-`--debut`, `--fin`) : par agent (Claude/Mistral) et par modèle, le nombre
-d'appels, les jetons d'entrée et de sortie, et le coût estimé dans la devise
-du modèle, puis les totaux par devise. Les appels sans consommation enregistrée
-(par exemple les appels de Mistral d'avant l'issue #119) sont comptés à part
-comme « consommation inconnue », avec leur nombre, sans estimation inventée.
-Le script affiche un avertissement tant que des prix utilisés sont marqués
-« à vérifier », et rappelle qu'il s'agit d'une estimation et non de la
-facturation officielle (les remises, le cache et les arrondis peuvent différer).
-
-## Choix du modèle Claude (Haiku/Sonnet) depuis l'interface (issue #61)
-Avant l'issue #61, le modèle était fixé une fois pour toutes par
-`CHESSCOACH_LLM_MODEL` (.env) — changer de modèle imposait d'éditer le .env
-et de relancer l'appli. Un petit sélecteur dans l'en-tête (`#llm-model-selector`
-dans templates/index.html, juste avant le compteur de tokens), deux boutons
-contigus « Haiku (test) » / « Sonnet (sérieux) » façon *segmented control*,
-permet désormais de basculer sans redémarrage, sans interrompre la partie ni
-effacer le chat en cours. Libellés complets en desktop, abrégés (premier mot)
-sur écran étroit (media query `max-width: 900px`, même seuil que le reste de
-l'en-tête) — comportement vérifié à 390×844 (aucun débordement horizontal).
-
-Les deux identifiants de modèle sont définis une seule fois dans config.py :
-`LLM_MODEL_HAIKU`/`LLM_MODEL_SONNET` (+ `LLM_MODEL_CHOICES`, le dict
-id → libellé qui alimente à la fois le sélecteur et la validation du choix
-reçu du client). `config.LLM_MODEL` reste l'attribut lu par tous les appels
-API (`app.py` construit `llm_config["llm_model"]` à partir de
-`config.LLM_MODEL` à chaque appel, jamais une copie figée au démarrage) —
-`config.set_llm_model(model_id)` le réassigne directement en mémoire, d'où
-l'effet immédiat sur tous les appels suivants, tous chemins confondus (chat
-du coach, explications de coups, programme d'entraînement, commentaires des
-modes ouverture/finales/pédagogique/exercice), sans exception à gérer côté
-appelants puisque `config.LLM_MODEL` est relu, pas copié.
-
-Persistance : `config.set_llm_model` écrit aussi le choix dans
-`data/llm_model_choice.json` (`{"model": "..."}`), un petit fichier séparé du
-`.env`, jamais modifié automatiquement — sous DATA_DIR, donc gitignoré comme
-le reste des données personnelles. Au démarrage, `config.py` reprend ce
-fichier s'il contient un choix valide ; à défaut (premier lancement, fichier
-absent ou invalide), reprend `CHESSCOACH_LLM_MODEL` si sa valeur correspond à
-l'un des deux choix connus, sinon Sonnet par défaut (jeu sérieux plutôt que
-test).
-
-Côté interface, le clic sur un bouton émet l'événement SocketIO
-`set_llm_model` (`{"model": "..."}`) ; le serveur répond `llm_model_changed`
-(bascule le bouton actif) ou, si `model_id` n'est ni Haiku ni Sonnet,
-`llm_model_error` (n'arrive pas en usage normal, les deux boutons envoient
-toujours un id connu — filet de sécurité défensif). Logique dans
-static/llm_model.js.
-
-Refus par l'API (modèle introuvable ou indisponible, HTTP 404
-`not_found_error`) : `_call_claude` (llm_coach.py) lève désormais
-`ModeleIndisponibleError`, distinguée de `CreditInsuffisantError` (issue
-#54) et remontée par les 4 fonctions publiques (`get_coach_response`,
-`get_move_explanations`, `get_opening_moves`, `get_training_program`) comme
-`error: "modele_indisponible"`. Les 10 points d'appel API de app.py
-partagent tous le même filet (`_handle_llm_model_indisponible_si_besoin`,
-appelé au tout début de chaque bloc `if error:`) : comme il n'existe que deux
-choix, revenir à « l'autre » est sans ambiguïté le choix précédent — le
-serveur y revient seul (`config.set_llm_model`, donc persisté) et prévient le
-client via l'événement `llm_model_indisponible`, qui remet à jour le
-sélecteur ET affiche un message clair dans le chat (`static/llm_model.js`),
-plutôt qu'une erreur technique brute ou un sélecteur resté sur un choix qui
-ne répond plus.
-
-Paramètres d'appel (`_call_claude`) : `max_tokens=4096` et
-`thinking: {"type": "disabled"}` sont acceptés tels quels par les deux
-modèles (vérifié auprès de la documentation API à jour) — Haiku ne raisonne
-jamais nativement (`disabled` y est un no-op sans contrainte particulière),
-et Sonnet 5 accepte explicitement `{"type": "disabled"}` comme l'omission du
-paramètre. `max_tokens=4096` reste très en dessous des plafonds des deux
-modèles (64K pour Haiku 4.5, 128K pour Sonnet 5). Aucune adaptation par
-modèle n'a donc été nécessaire.
-
-Le compteur de tokens par modèle (`usage_tokens.json`, issue #54) reste
-cohérent après un changement de modèle en cours de session : `_record_usage`
-cumule déjà par `data["model"]` (le modèle réellement résolu par l'API pour
-CET appel, pas le paramètre d'entrée), donc un changement de sélection
-n'affecte que les appels suivants — les compteurs déjà accumulés pour
-l'ancien modèle restent inchangés dans `par_modele`.
-
-## Température configurable pour les appels LLM (issue #116)
-Pour permettre une comparaison honnête entre Claude et Mistral sur les
-exercices, les deux IA doivent tourner dans des conditions connues et, si
-possible, identiques. Deux variables d'environnement permettent désormais de
-configurer la température pour chaque fournisseur :
-
-- `CHESSCOACH_CLAUDE_TEMPERATURE` : température pour les appels à Claude en
-  mode exercice. Si absente ou vide, aucun paramètre n'est envoyé (l'API
-  utilise sa valeur par défaut). Si l'API refuse le paramètre pour le modèle
-  utilisé, l'appel est réessayé sans le paramètre et un avertissement est
-  consigné dans le journal. **Note (issue #118) :** le modèle `claude-sonnet-5`
-  n'accepte pas de température personnalisée (paramètre déprécié pour ce
-  modèle) — avec ce modèle, la variable `CHESSCOACH_CLAUDE_TEMPERATURE` n'a
-  donc aucun effet, et la comparaison Claude/Mistral ne peut pas être faite à
-  température identique tant que ce modèle est utilisé.
-- `CHESSCOACH_MISTRAL_TEMPERATURE` : température pour les appels à Mistral.
-  Valeur par défaut : 0.0 (comportement initial). Une valeur invalide (non
-  numérique, hors plage acceptée) est ignorée avec un avertissement dans les
-  logs, et la valeur par défaut s'applique. Si l'API Mistral refuse le
-  paramètre pour le modèle utilisé, l'appel est réessayé sans le paramètre et
-  un avertissement est consigné dans le journal.
-
-La température réellement envoyée (ou "defaut API" quand rien n'est envoyé) est
-consignée dans chaque entrée des journaux `coach_calls*.log` pour les deux
-agents, sous le champ `temperature`. Le script `scripts/coach_ratings_report.py`
-affiche désormais la température à côté du modèle pour chaque avis, permettant
-de tracer précisément les conditions de chaque appel.
-
-## Source d'exercices « Problèmes Lichess » (issue #78)
-Deuxième source pour le mode "Exercice", en complément de "Mes erreurs"
-(erreurs_detectees.json) : des problèmes tirés de la base ouverte Lichess
-(licence CC0, ~5 millions de positions, téléchargée MANUELLEMENT par Alain —
-CCL n'a pas accès à Internet et ne télécharge jamais rien automatiquement).
-
-**Préparation hors-ligne** : `preparer_puzzles_lichess.py <chemin_csv>`
-(option `--sortie` pour changer la destination, défaut
-`config.LICHESS_PUZZLES_PATH` = `data/puzzles_lichess.json`). Sans accès
-réseau, lit le CSV (colonnes PuzzleId/FEN/Moves/Rating/RatingDeviation/
-Popularity/NbPlays/Themes/GameUrl/OpeningTags), décompressé ou en `.gz`
-(stdlib) — le `.zst` d'origine nécessite le module tiers `zstandard`, sinon
-le script l'indique clairement et s'arrête (décompresser à la main,
-`zstd -d fichier.csv.zst`). Filtre les problèmes fiables (Rating 800-2200,
-RatingDeviation ≤ 100, NbPlays ≥ 500, Popularity ≥ 80 — constantes en tête de
-script), classe chacun dans les 16 catégories de thème ci-dessous et par
-phase (opening/middlegame/endgame, mêmes tags Lichess que les thèmes), puis
-échantillonne au plus 200 problèmes par (catégorie, tranche de note de 100
-points) — réglable (`MAX_PAR_CATEGORIE_ET_TRANCHE`/`TAILLE_TRANCHE`). Affiche
-un résumé (comptes avant/après filtre et par catégorie/tranche) et n'écrit
-que ce fichier JSON. Un petit CSV d'essai (34 lignes, tous thèmes et
-quelques rejets volontaires pour vérifier les filtres) est fourni à la
-racine : `puzzles_lichess_exemple.csv` — commande de test :
-`python3 preparer_puzzles_lichess.py puzzles_lichess_exemple.csv --sortie /tmp/essai.json`.
-
-**Format d'une entrée du pool** (`data/puzzles_lichess.json`, liste JSON,
-donnée personnelle hors git) :
-```
-{"fen_avant": "lichess:<PuzzleId>",      // clé d'historique, PAS une FEN
- "puzzle_id": "...", "rating": 1512, "rating_deviation": 45,
- "popularity": 92, "nb_plays": 8000,
- "themes": ["middlegame", "fork", ...],  // thèmes Lichess bruts
- "categories": ["fork"],                 // sous-ensemble des 16 catégories
- "phases": ["middlegame"],               // opening/middlegame/endgame présents
- "camp_alain": "blancs", "fen_position": "...",  // position affichée à Alain
- "premier_coup_adverse": "e2e4", "solution": ["e7e5", "g1f3", ...],  // UCI
- "game_url": "...", "opening_tags": "..."}
-```
-Le FEN du CSV est la position AVANT le premier coup de `Moves` (joué par
-l'adversaire) ; `fen_position` est déjà calculée après ce premier coup
-(position réellement montrée à Alain) et `solution` ne contient plus que les
-coups du joueur/de l'adversaire en alternance après ce premier coup.
-
-**Catégories de niveau** (`lichess_puzzles.CATEGORIES`, thème Lichess →
-libellé FR) : pin→clouage, discoveredAttack→attaque à la découverte,
-defensiveMove→coup défensif, quietMove→coup silencieux, zugzwang→zugzwang,
-rookEndgame→finale de tours, endgame→finale, pawnEndgame→finale de pions,
-exposedKing→roi exposé, attraction→attraction, kingsideAttack→attaque sur
-l'aile roi, advancedPawn→pion avancé, sacrifice→sacrifice, mate→mat (couvre
-aussi mateIn1/mateIn2/...), fork→fourchette, middlegame→milieu de jeu.
-
-**Niveau adaptatif par catégorie** (`data/niveau_exercices_lichess.json`,
-donnée personnelle, `{categorie: niveau}`) : valeur de départ pondérée vers
-1471 (performance Lichess globale d'Alain, 30 jours, relevée le 2026-10-01)
-par `lichess_puzzles.valeur_depart_categorie` — `(n*perf + 5*1471)/(n+5)`,
-`n`/`perf` lus dans `PERFORMANCES_INITIALES` (poids 5 et valeurs de repli
-réglables en tête de `lichess_puzzles.py`). 1471 sert aussi de repli pour
-toute catégorie inconnue (n=0) et, implicitement, pour la phase "ouverture"
-(aucune des 16 catégories n'est dédiée à l'ouverture). Tirage
-(`lichess_puzzles.tirer_probleme`) : catégories compatibles avec la phase
-demandée, tirage pondéré favorisant les niveaux bas (poids = 1/niveau), puis
-problème dans la fenêtre [niveau±100] (élargie par paliers de 100 jusqu'à
-±700 si vide) via `exercise_history.choisir_exercice` réutilisé tel quel (clé
-"lichess:<PuzzleId>" au lieu d'une FEN — le module n'a pas besoin d'une vraie
-FEN, juste d'une clé opaque, donc partage le même fichier
-`config.EXERCICE_HISTORIQUE_PATH` que "Mes erreurs" sans collision). Mise à
-jour Elo après chaque résultat (`lichess_puzzles.mettre_a_jour_niveau`,
-formule standard, résultat attendu = 1/(1+10^((note-niveau)/400)), pas de
-mise à jour `PAS_ELO` = 28 points, réglable seul à cet endroit), bornée à
-[400, 3000]. Seule la catégorie ayant servi au TIRAGE est mise à jour, même
-si le problème porte plusieurs thèmes de catégorie.
-
-**Jugement du coup** (`app.py`, `_on_exercise_answer_lichess`) : seul le
-premier coup de la solution est jugé — réussi s'il est identique à ce coup,
-s'il donne mat (y compris un mat différent de la solution), ou s'il est
-« équivalent » d'après Stockfish réel (perte < 30cp,
-`engine_stockfish.SEUIL_PUZZLE_EQUIVALENT_CP`, plus strict que le seuil
-"bon" de 50cp utilisé par "Mes erreurs" car une solution Lichess est unique
-par construction — ou garde-fou "position déjà décidée" déclenché,
-équivalent à `qualite=="imprecision"` avec `delta_cp >= SEUIL_IMPRECISION`).
-Le "meilleur coup" affiché et la ligne jouable dans le tableau "Lignes du
-coach" (« Solution du problème ») sont toujours la solution DÉCLARÉE du
-problème, jamais une ligne recalculée indépendamment par Stockfish. Pas de
-"coup réellement joué à l'époque" pour cette source (aucune clé `coup_reel`
-transmise au coach). Contexte coach enrichi de `themes_lichess`/
-`rating_probleme`/`niveau_categorie`/`categorie_libelle`
-(`llm_coach._build_context_text`) et d'un addendum système dédié
-(`_EXERCISE_LICHESS_ADDENDUM`) demandant une réponse courte.
-
-**Interface** : sélecteur de source ("Mes erreurs"/"Problèmes Lichess") à
-côté du sélecteur de phase (desktop) et dans la feuille "Nouvel exercice"
-(mobile, pilote le même `<select>`) — désactivé avec une phrase explicite
-si `data/puzzles_lichess.json` est absent (`lichess_puzzles_disponible`,
-calculé au démarrage de `app.py`, rendu côté serveur). "Exercice suivant" et
-"Autre catégorie" conservent la source choisie (`exerciseCurrentSource`,
-même mécanisme que `exerciseCurrentPhase` pour la phase, issue #76). Ligne
-d'état dédiée (`#exercise-lichess-info`) : "Problème `<note>` · ton niveau
-en `<catégorie>` `<niveau>`".
-
-## État d'avancement
-- Issue #252 (projet alchess) : extraction/adaptation des modules — FAIT.
-- Issue en cours (projet chesscoach) : squelette Flask minimal, config.py +
-  DATA_DIR, câblage des modules entre eux, création de coach_memory.json vide,
-  import des 2 PGN via library_manager.py. PAS encore d'analyse Stockfish/
-  Claude sur l'historique à ce stade.
-
-## Prochaines étapes prévues
-1. Squelette Flask (en cours).
-2. Passe d'analyse Stockfish/Claude sur l'historique PGN importé, pour
-   préremplir patterns_erreurs et repertoire_ouvertures plutôt que de démarrer
-   la mémoire vide.
-3. index.html neuf, propre à ChessCoach (l'original AlChess était trop
-   imbriqué dans le flux de partie pédagogique pour être réutilisé tel quel).
-
-## Accès distant via Tailscale (issue #49)
-L'appli écoute sur toutes les interfaces (`0.0.0.0:5000`) mais un middleware
-WSGI (`_FiltreAccesDistant` dans app.py) n'accepte que la boucle locale
-(127.0.0.1/::1) et le réseau Tailscale (100.64.0.0/10) ; toute autre origine
-(LAN, wifi public) reçoit un 403 explicite. Le port 5000 et le mécanisme de
-filtrage sont inchangés côté ThinkPad : l'alias `coach` continue d'ouvrir le
-navigateur en local comme avant.
-
-Pour ouvrir l'appli depuis le GSM (Tailscale actif des deux côtés) :
-`http://100.92.48.81:5000` (adresse Tailscale du ThinkPad thinkpadcarbon7).
-Le chat temps réel (Socket.IO) fonctionne aussi par cette adresse : la
-vérification d'origine intégrée à Socket.IO compare l'Origin du navigateur
-au Host de la requête, donc elle s'aligne automatiquement sur l'adresse
-utilisée (locale ou Tailscale) sans configuration supplémentaire.
-
-Mode debug Flask/Werkzeug désactivé par défaut (issue #51) : le débogueur
-interactif expose une console web (protégée par un simple code PIN) qui
-pourrait être servie avant `_FiltreAccesDistant` et donc potentiellement
-joignable depuis le réseau local ou un wifi public. Conséquence pratique :
-**après une modification du code, il faut relancer le coach à la main**
-(plus de rechargement automatique). Réactivation volontaire pour le
-développement local via `CHESSCOACH_DEBUG_DEV=1` — dans ce cas l'appli
-n'écoute plus que sur `127.0.0.1` (jamais combiné avec l'écoute
-`0.0.0.0`/Tailscale).
-
 ## Conventions spécifiques à ce projet
+
+Règles de rédaction de CE fichier, pour les agents qui l'éditent :
+1. N'y écrire que ce dont un agent a besoin AVANT d'écrire du code (invariant,
+   convention, interface, piège) ; ce que l'issue a *fait* va au changelog,
+   jamais ici.
+2. Remplacer, ne pas empiler : une issue qui modifie une fonctionnalité édite
+   la section ou la fiche existante, sans ajouter une section « (issue #N) »
+   à côté de l'ancienne.
+3. Dès qu'un sujet dépasse environ 6 lignes ou décrit une interface, un format
+   ou des options, il part dans `docs/contexte/` avec une seule ligne de
+   renvoi ici (chemin de la fiche).
+4. Une issue qui rend un passage faux le corrige ou le supprime dans le même
+   commit, et le dit dans son rapport.
+5. Citer des noms réels (fichier et symbole) ; interdiction de « pour toi »/
+   « pour Alain » à côté d'un chiffre signé ; un nom de champ n'a qu'un seul
+   sens — si deux chemins du code lui donnent un sens différent, le dire
+   explicitement.
+
+Conventions du projet :
 - Toute modification de code passe par une issue Bridge_Agent
   (PROJET | chesscoach), même petite.
 - CCL committe en local uniquement — jamais de push automatique.
 - Application personnelle mono-utilisateur : pas de gestion multi-comptes,
   pas de i18n.
 
-## Suivi de version du code et étiquette de série (issue #124)
+## Invariants et pièges
 
-Au démarrage de l'application, ChessCoach détecte automatiquement et mémorise
-les informations de version du code source depuis le dépôt git du projet :
+**Convention de signe Lichess (issue #128)** : tous les centipions et soldes
+matériel transmis aux IA et au journal (contexte du chat, mode Exercice,
+question de suivi, `non_regression_coach.py`) suivent la convention de
+Lichess — + = avantage Blancs, − = avantage Noirs — SANS conversion vers le
+camp d'Alain. Ne jamais écrire « pour toi »/« pour Alain » à côté d'un
+chiffre signé. Position considérée égale si la valeur absolue de
+l'évaluation est inférieure à 30 centipions. La barre d'évaluation de
+l'affichage reste hors périmètre de l'issue #128 (non retouchée depuis).
+Détail et fonctions modifiées : fiche `convention_signe`.
 
-- **commit_hash** : identifiant court (7 caractères) du commit HEAD
-- **commit_message** : première ligne du message de commit
-- **modified** : indicateur booléen (True si des fichiers suivis par git ont
-des changements non commités)
-- **last_issue** : numéro de la dernière issue citée dans l'historique récent
-  (recherche parmi les 30 derniers commits pour des mentions de type
-  "issue-N", "issue N", "#N" ou "worktree-issue-N")
+**Classification des coups — double système (issue #125)** : la SÉLECTION
+des exercices (`erreurs_detectees.json`, `build_patterns_erreurs.py`) utilise
+des seuils fixes en centipions (`engine_stockfish.SEUIL_ERREUR` = 300,
+`SEUIL_IMPRECISION` = 100) ; le verdict AFFICHÉ et transmis au coach utilise
+la méthode officielle Lichess (chute des chances de gain, cp plafonné à
+±1000). Le champ `verdict_qualite` a donc deux sens selon le chemin : verdict
+officiel Lichess dans le contexte envoyé aux IA, ancienne méthode (seuils
+fixes) dans le journal et dans `non_regression_coach.py` (qui porte aussi
+`verdict_qualite_ancien`). Formule et exemples chiffrés : fiche
+`classification_coups`.
 
-Si git est absent ou si la détection échoue, toutes les valeurs de version
-valent "inconnue" et l'application démarre normalement, sans erreur.
+**Modèle Claude — `config.LLM_MODEL` relu à chaque appel (issue #61)** :
+jamais copié au démarrage — `config.set_llm_model(model_id)` le réassigne
+directement en mémoire, effet immédiat sur tous les chemins d'appel. Un
+modèle devenu indisponible (HTTP 404) lève `ModeleIndisponibleError`, avec
+repli automatique sur l'autre modèle connu. Détail : fiche `modele_llm`.
 
-### Étiquette de série (CHESSCOACH_SERIE)
+**Température — piège Sonnet 5 (issue #116/#118)** : `claude-sonnet-5`
+refuse le paramètre `temperature` (déprécié pour ce modèle) — avec ce
+modèle, `CHESSCOACH_CLAUDE_TEMPERATURE` n'a donc aucun effet, et la
+comparaison Claude/Mistral à température identique reste impossible tant
+qu'il est utilisé. Un refus API (Claude ou Mistral) est géré par un réessai
+sans le paramètre. Détail : fiche `temperature_llm`.
 
-Une étiquette de série optionnelle peut être définie via la variable
-d'environnement **CHESSCOACH_SERIE**. Cette étiquette sert à Alain pour nommer un
-essai que ni le code ni le journal ne distinguent (par exemple, pour différencier
-des séries d'exercices avec les mêmes paramètres mais des objectifs différents).
+**Accès distant et debug (issue #49/#51)** : l'appli écoute sur toutes les
+interfaces (`0.0.0.0:5000`) mais `_FiltreAccesDistant` (app.py) n'accepte que
+la boucle locale et le réseau Tailscale (`100.64.0.0/10`) — tout le reste
+reçoit un 403. Mode debug Flask désactivé par défaut (le débogueur
+interactif pourrait être joignable depuis le réseau local) : après une
+modification du code, il faut relancer l'appli à la main. `CHESSCOACH_DEBUG_DEV=1`
+réactive le rechargement automatique pour le développement local (écoute
+alors restreinte à `127.0.0.1`, jamais combinée avec `0.0.0.0`/Tailscale).
+Détail (adresse Tailscale, mode d'emploi téléphone) : fiche
+`syzygy_tailscale`.
 
-**Utilisation** : Placer la variable devant la commande de lancement, par exemple :
+**Tables de finales Syzygy (issue #32)** : chemin `~/ChessCoach/engines/syzygy/`
+(`config.SYZYGY_PATH`, créé automatiquement, gitignoré) — Alain y dépose les
+fichiers Syzygy à la main, aucun téléchargement automatisé par CCL.
+Détection au démarrage de chaque instance moteur, dégradation gracieuse (log
+informatif, pas d'erreur) si le dossier est vide ou absent. Le moteur dédié
+au mode "travail de finales" (`get_move_finales`, engine_stockfish.py) tourne
+en pleine force (`UCI_LimitStrength` désactivé), contrairement au moteur Elo
+limité du mode partie libre. Détail : fiche `syzygy_tailscale`.
 
-```bash
-CHESSCOACH_SERIE="test-temperature-0.7" coach
-```
+**Lignes calculées et prises en échange (issues #126/#128)** : une ligne
+calculée (PV) présentée au coach est limitée à 4 coups, prolongée d'au plus 2
+coups tant que le dernier coup retenu est une capture (`_couper_pv`,
+engine_stockfish.py ; même règle côté `game_facts.describe_pv_facts`) — pour
+ne jamais arrêter la ligne au milieu d'un échange. « En prise » est un vrai
+calcul d'échange sur la case (`game_facts._gain_capture`), clouages compris
+— un défenseur cloué ne compte pas.
 
-La valeur est tronquée à 50 caractères. Elle peut être vide ou non définie.
+## Mémoire du coach (coach_memory.json, dans DATA_DIR)
+Schéma : profil, patterns_erreurs (ouverture / milieu_de_partie / finale),
+repertoire_ouvertures (blancs / noirs), historique_sessions (résumés par
+session, pas les parties complètes), objectifs_courants.
 
-### Enregistrement dans les logs et les notes
-
-Ces informations de version (commit, dernière issue citée, indicateur modifié,
-étiquette de série) sont enregistrées dans :
-
-1. **Chaque entrée de coach_calls*.log** : dans un champ `version_info` ajouté
-   à chaque appel au coach, pour les deux agents (Claude et Mistral), au moins
-   en mode exercices.
-
-2. **Chaque note dans data/coach_ratings.jsonl** : les informations de version
-   sont lues depuis l'entrée de journal correspondante (via l'identifiant d'appel
-   `log_id`) et enregistrées avec la note. Si l'entrée de journal est
-   introuvable (notes anciennes), toutes les valeurs sont enregistrées comme
-   "inconnue".
-
-### Rapport avec regroupement par version
-
-Le script `scripts/coach_ratings_report.py` permet désormais de regrouper les
-notes par version (commit et dernière issue citée) avec, par agent, le nombre
-de 1 et de 0 et la période couverte. Il propose également une option pour filtrer
-ou regrouper par étiquette de série.
-
-**Options du script** :
-```bash
-# Afficher le regroupement par version
-python3 scripts/coach_ratings_report.py --group-by-version
-
-# Filtrer par étiquette de série
-python3 scripts/coach_ratings_report.py --serie "test-temperature-0.7"
-
-# Combiner les deux
-python3 scripts/coach_ratings_report.py --group-by-version --serie "test-temperature-0.7"
-```
-
-Les notes sans information de version (anciennes entrées) sont regroupées
-sous l'étiquette "inconnue (avant ce suivi)". Le fonctionnement actuel du
-script (sans ces options) reste inchangé pour maintenir la compatibilité.
-
-## Classification des coups (issue #125)
-
-### Méthode officielle Lichess
-
-La classification des coups utilise désormais la **méthode officielle Lichess** comme
-référence (issue #125). Cette méthode ne repose pas sur des seuils fixes en
-centipions, mais sur la **variation des chances de gain** du joueur qui vient de
-jouer.
-
-**Formule** :
-```
-chances = 2 / (1 + exp(-0.00368208 × cp)) - 1
-```
-
-Où `cp` est l'évaluation en centipawns, plafonnée à ±1000 cp.
-
-**Seuils de classification** (sur la chute de chances de gain) :
-- **bon** : chute < 0.1
-- **imprécision** : chute ≥ 0.1
-- **erreur** : chute ≥ 0.2
-- **gaffe** : chute ≥ 0.3
-
-**Conséquence importante** : la perte minimale en centipions pour atteindre un
-seuil augmente avec l'avantage déjà acquis. Par exemple :
-- Depuis une position égale (0 cp) : ~55 cp (imprécision), ~111 cp (erreur), ~169 cp (gaffe)
-- Depuis +500 cp : ~101 cp (imprécision), ~183 cp (erreur), ~253 cp (gaffe)
-- Depuis +800 cp : ~204 cp (imprécision), ~329 cp (erreur), ~424 cp (gaffe)
-
-### Distinction sélection/exercice vs verdict affiché
-
-**La sélection des exercices** (fichier `erreurs_detectees.json`, scripts
-`build_patterns_erreurs.py`) utilise toujours des **seuils fixes en centipions**
-(SEUIL_ERREUR = 300 cp, SEUIL_IMPRECISION = 100 cp dans `engine_stockfish.py`).
-Cela permet de conserver une cohérence historique avec les exercices déjà
-créés.
-
-**Le verdict affiché et transmis au coach** utilise la **méthode officielle
-Lichess** basée sur la chute de probabilité de gain. Cela signifie qu'une
-position peut être sélectionnée comme exercice (parce que la perte en
-centipions dépasse le seuil fixe) et recevoir, selon la méthode officielle,
-un verdict différent (par exemple, une perte de 170 cp depuis une position
-égale est une "gaffe" pour Lichess mais une "erreur" avec l'ancienne méthode).
-
-**Champs transmis au coach** (issue #125, convention de signe mise à jour
-par l'issue #128, voir section dédiée ci-dessous) :
-- `verdict_qualite` : verdict officiel Lichess ("bon", "imprecision", "erreur", "gaffe")
-- `verdict_qualite_ancien` : verdict avec l'ancienne méthode (pour comparaison/journal)
-- `verdict_delta_cp` : perte en centipions (ancienne méthode) — reste un
-  montant **positif** perdu par le joueur qui vient de jouer, jamais signé
-  Blancs/Noirs (inchangé par l'issue #128)
-- `eval_before_cp` : évaluation AVANT le coup, **convention Lichess** :
-  + = avantage Blancs, − = avantage Noirs
-- `eval_after_cp` : évaluation APRÈS le coup, même convention
-- `win_prob_drop` : chute de probabilité de gain (méthode Lichess), toujours
-  positive, du point de vue du joueur qui vient de jouer (inchangé)
-
-**Journalisation** : les entrées de journal contiennent à la fois l'étiquette
-officielle et l'ancienne étiquette, ainsi que les évaluations avant/après, pour
-mesurer l'écart entre les deux méthodes sur les exercices réels.
-
-## Convention de signe Lichess pour toutes les évaluations/soldes (issue #128)
-
-Constat d'Alain (20 octobre 2026) : l'application fournissait aux IA (et au
-journal) les évaluations et le solde matériel du point de vue d'Alain
-(positif = avantage pour lui, quel que soit son camp) plutôt que la
-convention de Lichess qu'il utilise lui-même pour lire une position (+ =
-avantage Blancs, − = avantage Noirs). Exemple réel : pour un exercice joué
-avec les Noirs, le contexte envoyé à l'IA affichait "+132"/"+12" avant/après
-le coup alors que Lichess afficherait "−1,3"/"−0,1" pour la même position —
-Alain a été induit en erreur en lisant ce chiffre comme s'il suivait la
-convention Lichess.
-
-**Principe retenu** : toutes les évaluations en centipions et tous les
-soldes matériel transmis aux IA (contexte du chat, mode Exercice sources
-« Mes erreurs » et « Problèmes Lichess », question de suivi du chat libre,
-script `non_regression_coach.py`) suivent désormais la convention de
-Lichess, SANS AUCUNE conversion vers le camp de l'utilisateur :
-- `engine_stockfish.EngineManager.evaluate_move` rend `eval_before_cp`/
-  `eval_after_cp` directement en convention Blancs (déjà calculée en
-  interne pour la classification officielle Lichess, issue #125 — il
-  suffisait de la stocker au lieu de la valeur "point de vue du joueur").
-- `app.py` ne convertit plus vers "le point de vue d'Alain" : la fonction
-  `_vers_point_de_vue_alain` a été supprimée, les champs de contexte
-  `eval_alain_cp`/`eval_alain_mat` sont devenus `eval_blancs_cp`/
-  `eval_blancs_mat` (valeur de `_eval_blancs_apres`, transmise telle
-  quelle). Même
-  renommage côté client (`static/exercise.js`, round-trip du contexte pour
-  une question de suivi pendant un exercice — jamais affiché à l'écran,
-  uniquement réinjecté dans le contexte envoyé à l'IA).
-- `game_facts.py` : `_materiel_alain` (solde signé selon camp_alain) a été
-  remplacé par `_solde_blancs` (blancs − noirs, toujours calculable, plus
-  aucune dépendance à camp_alain) ; `describe_eval_alain_cp_clause` devient
-  `describe_eval_blancs_cp_clause` ; le bloc de faits python-chess par coup
-  (`format_pv_facts`) affiche désormais en en-tête « Évaluations et soldes :
-  + = avantage Blancs, − = avantage Noirs (convention de Lichess) » au lieu
-  de « Solde pour toi » ; `describe_menace_adverse` reconvertit le chiffre
-  rendu par `EngineManager.get_threats` (qui reste côté moteur "point de vue
-  du camp au trait") vers cette même convention avant de l'inclure dans le
-  texte transmis à l'IA.
-- Plus aucune formulation « pour toi »/« pour Alain » n'accompagne un
-  chiffre signé dans le texte envoyé à l'IA — le camp concerné, s'il doit
-  être nommé, est désormais toujours écrit explicitement (« Blancs »/
-  « Noirs »).
-- `llm_coach.py` : consigne ajoutée dans le system prompt (toujours
-  présente, pas seulement en mode Exercice) : tous les chiffres suivent la
-  convention de Lichess, ne jamais dire « pour toi »/« pour Alain », ne
-  jamais inverser un signe, et considérer la position comme égale (sans
-  parler d'avantage) quand la valeur absolue de l'évaluation est inférieure
-  à 30 centipions.
-- `non_regression_coach.py` (script de bilan/non-régression du coach,
-  jamais sur les données personnelles réelles) mis à jour en miroir.
-
-**Hors périmètre, volontairement inchangé** : `eval_alain_cp`/`eval_alain_mat`
-restaient par ailleurs utilisés pour l'affichage côté interface (barre
-d'évaluation) dans d'autres modes que le mode Exercice — cette issue ne
-touche qu'aux chiffres transmis aux IA et au journal, pas à une éventuelle
-convention de confort pour l'affichage utilisateur, hors périmètre ici.
-
-## Correctifs manuels du 20 octobre 2026 (hors issue, avant l'issue #128)
-
-Trois correctifs appliqués directement en commits sur master le 20 octobre
-2026, sans issue ni tests dédiés au moment où ils ont été écrits (régularisés
-par l'issue #128, suite #126) :
-1. `game_facts.py` : les pièces « en prise » du bloc de faits python-chess
-   par coup (issue #126) sont désormais calculées par un vrai calcul
-   d'échange sur la case (`_gain_capture` : captures légales en chaîne,
-   clouages compris — un défenseur cloué ne compte pas) au lieu de l'ancienne
-   comparaison de valeurs brutes. Les camps et le solde sont nommés pour
-   l'utilisateur, les coups des Blancs sont numérotés (ex. « 31.R5xe4 »,
-   « 30...Rxb6 » pour les Noirs), et les roques sont nommés « petit roque »
-   (côté roi) / « grand roque » (côté dame).
-2. `engine_stockfish.py` et `game_facts.py` : les lignes calculées (PV) sont
-   limitées à 4 coups puis prolongées d'au plus 2 coups tant que le dernier
-   coup retenu est une capture (`_couper_pv` côté moteur, même règle
-   dupliquée côté `describe_pv_with_balance`/`describe_pv_facts` avec un
-   test sur la présence de « x » dans la SAN) — pour ne jamais présenter au
-   coach la fin d'une ligne arrêtée au milieu d'un échange, dont le solde
-   matériel serait alors trompeur.
-3. `llm_coach.py` : consignes ajoutées sur la formulation des pièces
-   capturées, le coup joué à l'époque dans la partie d'origine (ne pas le
-   juger sans évaluation fournie), la mise en page en paragraphes distincts,
-   et les noms de roque.
-
-Ces trois correctifs n'ont pas changé de comportement avec l'issue #128
-(toujours en place) ; seule la convention de signe des évaluations/soldes a
-changé (section ci-dessus).
+## Fiches de détail (docs/contexte/)
+- `docs/contexte/compteur_tokens.md` — compteur de tokens consommés
+  (usage_tokens.json), interface, détection tolérante des erreurs de crédit,
+  champs du journal.
+- `docs/contexte/modele_llm.md` — sélecteur Haiku/Sonnet depuis
+  l'interface, persistance du choix, repli sur `ModeleIndisponibleError`.
+- `docs/contexte/jetons_mistral_cout.md` — jetons Mistral dans le journal,
+  table de prix par modèle, script `scripts/estimer_cout_api.py`.
+- `docs/contexte/temperature_llm.md` — variables de température
+  Claude/Mistral, gestion des refus API, journalisation.
+- `docs/contexte/exercices_lichess.md` — source d'exercices « Problèmes
+  Lichess » : préparation hors-ligne, format du pool, niveau adaptatif,
+  jugement du coup, interface.
+- `docs/contexte/suivi_version.md` — détection de version du code,
+  étiquette de série (CHESSCOACH_SERIE), enregistrement dans les journaux,
+  rapport groupé par version.
+- `docs/contexte/classification_coups.md` — formule officielle Lichess,
+  seuils, exemples chiffrés, champs transmis au coach.
+- `docs/contexte/convention_signe.md` — détail de la convention de signe
+  Lichess, liste des fonctions modifiées.
+- `docs/contexte/syzygy_tailscale.md` — adresse Tailscale, mode d'emploi
+  depuis le téléphone, détail de l'accès distant et des tables Syzygy.
