@@ -11,6 +11,12 @@ qui vérifie :
   (b) les affirmations d'attaque par un pion (« le pion X attaque/menace/prend/chasse
       la pièce Y »)
   (c) la cohérence verdict/texte
+  (d) le sens de « qui est mieux » (« pour toi », « tu restes mieux », « en ta
+      faveur », « pour les Blancs/Noirs ») contre le signe réel de
+      l'évaluation et le camp d'Alain, et la formule « pour toi » accolée à
+      un chiffre signé (issue #134, suite #128)
+  (e) le mot de qualité de la première phrase de l'avis, qui doit reprendre le
+      verdict officiel sans l'atténuer (issue #134, suite #128)
 
 Règle de prudence essentielle : le texte peut parler de la position de départ,
 de la position après le coup proposé, ou d'une position à n'importe quel moment
@@ -129,6 +135,41 @@ _INCONSISTENCIES = [
 _ATTAQUE_VERBS = {
     'attaqu', 'menac', 'prend', 'chass', 'captur', 'frappe', 'contrôl'
 }
+
+# (d) Sens de "qui est mieux" (issue #134, suite #128) : le camp d'Alain
+# désigné par une formule en "toi" (pas de chiffre signé sans bornage,
+# cf. Convention de signe) et le camp désigné explicitement par couleur.
+_SEUIL_EGALITE_CP = 30
+
+_QUI_EST_MIEUX_TOI_PATTERN = re.compile(
+    r'pour\s+toi\b|en\s+ta\s+faveur\b|'
+    r'tu\s+(?:restes?|es|demeures?)\s+'
+    r'(?:largement\s+|légèrement\s+|nettement\s+|toujours\s+|encore\s+)*mieux\b',
+    re.IGNORECASE
+)
+
+_QUI_EST_MIEUX_CAMP_PATTERN = re.compile(
+    r'(?:pour\s+les|en\s+faveur\s+des)\s+(blancs|noirs)\b',
+    re.IGNORECASE
+)
+
+_POUR_TOI_PATTERN = re.compile(r'pour\s+toi\b', re.IGNORECASE)
+
+_CHIFFRE_SIGNE_PATTERN = re.compile(r'[+\-−–]\s?\d+(?:[.,]\d+)?')
+
+_NEGATION_AVANT_PATTERN = re.compile(r'\b(?:pas|plus|jamais)\b', re.IGNORECASE)
+
+# (e) Mots de qualité connus, par verdict officiel (issue #134, suite #128) :
+# "bon coup" doit compter comme "bon", "imprécision"/"imprécis" comme
+# "imprecision" (le champ context ne porte pas l'accent).
+_VERDICT_MOTS = {
+    'bon': {'bon', 'bonne', 'correct', 'correcte', 'juste', 'précis', 'précise',
+            'excellent', 'excellente', 'parfait', 'parfaite', 'solide'},
+    'imprecision': {'imprécision', 'imprécisions', 'imprécis', 'imprécise'},
+    'erreur': {'erreur', 'erreurs'},
+    'gaffe': {'gaffe', 'gaffes', 'blunder'},
+}
+_VERDICT_GRAVITE = {'bon': 0, 'imprecision': 1, 'erreur': 2, 'gaffe': 3}
 
 # Mapping des noms de pièces français vers les lettres python-chess
 _PIECE_TYPE_MAP = {
@@ -970,6 +1011,171 @@ def _verifier_coherence_verdict(
     return alertes
 
 
+def _camp_mieux_reel(context: Dict) -> Optional[str]:
+    """Détermine, à partir du signe de l'évaluation du contexte (avant et/ou
+    après le coup — peu importe laquelle est citée dans le texte, issue
+    #134), quel camp est réellement mieux. Retourne 'blancs', 'noirs', ou
+    None si aucune évaluation n'est disponible, si elle est trop proche de
+    l'égalité (< _SEUIL_EGALITE_CP), ou si avant/après se contredisent (le
+    camp mieux placé a changé entre les deux) — dans le doute, ne rien
+    signaler, comme le reste de ce module."""
+    camps = []
+    for champ in ("eval_before_cp", "eval_after_cp"):
+        valeur = context.get(champ)
+        if isinstance(valeur, (int, float)) and abs(valeur) >= _SEUIL_EGALITE_CP:
+            camps.append("blancs" if valeur > 0 else "noirs")
+    if not camps or len(set(camps)) > 1:
+        return None
+    return camps[0]
+
+
+def _verifier_sens_qui_est_mieux(
+    texte: str,
+    context: Dict,
+    camp_alain: Optional[str] = None
+) -> List[Dict]:
+    """Vérifie que les phrases désignant qui est mieux ("pour toi", "tu
+    restes mieux", "en ta faveur", "pour les Blancs/Noirs", "en faveur des
+    Blancs/Noirs") ne contredisent pas le signe réel de l'évaluation du
+    contexte, une fois ramené au camp d'Alain (issue #134, suite #128).
+
+    Prudence : sans évaluation exploitable (cf. _camp_mieux_reel) ou sans
+    camp_alain connu pour une formule en "toi", rien n'est signalé.
+    """
+    alertes = []
+
+    camp_mieux = _camp_mieux_reel(context)
+    if camp_mieux is None:
+        return alertes
+
+    camp_alain_norm = (camp_alain or "").strip().lower()
+    if camp_alain_norm not in ("blancs", "noirs"):
+        camp_alain_norm = None
+
+    phrases = re.split(r'(?<=[.!?\n])\s+', texte)
+
+    for phrase in phrases:
+        camp_implique = None
+
+        m_toi = _QUI_EST_MIEUX_TOI_PATTERN.search(phrase)
+        if m_toi and camp_alain_norm:
+            avant = phrase[max(0, m_toi.start() - 15):m_toi.start()]
+            if not _NEGATION_AVANT_PATTERN.search(avant):
+                camp_implique = camp_alain_norm
+
+        if camp_implique is None:
+            m_camp = _QUI_EST_MIEUX_CAMP_PATTERN.search(phrase)
+            if m_camp:
+                avant = phrase[max(0, m_camp.start() - 15):m_camp.start()]
+                if not _NEGATION_AVANT_PATTERN.search(avant):
+                    camp_implique = m_camp.group(1).lower()
+
+        if camp_implique and camp_implique != camp_mieux:
+            alertes.append({
+                'type': 'sens_qui_est_mieux_inverse',
+                'affirmation': phrase.strip(),
+                'camp_implique': camp_implique,
+                'camp_reel_mieux': camp_mieux,
+                'details': (
+                    f"La phrase désigne {camp_implique} comme mieux placé, mais "
+                    f"le signe de l'évaluation du contexte indique que ce sont "
+                    f"les {camp_mieux} qui sont mieux placés."
+                )
+            })
+
+    return alertes
+
+
+def _verifier_pour_toi_chiffre_colle(texte: str) -> List[Dict]:
+    """Vérifie qu'aucune formule "pour toi" n'est accolée à un chiffre signé
+    (issue #134, suite #128) — interdit par la convention de signe de
+    l'issue #128 quel que soit le signe réel du chiffre : "pour toi" doit
+    toujours être dans une phrase sans aucun chiffre.
+
+    La fenêtre de proximité (45 caractères) est cherchée DANS LA MÊME
+    PHRASE que "pour toi" (jamais au-delà d'un '.'/'!'/'?'/saut de ligne),
+    pour ne pas rattacher à tort un chiffre d'une phrase précédente ou
+    suivante sans rapport (prudence)."""
+    alertes = []
+
+    phrases = re.split(r'(?<=[.!?\n])\s+', texte)
+    for phrase in phrases:
+        for match in _POUR_TOI_PATTERN.finditer(phrase):
+            fenetre = phrase[max(0, match.start() - 45):min(len(phrase), match.end() + 45)]
+            if _CHIFFRE_SIGNE_PATTERN.search(fenetre):
+                alertes.append({
+                    'type': 'pour_toi_colle_chiffre',
+                    'affirmation': fenetre.strip(),
+                    'details': (
+                        "La formule \"pour toi\" est accolée à un chiffre signé "
+                        "(interdit par la convention de signe de l'issue #128, "
+                        "même si le chiffre lui-même est correct)."
+                    )
+                })
+
+    return alertes
+
+
+def _premiere_phrase(texte: str) -> str:
+    """Retourne la première phrase du texte (jusqu'au premier '.', '!', '?'
+    ou saut de ligne), ou le texte entier si aucun de ces séparateurs n'y
+    figure."""
+    match = re.search(r'^(.*?[.!?\n])', texte.strip(), re.DOTALL)
+    return match.group(1) if match else texte.strip()
+
+
+def _mot_verdict_dans_phrase(phrase: str) -> Optional[str]:
+    """Retourne le verdict ('bon'/'imprecision'/'erreur'/'gaffe') correspondant
+    au premier mot de qualité connu trouvé dans la phrase, ou None si aucun
+    de ces mots n'y figure."""
+    phrase_lower = phrase.lower()
+    candidats = []
+    for verdict, mots in _VERDICT_MOTS.items():
+        for mot in mots:
+            for m in re.finditer(r'\b' + re.escape(mot) + r'\b', phrase_lower):
+                candidats.append((m.start(), verdict))
+    if not candidats:
+        return None
+    candidats.sort()
+    return candidats[0][1]
+
+
+def _verifier_mot_verdict_premiere_phrase(
+    texte: str,
+    verdict_officiel: Optional[str]
+) -> List[Dict]:
+    """Vérifie que le mot de qualité de la première phrase de l'avis reprend
+    le verdict officiel fourni, sans l'atténuer (issue #134, suite #128) —
+    par exemple ouvrir sur "imprécision" alors que le verdict officiel est
+    "erreur" ou "gaffe"."""
+    alertes = []
+
+    if not verdict_officiel:
+        return alertes
+    verdict_officiel_norm = verdict_officiel.strip().lower()
+    if verdict_officiel_norm not in _VERDICT_GRAVITE:
+        return alertes
+
+    premiere = _premiere_phrase(texte)
+    mot_detecte = _mot_verdict_dans_phrase(premiere)
+
+    if mot_detecte is None or mot_detecte == verdict_officiel_norm:
+        return alertes
+
+    alertes.append({
+        'type': 'mot_verdict_premiere_phrase',
+        'affirmation': premiere.strip(),
+        'verdict_officiel': verdict_officiel_norm,
+        'verdict_detecte': mot_detecte,
+        'details': (
+            f"La première phrase utilise le mot de qualité \"{mot_detecte}\" "
+            f"alors que le verdict officiel est \"{verdict_officiel_norm}\"."
+        )
+    })
+
+    return alertes
+
+
 def verifier_affirmations(
     texte: str,
     context: Dict,
@@ -992,54 +1198,47 @@ def verifier_affirmations(
       }
     """
     positions_candidates = _get_all_positions_candidates(context)
-    
-    if not positions_candidates:
-        # Sans positions candidates, on ne peut rien vérifier
-        return {
-            'alertes': [],
-            'affirmations_verifiees': 0,
-            'affirmations_ignorees': 0
-        }
-    
+
     alertes = []
     affirmations_verifiees = 0
     affirmations_ignorees = 0
-    
-    # (a) Vérifier les affirmations "pièce en case"
-    piece_en_case_alertes = _verifier_piece_en_case(texte, positions_candidates, camp_alain)
-    alertes.extend(piece_en_case_alertes)
-    affirmations_verifiees += len(piece_en_case_alertes)
-    
-    # (a) Vérifier les affirmations "pièce case" sans préposition
-    piece_case_sans_prep_alertes = _verifier_piece_case_sans_preposition(texte, positions_candidates, camp_alain)
-    alertes.extend(piece_case_sans_prep_alertes)
-    affirmations_verifiees += len(piece_case_sans_prep_alertes)
-    
-    # (b) Vérifier les affirmations d'attaque par un pion avec pièce explicitement mentionnée
-    pion_attaque_avec_piece_alertes = _verifier_pion_attaque_avec_piece(texte, positions_candidates)
-    alertes.extend(pion_attaque_avec_piece_alertes)
-    affirmations_verifiees += len(pion_attaque_avec_piece_alertes)
-    
-    # (b) Vérifier les affirmations d'attaque par un pion avec case seule
-    pion_attaque_case_seule_alertes = _verifier_pion_attaque_case_seule(texte, positions_candidates)
-    alertes.extend(pion_attaque_case_seule_alertes)
-    affirmations_verifiees += len(pion_attaque_case_seule_alertes)
-    
-    # (b) Vérifier les affirmations "[case] pour menacer [pièce] en [case]"
-    case_pour_menacer_alertes = _verifier_case_pour_menacer_piece(texte, positions_candidates)
-    alertes.extend(case_pour_menacer_alertes)
-    affirmations_verifiees += len(case_pour_menacer_alertes)
-    
-    # (b) Vérifier les affirmations "ce pion [couleur] attaque [pièce] et [pièce]"
-    ce_pion_attaque_alertes = _verifier_ce_pion_attaque_pieces(texte, positions_candidates)
-    alertes.extend(ce_pion_attaque_alertes)
-    affirmations_verifiees += len(ce_pion_attaque_alertes)
-    
-    # (b) Vérifier les affirmations "[pièce] en [case] est attaquée par le pion [couleur] [case]"
-    piece_attaquee_par_pion_alertes = _verifier_piece_attaquee_par_pion(texte, positions_candidates)
-    alertes.extend(piece_attaquee_par_pion_alertes)
-    affirmations_verifiees += len(piece_attaquee_par_pion_alertes)
-    
+
+    if positions_candidates:
+        # (a) Vérifier les affirmations "pièce en case"
+        piece_en_case_alertes = _verifier_piece_en_case(texte, positions_candidates, camp_alain)
+        alertes.extend(piece_en_case_alertes)
+        affirmations_verifiees += len(piece_en_case_alertes)
+
+        # (a) Vérifier les affirmations "pièce case" sans préposition
+        piece_case_sans_prep_alertes = _verifier_piece_case_sans_preposition(texte, positions_candidates, camp_alain)
+        alertes.extend(piece_case_sans_prep_alertes)
+        affirmations_verifiees += len(piece_case_sans_prep_alertes)
+
+        # (b) Vérifier les affirmations d'attaque par un pion avec pièce explicitement mentionnée
+        pion_attaque_avec_piece_alertes = _verifier_pion_attaque_avec_piece(texte, positions_candidates)
+        alertes.extend(pion_attaque_avec_piece_alertes)
+        affirmations_verifiees += len(pion_attaque_avec_piece_alertes)
+
+        # (b) Vérifier les affirmations d'attaque par un pion avec case seule
+        pion_attaque_case_seule_alertes = _verifier_pion_attaque_case_seule(texte, positions_candidates)
+        alertes.extend(pion_attaque_case_seule_alertes)
+        affirmations_verifiees += len(pion_attaque_case_seule_alertes)
+
+        # (b) Vérifier les affirmations "[case] pour menacer [pièce] en [case]"
+        case_pour_menacer_alertes = _verifier_case_pour_menacer_piece(texte, positions_candidates)
+        alertes.extend(case_pour_menacer_alertes)
+        affirmations_verifiees += len(case_pour_menacer_alertes)
+
+        # (b) Vérifier les affirmations "ce pion [couleur] attaque [pièce] et [pièce]"
+        ce_pion_attaque_alertes = _verifier_ce_pion_attaque_pieces(texte, positions_candidates)
+        alertes.extend(ce_pion_attaque_alertes)
+        affirmations_verifiees += len(ce_pion_attaque_alertes)
+
+        # (b) Vérifier les affirmations "[pièce] en [case] est attaquée par le pion [couleur] [case]"
+        piece_attaquee_par_pion_alertes = _verifier_piece_attaquee_par_pion(texte, positions_candidates)
+        alertes.extend(piece_attaquee_par_pion_alertes)
+        affirmations_verifiees += len(piece_attaquee_par_pion_alertes)
+
     # (c) Vérifier la cohérence verdict/texte
     # Issue #125 : utiliser le verdict officiel Lichess pour la vérification
     verdict = context.get('verdict_qualite_officiel') if isinstance(context.get('verdict_qualite_officiel'), str) else context.get('verdict_qualite') if isinstance(context.get('verdict_qualite'), str) else None
@@ -1049,7 +1248,24 @@ def verifier_affirmations(
     coherence_alertes = _verifier_coherence_verdict(texte, verdict, meilleur_coup, coup_propose)
     alertes.extend(coherence_alertes)
     affirmations_verifiees += len(coherence_alertes)
-    
+
+    # (d) Vérifier le sens de "qui est mieux" contre le signe réel de
+    # l'évaluation et le camp d'Alain, et la formule "pour toi" accolée à
+    # un chiffre signé (issue #134, suite #128)
+    sens_qui_est_mieux_alertes = _verifier_sens_qui_est_mieux(texte, context, camp_alain)
+    alertes.extend(sens_qui_est_mieux_alertes)
+    affirmations_verifiees += len(sens_qui_est_mieux_alertes)
+
+    pour_toi_colle_alertes = _verifier_pour_toi_chiffre_colle(texte)
+    alertes.extend(pour_toi_colle_alertes)
+    affirmations_verifiees += len(pour_toi_colle_alertes)
+
+    # (e) Vérifier que le mot de qualité de la première phrase reprend le
+    # verdict officiel sans l'atténuer (issue #134, suite #128)
+    mot_verdict_alertes = _verifier_mot_verdict_premiere_phrase(texte, verdict)
+    alertes.extend(mot_verdict_alertes)
+    affirmations_verifiees += len(mot_verdict_alertes)
+
     # Ajouter l'agent à chaque alerte
     for alerte in alertes:
         alerte['agent'] = agent
