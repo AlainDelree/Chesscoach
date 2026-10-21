@@ -50,6 +50,59 @@ Lichess, SANS AUCUNE conversion vers le camp de l'utilisateur :
 - `non_regression_coach.py` (script de bilan/non-régression du coach,
   jamais sur les données personnelles réelles) mis à jour en miroir.
 
+**Formulation « qui est mieux » et verdict sous-évalué — issue #134, suite
+#128** : une mesure sur les avis réels (21 octobre 2026, 26 avis de la
+version #128) a montré que la consigne de l'issue #128 ne suffisait pas :
+aucune inversion de signe numérique, mais trois défauts de formulation
+subsistaient. (1) « pour toi » restait parfois accolé à un chiffre signé
+malgré l'interdiction déjà en place (ex. « position largement gagnante pour
+toi (-311) », « (-90, soit toujours un léger avantage pour toi) »).
+(2) Sens inversé malgré des chiffres corrects : un avis a écrit « tu restes
+légèrement mieux » alors que l'évaluation (+148 puis +297, convention
+Lichess) favorisait les Blancs pendant qu'Alain jouait les Noirs — Alain
+était en réalité moins bien, et la situation empirait. (3) Verdict
+sous-évalué : environ 5 avis sur 26 ouvraient sur « imprécision » alors que
+le verdict officiel (`verdict_qualite_officiel`) était « erreur » ou
+« gaffe ».
+
+Correctifs (`llm_coach.py`) :
+- `_SYSTEM_PROMPT` : interdiction étendue à « en ta faveur »/« tu restes
+  mieux » (en plus de « pour toi »/« pour Alain ») à proximité d'un chiffre
+  signé ; obligation de nommer le camp mieux placé par sa couleur, chiffre à
+  l'appui tel quel, et de réserver « toi »/« tu » à une phrase sans chiffre ;
+  deux mini-exemples (un côté Blancs, un côté Noirs) à partir de la même
+  paire de valeurs (+148 puis +297) lue dans les deux sens selon le camp
+  d'Alain.
+- `_EXERCISE_SYSTEM_ADDENDUM` : le mot de qualité qui ouvre l'avis doit
+  reprendre exactement le verdict officiel fourni (« bon », « imprécision »,
+  « erreur », « gaffe »), sans jamais l'atténuer — nuance permise après ce
+  premier mot, jamais en remplacement.
+
+Correctifs (`fact_checker.py`, mécanisme d'alertes `fact_checker_alertes` en
+place depuis l'issue #117) — deux contrôles déterministes de plus, sans
+appel IA, déclenchant la même alerte/le même niveau de fiabilité que les
+autres incohérences :
+- `_verifier_pour_toi_chiffre_colle` : alerte si « pour toi » apparaît à
+  proximité d'un chiffre signé dans la même phrase, quel que soit le signe du
+  chiffre (la formulation est interdite en elle-même, indépendamment de sa
+  justesse).
+- `_verifier_sens_qui_est_mieux` : alerte si une phrase désignant qui est
+  mieux (« pour toi », « tu restes mieux », « en ta faveur », « pour les
+  Blancs/Noirs », « en faveur des Blancs/Noirs ») contredit le signe réel de
+  l'évaluation du contexte (`eval_before_cp`/`eval_after_cp`) ramené au camp
+  d'Alain. Prudence : aucune alerte si l'évaluation est absente, trop proche
+  de l'égalité (< 30 cp), ou si avant/après se contredisent (le camp mieux
+  placé a changé) ; le chiffre cité par l'avis peut être celui d'avant ou
+  d'après le coup, seul le sens compte.
+- `_verifier_mot_verdict_premiere_phrase` : alerte si le mot de qualité de la
+  première phrase diffère du verdict officiel (`verdict_qualite_officiel`, à
+  défaut `verdict_qualite`) — « bon coup » compte comme « bon ».
+- Effet de bord : les contrôles (c)/(d)/(e) de `verifier_affirmations`
+  (cohérence verdict/texte, sens « qui est mieux », mot de verdict) ne
+  dépendent plus de la présence de positions candidates (FEN) — avant cette
+  issue, l'absence de toute position candidate faisait sortir la fonction
+  avant même d'exécuter ces contrôles, qui n'en ont pourtant pas besoin.
+
 **Affichage de la barre d'évaluation — état revérifié pour l'issue #131** :
 le diagnostic initial de l'issue #128 indiquait que `eval_alain_cp`/
 `eval_alain_mat` restaient par ailleurs utilisés tels quels pour la barre

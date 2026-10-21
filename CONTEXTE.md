@@ -61,15 +61,19 @@ Conventions du projet :
 
 ## Invariants et pièges
 
-**Convention de signe Lichess (issue #128)** : tous les centipions et soldes
-matériel transmis aux IA et au journal (contexte du chat, mode Exercice,
-question de suivi, `non_regression_coach.py`) suivent la convention de
-Lichess — + = avantage Blancs, − = avantage Noirs — SANS conversion vers le
-camp d'Alain. Ne jamais écrire « pour toi »/« pour Alain » à côté d'un
-chiffre signé. Position considérée égale si la valeur absolue de
+**Convention de signe Lichess (issue #128, formulation précisée par #134)** :
+tous les centipions et soldes matériel transmis aux IA et au journal
+(contexte du chat, mode Exercice, question de suivi, `non_regression_coach.py`)
+suivent la convention de Lichess — + = avantage Blancs, − = avantage Noirs —
+SANS conversion vers le camp d'Alain. Ne jamais écrire « pour toi »/« pour
+Alain »/« en ta faveur »/« tu restes mieux » à côté ou à proximité d'un
+chiffre signé : nommer qui est mieux par la couleur (« les Blancs »/« les
+Noirs »), chiffre à l'appui tel quel, et réserver « toi »/« tu » à une phrase
+sans aucun chiffre. Position considérée égale si la valeur absolue de
 l'évaluation est inférieure à 30 centipions. La barre d'évaluation de
 l'affichage reste hors périmètre de l'issue #128 (non retouchée depuis).
-Détail et fonctions modifiées : fiche `convention_signe`.
+Détail, fonctions modifiées et contrôles déterministes du vérificateur
+(`fact_checker.py`) : fiche `convention_signe`.
 
 **Classification des coups — double système (issue #125)** : la SÉLECTION
 des exercices (`erreurs_detectees.json`, `build_patterns_erreurs.py`) utilise
