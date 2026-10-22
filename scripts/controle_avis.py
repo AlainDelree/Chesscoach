@@ -17,7 +17,7 @@ for ver in sorted(G):
         m=re.search(r'gaffe|erreur|imprecision|bon coup|excellent|meilleur coup',n(r[:150]))
         off=n(str(c.get('verdict_qualite_officiel')))
         f=[]
-        if m and m.group(0) not in off: f.append('VERDICT %s au lieu de %s'%(m.group(0),off))
+        if m and m.group(0).replace('bon coup','bon') not in off: f.append('VERDICT %s au lieu de %s'%(m.group(0),off))
         if e is not None and abs(e)>=50 and (e>0)!=(camp=='blancs') and re.search(r'tu restes (\w+ )?mieux|pour toi|en ta faveur',n(r)): f.append('SENS A VERIFIER')
         if f: al+=1; print(d['id'],camp,e,f)
     ex={(d['context'].get('fen_depart_exercice'),d['context'].get('coup_propose')) for d in G[ver]}
