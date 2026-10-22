@@ -31,6 +31,8 @@ import re
 import chess
 from typing import List, Dict, Tuple, Optional, Set
 
+import avis_format
+
 
 # Motifs regex pour détecter les affirmations à vérifier
 # (a) Pièce en case : "ta dame en b5", "le cavalier en e5", "une tour sur d1", etc.
@@ -1140,13 +1142,33 @@ def _mot_verdict_dans_phrase(phrase: str) -> Optional[str]:
     return candidats[0][1]
 
 
+def _texte_evaluation_rapide_ou_premiere_phrase(texte: str) -> str:
+    """Texte à inspecter pour le mot de qualité du verdict (issue #135,
+    suite #134/#128) : depuis le format à titres fixes imposé par le
+    prompt système (cf. avis_format.py), ce n'est plus la première phrase
+    de la réponse ENTIÈRE (qui serait désormais le titre "## Coup joué",
+    sans aucun mot de verdict) mais le contenu de la rubrique "Évaluation
+    rapide" sous "Coup joué" — seule rubrique censée l'énoncer.
+
+    Repli sur l'ancien comportement (première phrase du texte brut) quand
+    le format n'est pas respecté (titre manquant ou désordonné) : app.py
+    affiche alors le texte brut tel quel, ce contrôle doit continuer à
+    s'appliquer dessus plutôt que de se taire silencieusement."""
+    avis = avis_format.parser_avis(texte)
+    if avis["conforme"]:
+        return _premiere_phrase(avis["sections"]["coup_joue_evaluation_rapide"])
+    return _premiere_phrase(texte)
+
+
 def _verifier_mot_verdict_premiere_phrase(
     texte: str,
     verdict_officiel: Optional[str]
 ) -> List[Dict]:
-    """Vérifie que le mot de qualité de la première phrase de l'avis reprend
-    le verdict officiel fourni, sans l'atténuer (issue #134, suite #128) —
-    par exemple ouvrir sur "imprécision" alors que le verdict officiel est
+    """Vérifie que le mot de qualité de la rubrique "Évaluation rapide" (ou,
+    à défaut de format conforme, de la première phrase du texte brut) reprend
+    le verdict officiel fourni, sans l'atténuer (issue #134, suite #128 ;
+    adapté au format à titres fixes par l'issue #135, suite #125) — par
+    exemple ouvrir sur "imprécision" alors que le verdict officiel est
     "erreur" ou "gaffe"."""
     alertes = []
 
@@ -1156,7 +1178,7 @@ def _verifier_mot_verdict_premiere_phrase(
     if verdict_officiel_norm not in _VERDICT_GRAVITE:
         return alertes
 
-    premiere = _premiere_phrase(texte)
+    premiere = _texte_evaluation_rapide_ou_premiere_phrase(texte)
     mot_detecte = _mot_verdict_dans_phrase(premiere)
 
     if mot_detecte is None or mot_detecte == verdict_officiel_norm:

@@ -1716,6 +1716,26 @@ def _numero_coup(board: "chess.Board", est_blanc: bool) -> str:
     return f"{coup_plein}." if est_blanc else f"{coup_plein}..."
 
 
+def numero_coup_depuis_fen(fen: str) -> str:
+    """Numéro de coup au format PGN standard ("31." pour les Blancs, "30..."
+    pour les Noirs) pour le coup qui se joue DEPUIS cette position — issue
+    #135 : préfixe imposé à tout coup cité isolément dans un avis du coach
+    (coup proposé, coup réellement joué à l'époque, meilleur coup), tous
+    trois des alternatives à la MÊME position de départ, donc toujours le
+    même numéro/camp. Le compteur de coup plein et le trait figurent déjà
+    dans le FEN lui-même (aucun calcul de partie nécessaire, contrairement à
+    describe_pv_numerotee ci-dessus qui numérote une ligne entière). Chaîne
+    vide si `fen` est vide ou illisible."""
+    fen = (fen or "").strip()
+    if not fen:
+        return ""
+    try:
+        board = chess.Board(fen)
+    except Exception:
+        return ""
+    return _numero_coup(board, board.turn == chess.WHITE)
+
+
 def _variation_materielle(w_avant: int, b_avant: int, w_apres: int, b_apres: int) -> int:
     """Variation matérielle (signée) du demi-coup qui vient de mener de
     (w_avant, b_avant) à (w_apres, b_apres) — le camp dont le total a le plus

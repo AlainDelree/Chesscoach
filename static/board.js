@@ -1310,8 +1310,95 @@ function _coachRenderMistralError(error) {
   _coachRenderMistralErrorWithAgent(error, "mistral-large-latest", null, "mistral");
 }
 
+// ── Affichage par section de l'avis du coach (issue #135, suite #125) ─────
+// Quand le format à titres fixes imposé au prompt système a été respecté
+// (avisFormatConforme, sections déjà découpées côté serveur par
+// avis_format.parser_avis — cf. app.py, champs avis_sections/avis_format_
+// conforme des événements "exercise_comment"/"exercise_mistral_comment"),
+// chaque section devient un bloc séparé avec un intertitre discret (petites
+// majuscules, cf. board.css .coach-avis-titre) plutôt qu'un seul paragraphe
+// où les trois coups comparés (coup joué, meilleur coup, coup de l'époque)
+// pouvaient se mélanger (constat réel sur certains avis de Mistral). Repli
+// SANS PERTE sur le texte brut dès que le format n'est pas respecté (titre
+// manquant ou mal ordonné) ou que les sections sont absentes.
+function _coachRenderAvisContenu(content, text, avisSections, avisFormatConforme) {
+  if (!avisFormatConforme || !avisSections) {
+    content.textContent = text;
+    return;
+  }
+  content.classList.add("coach-avis-structure");
+
+  const ajouterParagraphe = (parent, texteBrut) => {
+    const p = document.createElement("p");
+    p.textContent = stripMarkdownForChat(texteBrut || "");
+    parent.appendChild(p);
+  };
+
+  const ajouterListeOuParagraphe = (parent, texteBrut) => {
+    const lignes = (texteBrut || "").split("\n").map((l) => l.trim()).filter(Boolean);
+    const puces = lignes.filter((l) => l.startsWith("- "));
+    if (puces.length) {
+      const ul = document.createElement("ul");
+      puces.forEach((l) => {
+        const li = document.createElement("li");
+        li.textContent = stripMarkdownForChat(l.replace(/^-\s*/, ""));
+        ul.appendChild(li);
+      });
+      parent.appendChild(ul);
+    } else if (lignes.length) {
+      ajouterParagraphe(parent, lignes.join(" "));
+    }
+  };
+
+  const ajouterSousRubrique = (parent, titre, texteBrut, enListe) => {
+    if (!texteBrut) return;
+    const bloc = document.createElement("div");
+    bloc.className = "coach-avis-sous";
+    const t = document.createElement("span");
+    t.className = "coach-avis-sous-titre";
+    t.textContent = titre;
+    bloc.appendChild(t);
+    if (enListe) {
+      ajouterListeOuParagraphe(bloc, texteBrut);
+    } else {
+      ajouterParagraphe(bloc, texteBrut);
+    }
+    parent.appendChild(bloc);
+  };
+
+  const ajouterSection = (titre, construire) => {
+    const section = document.createElement("div");
+    section.className = "coach-avis-section";
+    const h = document.createElement("div");
+    h.className = "coach-avis-titre";
+    h.textContent = titre;
+    section.appendChild(h);
+    construire(section);
+    content.appendChild(section);
+  };
+
+  ajouterSection("Coup joué", (section) => {
+    ajouterSousRubrique(section, "Évaluation rapide", avisSections.coup_joue_evaluation_rapide, false);
+    ajouterSousRubrique(section, "Points négatifs", avisSections.coup_joue_points_negatifs, true);
+    ajouterSousRubrique(section, "Points positifs", avisSections.coup_joue_points_positifs, true);
+  });
+
+  ajouterSection("Meilleur coup", (section) => {
+    ajouterSousRubrique(section, "Explication", avisSections.meilleur_coup_explication, false);
+  });
+
+  if (avisSections.coup_epoque) {
+    ajouterSection("Coup de l'époque", (section) => ajouterParagraphe(section, avisSections.coup_epoque));
+  }
+
+  if (avisSections.conclusion) {
+    ajouterSection("Conclusion", (section) => ajouterParagraphe(section, avisSections.conclusion));
+  }
+}
+
 // Issue #113 : Afficher une bulle avec l'auteur clairement identifié et les boutons de notation
-function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, agent, model, exerciseId) {
+// Issue #135 : avisSections/avisFormatConforme (optionnels) — affichage séparé par section.
+function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, agent, model, exerciseId, avisSections, avisFormatConforme) {
   const history = document.getElementById("coach-history");
   if (!history) return;
   
@@ -1346,9 +1433,9 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
   // Contenu
   const content = document.createElement("div");
   content.className = "coach-bubble-content";
-  content.textContent = text;
+  _coachRenderAvisContenu(content, text, avisSections, avisFormatConforme);
   bubble.appendChild(content);
-  
+
   // Boutons de notation (issue #113, point 9)
   if (agent && (agent === "claude" || agent === "mistral")) {
     const ratingDiv = document.createElement("div");
@@ -1422,7 +1509,8 @@ function _coachRenderBubbleWithAgent(role, text, scroll, fiabilite, signalData, 
 // Issue #113 : Afficher l'avis de Mistral avec l'auteur et les boutons de notation
 // Issue #120 : Ajout du paramètre factCheckerAlertes pour afficher les alertes du vérificateur
 // Issue #121 : Ajout du paramètre agent et signalData pour uniformiser avec _coachRenderBubbleWithAgent
-function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen, coupPropose, factCheckerAlertes, agent = "mistral") {
+// Issue #135 : avisSections/avisFormatConforme (optionnels) — affichage séparé par section.
+function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen, coupPropose, factCheckerAlertes, agent = "mistral", avisSections, avisFormatConforme) {
   const history = document.getElementById("coach-history");
   if (!history) return;
   
@@ -1454,9 +1542,9 @@ function _coachRenderMistralBubbleWithAgent(text, model, exerciseId, logId, fen,
   // Contenu
   const content = document.createElement("div");
   content.className = "coach-bubble-content";
-  content.textContent = text;
+  _coachRenderAvisContenu(content, text, avisSections, avisFormatConforme);
   bubble.appendChild(content);
-  
+
   // Alertes du vérificateur d'affirmations (issue #120)
   const alertsContainer = _coachFormatFactCheckerAlertes(factCheckerAlertes);
   if (alertsContainer) {

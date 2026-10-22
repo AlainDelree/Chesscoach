@@ -21,6 +21,7 @@ import chess
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 
+import avis_format
 import coach_ratings
 import config
 import exercise_history
@@ -2180,12 +2181,19 @@ def on_exercise_answer(data):
                 mistral_response, mistral_error, mistral_log_id, mistral_fact_checker_alertes = llm_coach.get_mistral_response(
                     messages, context, mistral_config
                 )
+                # Lecture du format à titres fixes (issue #135, suite #125),
+                # même traitement que pour la réponse de Claude ci-dessus —
+                # vide (pas d'erreur) quand mistral_response est None.
+                mistral_avis_parse = avis_format.parser_avis(mistral_response or "")
                 # Émettre vers la session spécifique depuis l'arrière-plan
                 socketio.emit(
                     "exercise_mistral_comment",
                     {
                         "exercise_id": exercise_id,
                         "text": mistral_response,
+                        "avis_sections": mistral_avis_parse["sections"],
+                        "avis_format_conforme": mistral_avis_parse["conforme"],
+                        "avis_format_version": avis_format.FORMAT_AVIS_VERSION,
                         "error": mistral_error,
                         "log_id": mistral_log_id,
                         "model": config.CHESSCOACH_MISTRAL_MODEL,
@@ -2232,10 +2240,20 @@ def on_exercise_answer(data):
             mistral_thread.cancel()
         return
 
+    # Lecture du format à titres fixes (issue #135, suite #125) : découpe la
+    # réponse selon les titres imposés au prompt système pour que le client
+    # puisse afficher chaque section séparément (static/exercise.js) — si le
+    # format n'est pas respecté, avis_sections reste vide et le client
+    # retombe sur le texte brut tel quel, sans rien perdre.
+    avis_parse = avis_format.parser_avis(response)
+
     # Envoyer la réponse de Claude immédiatement (issue #113, point 2)
     # SANS attendre Mistral, et SANS les champs mistral_*
     emit("exercise_comment", {
         "text": response,
+        "avis_sections": avis_parse["sections"],
+        "avis_format_conforme": avis_parse["conforme"],
+        "avis_format_version": avis_format.FORMAT_AVIS_VERSION,
         "exercise_id": exercise_id,
         # Pastille de fiabilité (issue #87, point 5) : couleur/raison/
         # contrôles déjà calculés par get_coach_response — affichée par
@@ -2569,8 +2587,14 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
         _handle_llm_model_indisponible_si_besoin(error)
         emit("exercise_error", {"error": error, "exercise_id": exercise_id})
     else:
+        # Lecture du format à titres fixes (issue #135, suite #125) — même
+        # traitement que la source "mes erreurs" (on_exercise_answer).
+        avis_parse = avis_format.parser_avis(response)
         emit("exercise_comment", {
             "text": response,
+            "avis_sections": avis_parse["sections"],
+            "avis_format_conforme": avis_parse["conforme"],
+            "avis_format_version": avis_format.FORMAT_AVIS_VERSION,
             "fiabilite": fiabilite,
             # Issue #114 : inclure l'exercise_id pour le contrôle d'obsolescence
             "exercise_id": exercise_id,

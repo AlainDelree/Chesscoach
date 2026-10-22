@@ -532,6 +532,55 @@
   font-size: 0.8rem;
 }
 
+/* Affichage par section de l'avis du coach (issue #135, suite #125) :
+   chaque section ("Coup joué"/"Meilleur coup"/"Coup de l'époque"/
+   "Conclusion") est un bloc séparé par un espace vertical net, avec un
+   intertitre en petites majuscules — discret mais visible à 360-400px de
+   large sans avoir à lire le texte, cf. _coachRenderAvisContenu (board.js). */
+.coach-bubble-content.coach-avis-structure {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.coach-avis-section + .coach-avis-section {
+  margin-top: 0.25rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--cc-border);
+}
+
+.coach-avis-titre {
+  font-weight: bold;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cc-text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.coach-avis-sous {
+  margin-top: 0.35rem;
+}
+
+.coach-avis-sous-titre {
+  font-weight: bold;
+  font-size: 0.85rem;
+  color: var(--cc-text);
+}
+
+.coach-avis-sous p {
+  margin: 0.15rem 0 0;
+}
+
+.coach-avis-sous ul {
+  margin: 0.15rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.coach-avis-section > p {
+  margin: 0;
+}
+
 /* Boutons de notation (issue #113, point 9) */
 .coach-rating {
   display: flex;
