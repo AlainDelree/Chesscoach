@@ -230,6 +230,38 @@ function exerciseCategorieFiltre() {
   return sel ? sel.value : "automatique";
 }
 
+// ── Mode série (issue #139, suite #125, étape 1) ────────────────────────────
+// Interrupteur mémorisé par appareil (localStorage, même pattern que
+// EXERCISE_CATEGORIE_STORAGE_KEY ci-dessous), désactivé par défaut. Hors
+// case cochée, submitExerciseAnswer() et les gestionnaires socket ci-dessous
+// ont un comportement strictement identique à avant l'issue #139.
+const EXERCISE_SERIE_STORAGE_KEY = "chesscoach-exercise-mode-serie";
+let exerciseModeSerie = false;
+
+function _exerciseSerieLoad() {
+  try {
+    return window.localStorage.getItem(EXERCISE_SERIE_STORAGE_KEY) === "1";
+  } catch (e) {
+    // Stockage indisponible (navigation privée stricte, quota...) : repli
+    // sur "désactivé" pour cette session, comme _exerciseCategorieLoad.
+    return false;
+  }
+}
+
+function _exerciseSerieSave(value) {
+  try {
+    window.localStorage.setItem(EXERCISE_SERIE_STORAGE_KEY, value ? "1" : "0");
+  } catch (e) {
+    // Pas de persistance, mais le choix reste appliqué pour la session en
+    // cours (déjà posé sur exerciseModeSerie par l'appelant).
+  }
+}
+
+function _exerciseSerieToggle(checked) {
+  exerciseModeSerie = !!checked;
+  _exerciseSerieSave(exerciseModeSerie);
+}
+
 // ── Persistance du choix de catégorie par appareil (issue #83) ─────────────
 // localStorage (pas de synchronisation compte/serveur), même pattern que
 // GAME_BOARD_SIZE_STORAGE_KEY (mobile_game.js) — un GSM et un PC n'ont pas
@@ -1039,7 +1071,10 @@ function submitExerciseAnswer(move) {
   // exerciseFenAvant (position d'avant son coup).
   exerciseFenApresCoup = exerciseGame.fen();
   const statusEl = document.getElementById("exercise-status");
-  if (statusEl) statusEl.textContent = "Le coach réfléchit...";
+  // Mode série (issue #139) : jamais "Le coach réfléchit..." — aucune IA
+  // n'est appelée dans cette étape, le verdict (purement Stockfish) arrive
+  // en général bien avant qu'un tel message ait un sens.
+  if (statusEl) statusEl.textContent = exerciseModeSerie ? "Calcul du verdict..." : "Le coach réfléchit...";
   const messageUtilisateur = `Exercice — je joue ${move.san}`;
   _coachRenderBubble("user", messageUtilisateur);
   // Alimente aussi _coachHistory (pas seulement l'affichage), pour qu'une
@@ -1055,11 +1090,18 @@ function submitExerciseAnswer(move) {
   // avant l'arrivée de tout avis (Claude ou Mistral)
   const newExerciseId = _generateExerciseId();
   exerciseCurrentId = newExerciseId;
-  _exerciseStartAnalysisWatchdog();
-  if (typeof _coachThinkingStart === "function") {
-    _exerciseThinking = _coachThinkingStart("Le coach réfléchit...");
+  // Mode série (issue #139) : ni minuteur de garde ni bulle "réfléchit" —
+  // les deux ne servent qu'à couvrir l'attente d'un appel aux IA, absent
+  // dans cette étape (verdict Stockfish, déjà quasi immédiat).
+  if (!exerciseModeSerie) {
+    _exerciseStartAnalysisWatchdog();
+    if (typeof _coachThinkingStart === "function") {
+      _exerciseThinking = _coachThinkingStart("Le coach réfléchit...");
+    }
   }
-  socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci, exercise_id: newExerciseId });
+  socket.emit("exercise_answer", {
+    uci: exerciseLastSubmittedUci, exercise_id: newExerciseId, mode_serie: exerciseModeSerie,
+  });
 }
 
 function _exerciseClearAnalysisWatchdog() {
@@ -1143,7 +1185,9 @@ function exerciseRetryAnalysis() {
     _exerciseThinking = _coachThinkingStart("Le coach réfléchit...");
   }
   // Issue #114 : Réutiliser le même exercise_id pour cette tentative de réessai
-  socket.emit("exercise_answer", { uci: exerciseLastSubmittedUci, exercise_id: exerciseCurrentId });
+  socket.emit("exercise_answer", {
+    uci: exerciseLastSubmittedUci, exercise_id: exerciseCurrentId, mode_serie: exerciseModeSerie,
+  });
 }
 
 function _exerciseUpdateCoachInputGating() {
@@ -1321,6 +1365,33 @@ if (typeof socket !== "undefined") {
     }
   });
 
+  // Mode série (issue #139, suite #125, étape 1) : émis par app.py à la
+  // place de "exercise_comment"/"exercise_mistral_comment" — AUCUNE IA
+  // n'est appelée dans cette étape. Volontairement distinct du gestionnaire
+  // "exercise_comment" ci-dessus : pas de _coachRenderBubbleWithAgent (donc
+  // aucune bulle d'avis, aucun bouton de note ni "Signaler"), pas de
+  // _coachThinkingStart/minuteur de garde à nettoyer (jamais démarrés pour
+  // cette tentative, cf. submitExerciseAnswer), pas d'indicateur "Mistral
+  // réfléchit..." (jamais démarré non plus). La seule ligne de verdict est
+  // affichée dans #exercise-status, déjà l'emplacement des messages d'état
+  // transitoires de l'exercice (jamais un message qui reste affiché
+  // indéfiniment comme une bulle du chat).
+  socket.on("exercise_serie_verdict", (data) => {
+    exerciseExploring = true;
+    exerciseVerdictObtenu = true;
+    _exerciseUpdateCoachInputGating();
+    if (typeof updateSharedControlBar === "function") updateSharedControlBar();
+    exerciseVerdictQualite = (data && data.verdict_qualite_officiel) || null;
+    exerciseVerdictDeltaCp = (data && typeof data.verdict_delta_cp === "number") ? data.verdict_delta_cp : null;
+    exerciseMeilleurCoup   = (data && data.meilleur_coup) || null;
+    exerciseCoupReel       = (data && data.coup_reel) || null;
+    if (data && typeof data.niveau === "number") exerciseLichessNiveau = data.niveau;
+    _exerciseUpdateCoupReelDisplay();
+    _exerciseUpdateStatementLine();
+    const statusEl = document.getElementById("exercise-status");
+    if (statusEl) statusEl.textContent = (data && data.text) || "Verdict indisponible (analyse Stockfish indisponible).";
+  });
+
   // Issue #113 : Gestionnaire pour l'avis de Mistral (événement séparé)
   socket.on("exercise_mistral_comment", (data) => {
     const exerciseId = (data && data.exercise_id) || null;
@@ -1436,4 +1507,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (Array.from(sel.options).some((o) => o.value === stored)) sel.value = stored;
   }
   _exerciseUpdateSourceDependentUI();
+  // Mode série (issue #139) : applique l'interrupteur mémorisé pour cet
+  // appareil dès le chargement de la page, comme le choix de catégorie
+  // ci-dessus — désactivé par défaut (_exerciseSerieLoad).
+  exerciseModeSerie = _exerciseSerieLoad();
+  const serieToggle = document.getElementById("exercise-serie-toggle");
+  if (serieToggle) serieToggle.checked = exerciseModeSerie;
 });

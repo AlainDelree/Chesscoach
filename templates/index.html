@@ -2185,6 +2185,19 @@
             <input id="exercise-fen-input-desktop" type="text" placeholder="Collez un FEN (position précise)" oninput="_exerciseShowFenError('')" style="flex:1; min-width:260px;">
           </div>
           <div class="exercise-desktop-controls" id="exercise-fen-error-desktop" style="display:none; font-size:0.78rem; color:var(--cc-accent-strong); margin-top:4px;"></div>
+          <!-- Mode série (issue #139, suite #125, étape 1) : désactivé par
+               défaut, mémorisé par appareil (localStorage, cf.
+               _exerciseSerieLoad/_exerciseSerieSave, exercise.js) — hors
+               case cochée, comportement strictement identique à avant pour
+               les deux sources ("Mes erreurs" et "Problèmes Lichess"). Posé
+               ici (visible sur mobile ET grand écran, pas de classe
+               exercise-desktop-controls) plutôt que dans le menu "...", qui
+               n'existe que pour les 4 modes de partie (cf. CSS
+               #mobile-mode-bar-slot). -->
+          <label id="exercise-serie-row" style="font-size:0.78rem; color:var(--cc-text-muted); display:flex; align-items:center; gap:4px; margin-top:6px;">
+            <input type="checkbox" id="exercise-serie-toggle" onchange="_exerciseSerieToggle(this.checked)">
+            Mode série (verdict Stockfish immédiat, sans avis des IA)
+          </label>
           <div class="exercise-desktop-controls" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button onclick="startExercise()">Nouvel exercice</button>
             <!-- "Exercice suivant" (issue #76, source conservée depuis

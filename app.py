@@ -444,6 +444,35 @@ def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
     return result
 
 
+# Mode série, étape 1 (issue #139, suite #125) : libellés français des
+# verdicts officiels Lichess, mots exacts déjà utilisés ailleurs (prompt
+# système llm_coach.py, fact_checker.py) — jamais atténués (issue #134).
+_LIBELLES_VERDICT_SERIE = {
+    "bon": "bon coup",
+    "imprecision": "imprécision",
+    "erreur": "erreur",
+    "gaffe": "gaffe",
+}
+
+
+def _construire_ligne_verdict_serie(verdict_qualite_officiel, verdict_delta_cp, meilleur_coup) -> str:
+    """Construit l'unique ligne affichée en mode série (issue #139, suite
+    #125) à partir des données Stockfish déjà calculées par
+    _evaluate_move_for_coach — jamais d'appel aux IA pour cette ligne, et
+    jamais aucune évaluation SIGNÉE Blancs/Noirs ici (cf. CONTEXTE.md,
+    convention de signe #128/#134) : verdict_delta_cp est la perte en
+    centipions du coup joué par rapport au meilleur coup, toujours un
+    nombre positif, quel que soit le camp. 0 signifie que le coup joué EST
+    le meilleur coup : affiché sans "(perte de 0 cp)"."""
+    if verdict_qualite_officiel is None or verdict_delta_cp is None:
+        return "Verdict indisponible (analyse Stockfish indisponible)."
+    libelle = _LIBELLES_VERDICT_SERIE.get(verdict_qualite_officiel, verdict_qualite_officiel)
+    perte = round(verdict_delta_cp)
+    if perte <= 0:
+        return f"Verdict : {libelle} — c'est le meilleur coup."
+    return f"Verdict : {libelle} (perte de {perte} cp) — meilleur coup : {meilleur_coup or '?'}."
+
+
 def _calculer_menace_adverse(fen_avant: str, depth: int = DEPTH_EXERCICE_TEMPS_REEL) -> dict:
     """Menace adverse (issue #80, point 1) sur la position `fen_avant`, via
     EngineManager.get_threats (coup nul) — fonction mode-agnostique,
@@ -1835,7 +1864,10 @@ def on_exercise_answer(data):
         # la solution/mat/équivalent Stockfish, pas de coup réellement joué
         # à l'époque, mise à jour du niveau Elo-like de la catégorie) — cf.
         # _on_exercise_answer_lichess.
-        _on_exercise_answer_lichess((data or {}).get("uci", ""), (data or {}).get("exercise_id"))
+        _on_exercise_answer_lichess(
+            (data or {}).get("uci", ""), (data or {}).get("exercise_id"),
+            bool((data or {}).get("mode_serie")),
+        )
         return
 
     # Issue #83 : une « Position précise » collée par Alain ne doit fausser
@@ -1856,6 +1888,12 @@ def on_exercise_answer(data):
         # le serveur en génère un comme avant
         exercise_id = str(uuid.uuid4())
 
+    # Mode série, étape 1 (issue #139, suite #125) : interrupteur transmis
+    # par le client (static/exercise.js), lu une seule fois ici — jamais
+    # recalculé plus bas, pour ne jamais changer de comportement en cours de
+    # traitement d'une même réponse.
+    mode_serie = bool((data or {}).get("mode_serie"))
+
     uci = (data or {}).get("uci", "")
     fen_avant = _current_exercise["fen_avant"]
     camp_alain = _current_exercise.get("camp_alain", "")
@@ -1864,7 +1902,18 @@ def on_exercise_answer(data):
     eval_blancs_cp = None
     eval_mat = None
     verdict_qualite = None
+    # verdict_qualite_officiel/eval_before_cp/eval_after_cp/win_prob_drop
+    # (issue #139) : initialisés ici aussi (pas seulement dans le bloc
+    # try ci-dessous) — sans ça, un coup illégal ou Stockfish indisponible
+    # (le bloc "if move in board.legal_moves" jamais atteint) laissait ces
+    # noms indéfinis, qui auraient levé une NameError plus bas (mode série
+    # ou contexte transmis au coach), au lieu du verdict absent déjà géré
+    # proprement par tout le reste de cette fonction.
+    verdict_qualite_officiel = None
     verdict_delta_cp = None
+    eval_before_cp = None
+    eval_after_cp = None
+    win_prob_drop = None
     meilleur_coup_recalcule_san = None
     pv_coup_propose = ""
     pv_meilleur_coup = ""
@@ -1931,6 +1980,31 @@ def on_exercise_answer(data):
     meilleur_coup = meilleur_coup_recalcule_san or (
         _current_exercise.get("meilleur_coup_san") or _current_exercise.get("meilleur_coup_uci", "")
     )
+
+    # Mode série, étape 1 (issue #139, suite #125) : interrupteur mémorisé
+    # côté navigateur (static/exercise.js) — le client transmet mode_serie
+    # avec exercise_answer. Aucun appel aux IA (ni Claude ni Mistral) dans
+    # cette étape : on émet une seule ligne de verdict construite à partir
+    # des données Stockfish déjà calculées ci-dessus, et on s'arrête ici,
+    # AVANT tout calcul supplémentaire (menace adverse, idées, détail des
+    # lignes, contexte du coach) qui ne sert qu'à nourrir un avis qui ne sera
+    # jamais demandé. Remplacé à l'étape 2 par un appel en arrière-plan avec
+    # file d'attente et compteur (cf. CHANGELOG-139.md) — comportement
+    # temporaire, pas un choix définitif.
+    if mode_serie:
+        emit("exercise_serie_verdict", {
+            "exercise_id": exercise_id,
+            "text": _construire_ligne_verdict_serie(verdict_qualite_officiel, verdict_delta_cp, meilleur_coup),
+            "verdict_qualite_officiel": verdict_qualite_officiel,
+            "verdict_delta_cp": verdict_delta_cp,
+            "meilleur_coup": meilleur_coup,
+            "coup_propose": coup_propose_san,
+            "coup_reel": coup_reel,
+            "fen": fen_avant,
+            "mode_origine": "exercice",
+            "analyse_indisponible": analyse_indisponible,
+        })
+        return
 
     # Menace adverse (issue #80, point 1) : si Alain avait passé son tour,
     # les meilleurs coups de l'adversaire et la perte d'avantage qu'ils
@@ -2328,7 +2402,7 @@ def on_exercise_answer(data):
     })
 
 
-def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
+def _on_exercise_answer_lichess(uci: str, exercise_id: str = None, mode_serie: bool = False) -> None:
     """Jugement du premier coup d'un problème « Problèmes Lichess » (issue
     #78), distinct du jugement "mes erreurs" ci-dessus : réussi si et
     seulement si le coup proposé est le premier coup de la solution (coup
@@ -2345,7 +2419,11 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
     ci-dessous).
     
     Issue #114 : exercise_id est passé par le client ou généré par le serveur
-    pour compatibilité."""
+    pour compatibilité.
+
+    mode_serie (issue #139, suite #125) : si vrai, aucun appel aux IA — une
+    seule ligne de verdict est émise à la place (cf. plus bas, juste après
+    le calcul du "meilleur coup")."""
     # Générer exercise_id si non fourni (compatibilité)
     if not exercise_id:
         exercise_id = str(uuid.uuid4())
@@ -2360,6 +2438,11 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
     eval_blancs_cp = None
     eval_mat = None
     verdict_qualite_moteur = None
+    # verdict_qualite_officiel (issue #139) : même garde-fou que dans
+    # on_exercise_answer — initialisé ici pour ne jamais être indéfini si le
+    # coup est illégal ou Stockfish indisponible (bloc "if move in
+    # board.legal_moves" jamais atteint).
+    verdict_qualite_officiel = None
     verdict_delta_cp = None
     pv_coup_propose = ""
     coup_legal = False
@@ -2377,6 +2460,7 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
             coup_propose_san = board.san(move)
             eval_result = _evaluate_move_for_coach(fen_avant, move)
             verdict_qualite_moteur = eval_result["verdict_qualite"]
+            verdict_qualite_officiel = eval_result["verdict_qualite_officiel"]
             verdict_delta_cp = eval_result["verdict_delta_cp"]
             pv_coup_propose = eval_result["pv_coup_propose"]
             analyse_indisponible = eval_result["analyse_indisponible"]
@@ -2437,6 +2521,31 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None) -> None:
             pv_meilleur_coup = " ".join(sans_solution)
         except Exception:
             pass
+
+    # Mode série, étape 1 (issue #139, suite #125) : même garde-fou que
+    # on_exercise_answer ci-dessus — aucun appel aux IA, une seule ligne de
+    # verdict construite à partir des données Stockfish déjà calculées, puis
+    # on s'arrête AVANT tout calcul supplémentaire (descriptions mécaniques,
+    # menace adverse, idées, détail des lignes, contexte du coach).
+    if mode_serie:
+        categorie_libelle_serie = lichess_puzzles.CATEGORIES.get(categorie, categorie or "")
+        emit("exercise_serie_verdict", {
+            "exercise_id": exercise_id,
+            "text": _construire_ligne_verdict_serie(verdict_qualite_officiel, verdict_delta_cp, meilleur_coup),
+            "verdict_qualite_officiel": verdict_qualite_officiel,
+            "verdict_delta_cp": verdict_delta_cp,
+            "meilleur_coup": meilleur_coup,
+            "coup_propose": coup_propose_san,
+            "coup_reel": "",
+            "fen": fen_avant,
+            "mode_origine": "exercice_lichess",
+            "analyse_indisponible": analyse_indisponible,
+            "source": "lichess",
+            "categorie_libelle": categorie_libelle_serie,
+            "rating": _current_exercise.get("rating"),
+            "niveau": niveau_affiche,
+        })
+        return
 
     coup_propose_description_mecanique = game_facts.describe_move_mechanically(
         fen_avant, coup_propose_san, camp_alain
