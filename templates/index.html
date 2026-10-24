@@ -2196,8 +2196,18 @@
                #mobile-mode-bar-slot). -->
           <label id="exercise-serie-row" style="font-size:0.78rem; color:var(--cc-text-muted); display:flex; align-items:center; gap:4px; margin-top:6px;">
             <input type="checkbox" id="exercise-serie-toggle" onchange="_exerciseSerieToggle(this.checked)">
-            Mode série (verdict Stockfish immédiat, sans avis des IA)
+            Mode série (verdict Stockfish immédiat, avis des IA en arrière-plan)
           </label>
+          <!-- Compteur "avis en cours" (issue #140, suite #139, étape 2) :
+               discret, mis à jour par socket.on("exercise_serie_compteur",
+               ...) à chaque début/fin d'appel IA en arrière-plan (mode
+               série) — revient à 0 une fois tous les avis enregistrés dans
+               coach_calls.log, pour qu'Alain sache quand il peut quitter
+               l'appli sans rien perdre (cf. docs/contexte/mode_serie.md).
+               Toujours visible (pas seulement en mode série) : un avis déjà
+               soumis en arrière-plan avant une désactivation du mode série
+               continue de compter ici jusqu'à sa fin. -->
+          <div id="exercise-serie-compteur" style="font-size:0.72rem; color:var(--cc-text-muted); margin-top:2px;">avis en cours : 0</div>
           <div class="exercise-desktop-controls" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button onclick="startExercise()">Nouvel exercice</button>
             <!-- "Exercice suivant" (issue #76, source conservée depuis

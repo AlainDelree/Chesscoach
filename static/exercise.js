@@ -1392,6 +1392,19 @@ if (typeof socket !== "undefined") {
     if (statusEl) statusEl.textContent = (data && data.text) || "Verdict indisponible (analyse Stockfish indisponible).";
   });
 
+  // Compteur "avis en cours" (issue #140, suite #139, étape 2) : diffusé par
+  // app.py (socketio.emit sans salle — application mono-utilisateur, cf.
+  // CONTEXTE.md) à chaque début/fin d'appel IA en arrière-plan en mode
+  // série, succès ou échec confondus (cf. _lancer_avis_mode_serie). Affiché
+  // tel quel, jamais recalculé côté client — seul le serveur sait combien
+  // d'appels sont réellement soumis à _mode_serie_executor.
+  socket.on("exercise_serie_compteur", (data) => {
+    const el = document.getElementById("exercise-serie-compteur");
+    if (!el) return;
+    const n = (data && typeof data.avis_en_cours === "number") ? data.avis_en_cours : 0;
+    el.textContent = `avis en cours : ${n}`;
+  });
+
   // Issue #113 : Gestionnaire pour l'avis de Mistral (événement séparé)
   socket.on("exercise_mistral_comment", (data) => {
     const exerciseId = (data && data.exercise_id) || null;

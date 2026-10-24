@@ -12,6 +12,7 @@ import concurrent.futures
 import ipaddress
 import json
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -471,6 +472,141 @@ def _construire_ligne_verdict_serie(verdict_qualite_officiel, verdict_delta_cp, 
     if perte <= 0:
         return f"Verdict : {libelle} — c'est le meilleur coup."
     return f"Verdict : {libelle} (perte de {perte} cp) — meilleur coup : {meilleur_coup or '?'}."
+
+
+# Mode série, étape 2 (issue #140, suite #139) : nombre maximal d'appels IA
+# simultanés en arrière-plan (Claude et Mistral confondus, toutes sources
+# confondues) pour ne pas saturer les API Claude/Mistral quand les
+# exercices d'une série s'enchaînent plus vite que les avis ne reviennent.
+# Les appels excédentaires patientent dans la file FIFO de
+# _mode_serie_executor (un ThreadPoolExecutor exécute les tâches soumises
+# dans leur ordre de soumission dès qu'un des emplacements se libère) —
+# jamais annulés, juste retardés. Valeur choisie empiriquement : assez
+# basse pour rester loin des limites de débit des deux API avec un seul
+# utilisateur, assez haute pour ne pas traîner derrière une série rapide.
+MODE_SERIE_MAX_APPELS_SIMULTANES = 2
+
+_mode_serie_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=MODE_SERIE_MAX_APPELS_SIMULTANES,
+    thread_name_prefix="mode_serie_ia",
+)
+
+# Compteur "avis en cours" affiché discrètement dans l'interface (issue
+# #140, point 6) : incrémenté juste avant chaque appel IA (Claude ou
+# Mistral) soumis en mode série, décrémenté juste après — succès, erreur
+# métier ou exception inattendue confondus (cf. le bloc finally de
+# _lancer_avis_mode_serie ci-dessous), jamais laissé à une valeur positive
+# une fois tous les appels soumis réellement terminés. _mode_serie_lock
+# protège les deux seules opérations qui le lisent/l'écrivent : plusieurs
+# threads d'arrière-plan y accèdent en même temps dès que la série enchaîne
+# les exercices plus vite que les avis ne reviennent.
+_mode_serie_lock = threading.Lock()
+_mode_serie_avis_en_cours = 0
+
+
+def _mode_serie_emettre_compteur() -> None:
+    """Diffuse le compteur courant à tous les clients connectés (issue
+    #140) — application mono-utilisateur (cf. CONTEXTE.md, un seul Alain à
+    la fois), pas de salle par session comme pour exercise_comment/
+    exercise_mistral_comment. Utilise socketio.emit (jamais emit(), qui
+    exige un contexte de requête HTTP actif, absent ici puisque cet appel
+    vient d'un thread d'arrière-plan sans lien avec la connexion ayant
+    soumis l'exercice — même raison que le thread Mistral existant du mode
+    normal, cf. call_mistral_and_emit plus bas). Best-effort : une erreur
+    d'émission ne doit jamais faire échouer l'appel IA en cours."""
+    try:
+        socketio.emit("exercise_serie_compteur", {"avis_en_cours": _mode_serie_avis_en_cours})
+    except Exception as e:
+        logger.warning(f"[EXERCISE] Émission du compteur mode série échouée : {e}")
+
+
+def _mode_serie_incrementer() -> None:
+    global _mode_serie_avis_en_cours
+    with _mode_serie_lock:
+        _mode_serie_avis_en_cours += 1
+    _mode_serie_emettre_compteur()
+
+
+def _mode_serie_decrementer() -> None:
+    global _mode_serie_avis_en_cours
+    with _mode_serie_lock:
+        _mode_serie_avis_en_cours = max(0, _mode_serie_avis_en_cours - 1)
+    _mode_serie_emettre_compteur()
+
+
+def _lancer_avis_mode_serie(messages, context, llm_config, mistral_config) -> None:
+    """Mode série, étape 2 (issue #140, suite #139) : appelle Claude
+    (llm_coach.get_coach_response, toujours) et Mistral
+    (llm_coach.get_mistral_response, seulement si `mistral_config` est
+    fourni — même condition que le mode normal : mode_exercice et
+    config.MISTRAL_API_KEY, cf. l'appelant) en arrière-plan, avec le même
+    `context` complet que celui déjà construit par l'appelant pour le mode
+    normal (menace adverse, idées, détail des lignes, faits, etc. — voir
+    on_exercise_answer/_on_exercise_answer_lichess) : AUCUNE copie de la
+    logique d'appel ni du vérificateur de fiabilité/affirmations, ce sont
+    les mêmes fonctions de production que le mode normal, qui journalisent
+    déjà elles-mêmes chaque appel dans coach_calls.log (cf.
+    llm_coach._log_coach_call), erreur ou dépassement de délai compris —
+    cf. la gestion d'erreur interne de get_coach_response/get_mistral_response,
+    jamais dupliquée ici.
+
+    "mode_serie": True est ajouté à une COPIE du contexte (jamais au
+    contexte du mode normal, qui n'est pas modifié ci-dessous) : une clé de
+    plus, ignorée par llm_coach._build_context_text (donc sans aucun effet
+    sur le texte réellement envoyé à l'IA — même mécanisme que le champ
+    "profondeur_reeval" déjà présent dans ce contexte), mais journalisée
+    telle quelle par _log_coach_call puisque tout `context` reçu est
+    enregistré intégralement sous la clé "context" de chaque entrée du
+    journal. L'indicateur reste donc lisible par un script qui lirait
+    explicitement entry["context"]["mode_serie"], sans toucher aux clés de
+    premier niveau (mode_origine, fiabilite, fact_checker_alertes...) déjà
+    lues par scripts/controle_avis.py.
+
+    Chaque appel est soumis à _mode_serie_executor (file bornée à
+    MODE_SERIE_MAX_APPELS_SIMULTANES appels simultanés, FIFO) et
+    incrémente/décrémente _mode_serie_avis_en_cours — une tâche déjà
+    soumise à un ThreadPoolExecutor s'exécute jusqu'au bout indépendamment
+    de toute connexion navigateur (passer à l'exercice suivant, désactiver
+    le mode série ou fermer l'onglet avant la fin de l'appel ne l'annule
+    jamais, cf. docs/contexte/mode_serie.md) ; le bloc finally garantit que
+    le compteur redescend même si l'appel lève une exception que
+    get_coach_response/get_mistral_response ne catchent pas déjà
+    elles-mêmes (ce qui ne devrait jamais arriver en pratique, cf. leurs
+    blocs try/except internes — filet de sécurité uniquement)."""
+    serie_context = dict(context)
+    serie_context["mode_serie"] = True
+
+    # Incrémenter AVANT de soumettre (jamais depuis le thread d'arrière-plan
+    # lui-même) : entre .submit() et le premier instant où le thread du
+    # pool se met réellement à exécuter la tâche, celle-ci reste "en cours"
+    # du point de vue d'Alain (déjà promise, pas encore écrite au journal).
+    # Incrémenter depuis le thread d'arrière-plan laisserait une fenêtre où
+    # une tâche soumise mais pas encore démarrée serait invisible du
+    # compteur — un appelant qui attend "compteur revenu à 0" pourrait alors
+    # conclure à tort que tout est terminé alors qu'une tâche vient juste
+    # d'être mise en file.
+    def _appel_claude():
+        try:
+            llm_coach.get_coach_response(messages, serie_context, coach_memory, llm_config)
+        except Exception as e:
+            logger.warning(f"[EXERCISE] Appel Claude en mode série échoué : {e}")
+        finally:
+            _mode_serie_decrementer()
+
+    _mode_serie_incrementer()
+    _mode_serie_executor.submit(_appel_claude)
+
+    if mistral_config is not None:
+        def _appel_mistral():
+            try:
+                llm_coach.get_mistral_response(messages, serie_context, mistral_config)
+            except Exception as e:
+                logger.warning(f"[EXERCISE] Appel Mistral en mode série échoué : {e}")
+            finally:
+                _mode_serie_decrementer()
+
+        _mode_serie_incrementer()
+        _mode_serie_executor.submit(_appel_mistral)
 
 
 def _calculer_menace_adverse(fen_avant: str, depth: int = DEPTH_EXERCICE_TEMPS_REEL) -> dict:
@@ -1981,16 +2117,14 @@ def on_exercise_answer(data):
         _current_exercise.get("meilleur_coup_san") or _current_exercise.get("meilleur_coup_uci", "")
     )
 
-    # Mode série, étape 1 (issue #139, suite #125) : interrupteur mémorisé
-    # côté navigateur (static/exercise.js) — le client transmet mode_serie
-    # avec exercise_answer. Aucun appel aux IA (ni Claude ni Mistral) dans
-    # cette étape : on émet une seule ligne de verdict construite à partir
-    # des données Stockfish déjà calculées ci-dessus, et on s'arrête ici,
-    # AVANT tout calcul supplémentaire (menace adverse, idées, détail des
-    # lignes, contexte du coach) qui ne sert qu'à nourrir un avis qui ne sera
-    # jamais demandé. Remplacé à l'étape 2 par un appel en arrière-plan avec
-    # file d'attente et compteur (cf. CHANGELOG-139.md) — comportement
-    # temporaire, pas un choix définitif.
+    # Mode série, étape 2 (issue #140, suite #139) : la ligne de verdict
+    # Stockfish est émise immédiatement, exactement comme à l'étape 1 — mais
+    # à la différence de l'étape 1, on ne s'arrête PAS ici : le contexte
+    # complet continue d'être construit ci-dessous (menace adverse, idées,
+    # détail des lignes, faits...), identique au mode normal, pour que les
+    # deux IA puissent être appelées en arrière-plan avec ce même contexte
+    # (cf. plus bas, juste avant l'appel Mistral/Claude du mode normal, et
+    # docs/contexte/mode_serie.md).
     if mode_serie:
         emit("exercise_serie_verdict", {
             "exercise_id": exercise_id,
@@ -2004,7 +2138,6 @@ def on_exercise_answer(data):
             "mode_origine": "exercice",
             "analyse_indisponible": analyse_indisponible,
         })
-        return
 
     # Menace adverse (issue #80, point 1) : si Alain avait passé son tour,
     # les meilleurs coups de l'adversaire et la perte d'avantage qu'ils
@@ -2233,11 +2366,35 @@ def on_exercise_answer(data):
         "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
 
+    # Mode série, étape 2 (issue #140, suite #139) : la ligne de verdict a
+    # déjà été émise plus haut — les deux IA sont appelées ici avec le même
+    # `context` complet que le mode normal juste construit ci-dessus, mais
+    # en tâche de fond via _lancer_avis_mode_serie (file d'attente bornée,
+    # compteur "avis en cours", écriture au journal avec mode_serie=True) :
+    # ni exercise_comment ni exercise_mistral_comment ne sont jamais émis
+    # pour ces avis (cf. docs/contexte/mode_serie.md — aucune bulle, aucun
+    # bouton de note, aucun "Signaler" en mode série). Même condition que le
+    # mode normal ci-dessous pour décider d'appeler Mistral ou non
+    # (mode_exercice et config.MISTRAL_API_KEY) : le mode série respecte la
+    # configuration existante, il ne l'étend pas.
+    if mode_serie:
+        mistral_config_serie = None
+        if context.get("mode_exercice") and config.MISTRAL_API_KEY:
+            mistral_config_serie = {
+                "mistral_api_key": config.MISTRAL_API_KEY,
+                "mistral_model": config.CHESSCOACH_MISTRAL_MODEL,
+                "coach_log_path": config.COACH_CALLS_LOG_PATH,
+                "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
+                "coach_memory": coach_memory,
+            }
+        _lancer_avis_mode_serie(messages, context, llm_config, mistral_config_serie)
+        return
+
     # Issue #114 : exercise_id a déjà été généré/extraite au début de la fonction
     # (soit du client, soit généré par le serveur pour compatibilité)
     # Capturer le sid de la session pour émettre vers elle depuis un thread d'arrière-plan
     session_sid = request.sid
-    
+
     # Appel Mistral en parallèle (issue #113, point 1) - uniquement en mode exercice
     # Lancer AVANT d'attendre Claude pour que les deux soient vraiment en parallèle
     if context.get("mode_exercice") and config.MISTRAL_API_KEY:
@@ -2421,9 +2578,13 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None, mode_serie: b
     Issue #114 : exercise_id est passé par le client ou généré par le serveur
     pour compatibilité.
 
-    mode_serie (issue #139, suite #125) : si vrai, aucun appel aux IA — une
-    seule ligne de verdict est émise à la place (cf. plus bas, juste après
-    le calcul du "meilleur coup")."""
+    mode_serie (issue #140, suite #139) : si vrai, la ligne de verdict est
+    émise immédiatement (cf. plus bas, juste après le calcul du "meilleur
+    coup"), puis Claude (et Mistral si la configuration existante l'appelle
+    pour cette source — ce qui n'est PAS le cas de "lichess", cf. plus bas)
+    est appelé en arrière-plan avec le même contexte complet que le mode
+    normal, sans jamais émettre exercise_comment (cf.
+    _lancer_avis_mode_serie)."""
     # Générer exercise_id si non fourni (compatibilité)
     if not exercise_id:
         exercise_id = str(uuid.uuid4())
@@ -2522,11 +2683,16 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None, mode_serie: b
         except Exception:
             pass
 
-    # Mode série, étape 1 (issue #139, suite #125) : même garde-fou que
-    # on_exercise_answer ci-dessus — aucun appel aux IA, une seule ligne de
-    # verdict construite à partir des données Stockfish déjà calculées, puis
-    # on s'arrête AVANT tout calcul supplémentaire (descriptions mécaniques,
-    # menace adverse, idées, détail des lignes, contexte du coach).
+    # Mode série, étape 2 (issue #140, suite #139) : même principe que
+    # on_exercise_answer ci-dessus — la ligne de verdict est émise
+    # immédiatement, mais on NE s'arrête PAS ici : le contexte complet
+    # continue d'être construit ci-dessous (descriptions mécaniques, menace
+    # adverse, idées, détail des lignes...), identique au mode normal, pour
+    # que Claude puisse être appelé en arrière-plan avec ce même contexte
+    # (cf. plus bas, juste avant l'appel Claude du mode normal). Mistral
+    # n'est JAMAIS appelé pour cette source "lichess", mode série ou pas
+    # (configuration existante, inchangée par cette issue — cf. plus bas,
+    # absence de mistral_config pour cette fonction).
     if mode_serie:
         categorie_libelle_serie = lichess_puzzles.CATEGORIES.get(categorie, categorie or "")
         emit("exercise_serie_verdict", {
@@ -2545,7 +2711,6 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None, mode_serie: b
             "rating": _current_exercise.get("rating"),
             "niveau": niveau_affiche,
         })
-        return
 
     coup_propose_description_mecanique = game_facts.describe_move_mechanically(
         fen_avant, coup_propose_san, camp_alain
@@ -2689,6 +2854,16 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None, mode_serie: b
         "usage_path": config.USAGE_TOKENS_PATH,
         "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
     }
+
+    # Mode série, étape 2 (issue #140, suite #139) : la ligne de verdict a
+    # déjà été émise plus haut — Claude est appelé ici en arrière-plan avec
+    # le même `context` complet que le mode normal (cf.
+    # _lancer_avis_mode_serie), sans jamais émettre exercise_comment.
+    # mistral_config=None : cette source "lichess" n'appelle jamais Mistral,
+    # mode série ou pas (configuration existante, cf. commentaire plus haut).
+    if mode_serie:
+        _lancer_avis_mode_serie(messages, context, llm_config, None)
+        return
 
     response, error, fiabilite, log_id = llm_coach.get_coach_response(messages, context, coach_memory, llm_config)
     _emit_usage_update()

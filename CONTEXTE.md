@@ -127,15 +127,10 @@ ne jamais arrêter la ligne au milieu d'un échange. « En prise » est un vrai
 calcul d'échange sur la case (`game_facts._gain_capture`), clouages compris
 — un défenseur cloué ne compte pas.
 
-**Mode série, étape 1/3 (issue #139, suite #125)** : interrupteur côté
-client (`static/exercise.js`, `localStorage`, désactivé par défaut),
-transmis au serveur dans `exercise_answer.mode_serie` — si vrai,
-`app.on_exercise_answer`/`_on_exercise_answer_lichess` s'arrêtent juste
-après le verdict Stockfish et émettent `exercise_serie_verdict` (une seule
-ligne, `_construire_ligne_verdict_serie`) au lieu d'appeler Claude/Mistral
-(aucune entrée dans `coach_calls.log`). État TEMPORAIRE : aucune file
-d'attente ni compteur d'avis en cours (prévus à l'étape 2) — ne pas
-construire par-dessus sans relire la fiche. Détail : fiche `mode_serie`.
+**Mode série** : interrupteur côté client qui affiche le verdict Stockfish
+immédiatement puis appelle les deux IA en arrière-plan (file d'attente
+bornée, compteur "avis en cours"), sans jamais afficher leurs avis. Détail :
+fiche `mode_serie`.
 
 ## Mémoire du coach (coach_memory.json, dans DATA_DIR)
 Schéma : profil, patterns_erreurs (ouverture / milieu_de_partie / finale),
@@ -165,4 +160,5 @@ session, pas les parties complètes), objectifs_courants.
 - `docs/contexte/syzygy_tailscale.md` — adresse Tailscale, mode d'emploi
   depuis le téléphone, détail de l'accès distant et des tables Syzygy.
 - `docs/contexte/mode_serie.md` — interrupteur mémorisé côté navigateur,
-  verdict Stockfish en une ligne sans appel aux IA (étape 1/3, issue #139).
+  verdict Stockfish en une ligne immédiat, avis des deux IA en arrière-plan
+  (file d'attente bornée, compteur "avis en cours", journal).

@@ -1,12 +1,29 @@
 """
-test_issue139_mode_serie.py — ChessCoach (issue #139, suite #125)
+test_issue139_mode_serie.py — ChessCoach (issue #139, suite #125 ; adapté par
+l'issue #140, suite #139, étape 2)
 
-Tests pour le mode série, étape 1 (interrupteur mémorisé côté navigateur,
-verdict Stockfish affiché en une ligne) : AUCUN appel aux IA (ni Claude ni
-Mistral) quand mode_serie est transmis par le client avec "exercise_answer",
-pour les deux sources « Mes erreurs » et « Problèmes Lichess » ; comportement
-strictement inchangé (appel aux IA, exercise_comment classique) quand
-mode_serie est absent ou faux.
+Tests pour le mode série : interrupteur mémorisé côté navigateur, verdict
+Stockfish affiché en une ligne IMMÉDIATEMENT (comportement de l'étape 1,
+#139, inchangé), pour les deux sources « Mes erreurs » et « Problèmes
+Lichess » ; comportement strictement inchangé (appel aux IA, exercise_comment
+classique) quand mode_serie est absent ou faux.
+
+Issue #140, suite #139, étape 2 — CHANGEMENT DE COMPORTEMENT PAR RAPPORT À
+L'ÉTAPE 1 : les tests qui vérifiaient "zéro appel IA en mode série"
+(test_mes_erreurs_mode_serie_zero_appel_ia/test_problemes_lichess_mode_serie_
+zero_appel_ia à l'origine) ont été ADAPTÉS ci-dessous — l'étape 1 court-
+circuitait volontairement tout appel aux IA en mode série (comportement
+INTERMÉDIAIRE, explicitement documenté comme temporaire dans son propre
+rapport de clôture) ; l'étape 2 appelle désormais Claude et Mistral en
+arrière-plan pour CHAQUE exercice en mode série (file d'attente bornée,
+compteur "avis en cours"), sans jamais les afficher (ni bulle, ni bouton de
+note, ni "Signaler") — cf. docs/contexte/mode_serie.md et
+test_issue140_mode_serie_ia_arriere_plan.py (tests dédiés à la file
+d'attente, au compteur et à la gestion d'échec, avec des IA simulées LENTES,
+non repris ici). Les tests de CE fichier se contentent de vérifier que
+l'appel différé a bien lieu (en attendant la fin avec une limite de temps
+explicite) et que le verdict immédiat/l'absence d'avis affichable restent
+corrects — la ligne de verdict, elle, n'a jamais changé de comportement.
 
 Exécute le VRAI gestionnaire de réponse d'exercice (app.on_exercise_answer /
 app._on_exercise_answer_lichess) via le client de test Flask-SocketIO, en
@@ -15,22 +32,25 @@ données redirigés vers un dossier temporaire — AUCUN fichier personnel
 d'Alain n'est lu ni écrit par ce test). Les appels aux API Claude/Mistral
 sont remplacés par des simulations (jamais d'appel réseau réel).
 
-Issue #139, vérification (d) : aucun test de ce fichier n'est ignoré,
-désactivé ou conditionné par une variable d'environnement — Stockfish
-absent de la machine fait ÉCHOUER setUpClass (RuntimeError), il n'est
-jamais sauté (contrairement à @unittest.skipUnless, utilisé par les issues
-précédentes mais volontairement PAS repris ici).
+Issue #139, vérification (d), toujours valable après l'issue #140 :
+aucun test de ce fichier n'est ignoré, désactivé ou conditionné par une
+variable d'environnement — Stockfish absent de la machine fait ÉCHOUER
+setUpClass (RuntimeError), il n'est jamais sauté (contrairement à
+@unittest.skipUnless, utilisé par les issues précédentes mais volontairement
+PAS repris ici).
 
 Ce fichier importe app.py comme test_issue128.py/test_issue134.py/
-test_issue135.py/test_issue137_signe_eval_lichess.py : ne JAMAIS l'exécuter
-dans le même process que l'un de ces fichiers (même contrainte, voir leurs
-en-têtes) — invoquer séparément :
+test_issue135.py/test_issue137_signe_eval_lichess.py/
+test_issue140_mode_serie_ia_arriere_plan.py : ne JAMAIS l'exécuter dans le
+même process que l'un de ces fichiers (même contrainte, voir leurs en-têtes)
+— invoquer séparément :
     python3 -m unittest test_issue139_mode_serie
 """
 
 import importlib
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -80,6 +100,29 @@ class TestExerciseAnswerSocketIOModeSerie(unittest.TestCase):
     def setUp(self):
         self.client.get_received()
         self.app_module._current_exercise = None
+        # Repartir d'un compteur "avis en cours" à zéro entre deux tests
+        # (issue #140) : un test précédent qui aurait déclenché un appel en
+        # mode série doit avoir laissé le compteur retomber à zéro avant que
+        # celui-ci ne démarre (sinon l'assertion "revient à zéro" d'un test
+        # suivant serait faussée par un reliquat d'un test précédent).
+        self._attendre_compteur_serie_zero()
+
+    def _attendre_compteur_serie_zero(self, timeout: float = 10.0) -> None:
+        """Mode série, étape 2 (issue #140, suite #139) : les appels IA en
+        mode série partent en arrière-plan (_mode_serie_executor) — jamais
+        garantis terminés au retour de self._emettre(). Attend la fin de
+        TOUS les appels déjà soumis (compteur "avis en cours" revenu à 0)
+        avec une limite de temps explicite plutôt qu'un sleep fixe fragile ;
+        échoue (ne reste jamais bloqué) si le compteur ne retombe pas à 0
+        avant `timeout` secondes."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.app_module._mode_serie_lock:
+                n = self.app_module._mode_serie_avis_en_cours
+            if n == 0:
+                return
+            time.sleep(0.02)
+        self.fail(f"compteur 'avis en cours' du mode série non revenu à 0 sous {timeout}s (reste {n})")
 
     # Dame blanche en d4 attaquée par le Cavalier noir en c6 : jouer un
     # coup de Roi qui l'ignore est une gaffe nette et déterministe (vérifié
@@ -150,16 +193,25 @@ class TestExerciseAnswerSocketIOModeSerie(unittest.TestCase):
     def _evt(recus, nom):
         return next((e for e in recus if e["name"] == nom), None)
 
-    # -- Mode série : zéro appel aux IA, un événement de verdict ----------
+    # -- Mode série : verdict immédiat, IA appelées en ARRIÈRE-PLAN -------
+    #
+    # Issue #140, suite #139, étape 2 (CHANGEMENT DE COMPORTEMENT, voir
+    # l'en-tête de ce fichier) : ces deux tests s'appelaient
+    # "..._zero_appel_ia" à l'étape 1, où aucune IA n'était jamais appelée en
+    # mode série. Depuis l'étape 2, les IA SONT appelées, mais en arrière-
+    # plan (jamais de exercise_comment/exercise_mistral_comment affichable) —
+    # on attend donc la fin des appels soumis (compteur "avis en cours",
+    # limite de temps explicite) avant de vérifier les compteurs d'appels.
 
-    def test_mes_erreurs_mode_serie_zero_appel_ia(self):
+    def test_mes_erreurs_mode_serie_appelle_les_ia_en_arriere_plan(self):
         self._poser_exercice("mes_erreurs")
         self._activer_mistral_pour_ce_test()
         compteurs = self._patch_ia()
         recus = self._emettre(self.UCI_GAFFE, "test139-me", mode_serie=True)
 
-        self.assertEqual(compteurs["claude"], 0, "aucun appel Claude attendu en mode série")
-        self.assertEqual(compteurs["mistral"], 0, "aucun appel Mistral attendu en mode série")
+        # Aucun avis affichable n'est jamais émis en mode série, ni
+        # immédiatement ni après la fin des appels en arrière-plan (vérifié
+        # une seconde fois après l'attente ci-dessous).
         self.assertIsNone(self._evt(recus, "exercise_comment"))
         self.assertIsNone(self._evt(recus, "exercise_mistral_comment"))
         self.assertIsNone(self._evt(recus, "exercise_error"))
@@ -186,14 +238,21 @@ class TestExerciseAnswerSocketIOModeSerie(unittest.TestCase):
         self.assertNotIn("+-", payload["text"])
         self.assertNotRegex(payload["text"], r"perte de -\d")
 
-    def test_problemes_lichess_mode_serie_zero_appel_ia(self):
+        # Étape 2 : Claude ET Mistral SONT appelés, mais seulement après
+        # avoir laissé le temps à _mode_serie_executor de les exécuter.
+        self._attendre_compteur_serie_zero()
+        self.assertEqual(compteurs["claude"], 1, "un appel Claude en arrière-plan attendu en mode série")
+        self.assertEqual(compteurs["mistral"], 1, "un appel Mistral en arrière-plan attendu en mode série")
+        # Toujours aucun avis affichable, même une fois les appels terminés.
+        self.assertIsNone(self._evt(recus, "exercise_comment"))
+        self.assertIsNone(self._evt(recus, "exercise_mistral_comment"))
+
+    def test_problemes_lichess_mode_serie_appelle_claude_en_arriere_plan(self):
         self._poser_exercice("lichess")
         self._activer_mistral_pour_ce_test()
         compteurs = self._patch_ia()
         recus = self._emettre(self.UCI_GAFFE, "test139-lichess", mode_serie=True)
 
-        self.assertEqual(compteurs["claude"], 0)
-        self.assertEqual(compteurs["mistral"], 0)
         self.assertIsNone(self._evt(recus, "exercise_comment"))
         self.assertIsNone(self._evt(recus, "exercise_error"))
         verdict = self._evt(recus, "exercise_serie_verdict")
@@ -202,6 +261,13 @@ class TestExerciseAnswerSocketIOModeSerie(unittest.TestCase):
         self.assertEqual(payload["source"], "lichess")
         self.assertEqual(payload["verdict_qualite_officiel"], "gaffe")
         self.assertTrue(payload["text"].startswith("Verdict : gaffe (perte de 1000 cp)"))
+
+        self._attendre_compteur_serie_zero()
+        self.assertEqual(compteurs["claude"], 1, "un appel Claude en arrière-plan attendu en mode série")
+        # La source "lichess" n'appelle JAMAIS Mistral, mode série ou pas
+        # (configuration existante, inchangée par l'issue #140).
+        self.assertEqual(compteurs["mistral"], 0)
+        self.assertIsNone(self._evt(recus, "exercise_comment"))
 
     def test_mode_serie_coup_joue_est_le_meilleur_coup_pas_de_perte_zero(self):
         # Coup joué EST le meilleur coup Stockfish depuis cette position
@@ -217,6 +283,13 @@ class TestExerciseAnswerSocketIOModeSerie(unittest.TestCase):
         self.assertEqual(payload["verdict_delta_cp"], 0)
         self.assertEqual(payload["text"], "Verdict : bon coup — c'est le meilleur coup.")
         self.assertNotIn("perte de 0", payload["text"])
+        # Issue #140 : attendre la fin de l'appel Claude lancé en
+        # arrière-plan AVANT la fin du test — sans quoi les patches de
+        # _patch_ia (défaits par addCleanup juste après ce test) pourraient
+        # être restaurés alors que _mode_serie_executor exécute encore cet
+        # appel, qui tenterait alors un VRAI appel réseau avec la fausse clé
+        # API de test.
+        self._attendre_compteur_serie_zero()
 
     # -- Hors mode série : comportement strictement inchangé -------------
 
