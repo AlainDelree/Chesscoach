@@ -132,6 +132,16 @@ immédiatement puis appelle les deux IA en arrière-plan (file d'attente
 bornée, compteur "avis en cours"), sans jamais afficher leurs avis. Détail :
 fiche `mode_serie`.
 
+**Construction du contexte coach en mode Exercice (issue #141)** :
+`app._construire_contexte_coup_exercice` est le seul endroit qui construit
+le bloc de contexte (menace adverse, pièces, idées, lignes détaillées, faits
+python-chess) envoyé aux IA pour `on_exercise_answer`/
+`_on_exercise_answer_lichess` — paramètres explicites uniquement, aucune
+lecture de `_current_exercise`. Toute future fonctionnalité qui a besoin de
+ce contexte (page indépendante, autre point d'accès) doit appeler cette
+fonction plutôt que dupliquer la logique. Détail : fiche
+`contexte_coach_exercice`.
+
 ## Mémoire du coach (coach_memory.json, dans DATA_DIR)
 Schéma : profil, patterns_erreurs (ouverture / milieu_de_partie / finale),
 repertoire_ouvertures (blancs / noirs), historique_sessions (résumés par
@@ -162,3 +172,6 @@ session, pas les parties complètes), objectifs_courants.
 - `docs/contexte/mode_serie.md` — interrupteur mémorisé côté navigateur,
   verdict Stockfish en une ligne immédiat, avis des deux IA en arrière-plan
   (file d'attente bornée, compteur "avis en cours", journal).
+- `docs/contexte/contexte_coach_exercice.md` — fonction partagée de
+  construction du contexte coach en mode Exercice, paramètres, golden
+  master.

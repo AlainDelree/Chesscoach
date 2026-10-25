@@ -693,6 +693,163 @@ def _calculer_reponses_adverses(fen_apres_coup: str) -> dict:
     return engine_manager.get_reponses_adverses(board, depth=DEPTH_EXERCICE_TEMPS_REEL, n=N_REPONSES_ADVERSES)
 
 
+def _construire_contexte_coup_exercice(
+    fen_avant: str,
+    camp_alain: str,
+    source: str,
+    coup_propose_san: str,
+    fen_apres: str,
+    meilleur_coup: str,
+    pv_coup_propose: str = "",
+    pv_meilleur_coup: str = "",
+    coup_reel: str = "",
+) -> dict:
+    """Construit la partie du contexte coach commune à on_exercise_answer et
+    _on_exercise_answer_lichess (issue #141, suite #140) : menace adverse,
+    listes de pièces, clouages, idées détectées, descriptions mécaniques,
+    détail des lignes (balance + faits python-chess) et réponses adverses
+    alternatives — un seul endroit pour cette construction, quel que soit le
+    chemin appelant.
+
+    Paramètres EXPLICITES uniquement (aucune lecture de _current_exercise ni
+    d'aucun autre état global propre à un exercice) : position de départ,
+    camp d'Alain, `source` ("mes_erreurs", "position_precise" ou "lichess" —
+    seule distinction nécessaire ici, cf. ci-dessous), coup proposé/meilleur
+    coup déjà évalués par l'appelant (_evaluate_move_for_coach), et
+    éventuellement le coup réellement joué à l'époque (absent pour la
+    source "lichess", qui n'a pas de partie d'origine).
+
+    `source == "lichess"` change trois choses, à l'identique du code
+    d'origine : le libellé du meilleur coup/de sa ligne ("la solution du
+    problème" plutôt que "le meilleur coup selon Stockfish"), la longueur de
+    la ligne détaillée du meilleur coup (8 demi-coups, la solution complète
+    du problème, plutôt que 4), et l'absence totale de calcul côté coup réel
+    (idées/description mécanique) et de bloc de faits python-chess par coup
+    de la PV (pv_*_faits) — jamais calculés pour cette source avant cette
+    extraction, pas davantage after (aucun calcul Stockfish/python-chess
+    supplémentaire ni oublié)."""
+    est_lichess = source == "lichess"
+
+    # Menace adverse (issue #80, point 1), listes de pièces et clouages
+    # (issue #80 point 3 ; #87 point 1 ; #92 tâche 2) : mode-agnostiques,
+    # identiques pour les deux sources.
+    menace_adverse_data = _calculer_menace_adverse(fen_avant)
+    menace_adverse_texte = game_facts.describe_menace_adverse(menace_adverse_data, fen_avant, camp_alain)
+    pieces_depart_texte = game_facts.describe_pieces_lists(fen_avant, camp_alain)
+    pieces_actuelles_texte = game_facts.describe_pieces_lists(fen_apres, camp_alain)
+    materiel_resume_texte = game_facts.describe_material_summary(fen_avant, camp_alain)
+    pieces_clouees_texte = game_facts.describe_pieces_clouees(fen_avant, camp_alain)
+
+    # Idées détectées (issue #80, point 5) pour le coup proposé et le
+    # meilleur coup — toujours calculées pour les deux sources. Le coup réel
+    # n'est calculé QUE pour "mes_erreurs"/"position_precise" (jamais pour
+    # "lichess", qui n'a pas de coup réellement joué à l'époque) ; coup_reel
+    # vide (position précise) ne déclenche aucun appel moteur supplémentaire
+    # (_calculer_idees_coup renvoie [] immédiatement sur un coup vide).
+    idees_coup_propose_texte = game_facts.format_idees_coup(
+        "le coup proposé",
+        _calculer_idees_coup(fen_avant, coup_propose_san, camp_alain, menace_adverse_data),
+    )
+    idees_coup_reel_texte = ""
+    if not est_lichess:
+        idees_coup_reel_texte = game_facts.format_idees_coup(
+            "le coup réellement joué à l'époque",
+            _calculer_idees_coup(fen_avant, coup_reel, camp_alain, menace_adverse_data),
+        )
+    idees_meilleur_coup_texte = game_facts.format_idees_coup(
+        "la solution du problème" if est_lichess else "le meilleur coup selon Stockfish",
+        _calculer_idees_coup(fen_avant, meilleur_coup, camp_alain, menace_adverse_data),
+    )
+
+    # Description mécanique (issue #73) des trois coups comparés — coup réel
+    # omis pour "lichess", comme ci-dessus.
+    coup_propose_description_mecanique = game_facts.describe_move_mechanically(
+        fen_avant, coup_propose_san, camp_alain
+    )
+    coup_reel_description_mecanique = ""
+    if not est_lichess:
+        coup_reel_description_mecanique = game_facts.describe_move_mechanically(
+            fen_avant, coup_reel, camp_alain
+        )
+    meilleur_coup_description_mecanique = game_facts.describe_move_mechanically(
+        fen_avant, meilleur_coup, camp_alain
+    )
+
+    # Détail coup par coup (balance matérielle cumulée, issue #75 point 3 ;
+    # #128) des deux lignes principales — longueur de la ligne du meilleur
+    # coup/libellé différents pour "lichess" (solution complète du
+    # problème), comme dans le code d'origine.
+    pv_coup_propose_detail = game_facts.format_pv_with_balance(
+        "Détail coup par coup de la suite réellement calculée après le coup proposé",
+        game_facts.describe_pv_with_balance(fen_avant, pv_coup_propose, camp_alain, max_plies=4),
+    )
+    pv_meilleur_coup_detail = game_facts.format_pv_with_balance(
+        "Détail coup par coup de la solution du problème" if est_lichess
+        else "Détail coup par coup de la suite réellement calculée pour le meilleur coup",
+        game_facts.describe_pv_with_balance(
+            fen_avant, pv_meilleur_coup, camp_alain, max_plies=8 if est_lichess else 4
+        ),
+    )
+
+    # Faits python-chess par coup de la ligne calculée (issue #126) — jamais
+    # calculés pour la source "lichess" (cf. docstring).
+    pv_coup_propose_faits = ""
+    pv_meilleur_coup_faits = ""
+    if not est_lichess:
+        pv_coup_propose_faits = game_facts.format_pv_facts(
+            "Faits python-chess par coup après le coup proposé",
+            game_facts.describe_pv_facts(fen_avant, pv_coup_propose, camp_alain),
+            camp_alain,
+        )
+        pv_meilleur_coup_faits = game_facts.format_pv_facts(
+            "Faits python-chess par coup après le meilleur coup",
+            game_facts.describe_pv_facts(fen_avant, pv_meilleur_coup, camp_alain),
+            camp_alain,
+        )
+
+    # Réponses adverses alternatives (issue #91, point 1 ; #92, tâche 1) pour
+    # le coup proposé ET le meilleur coup — identiques pour les deux sources.
+    fen_apres_meilleur_coup = ""
+    if meilleur_coup:
+        try:
+            board_meilleur = chess.Board(fen_avant)
+            board_meilleur.push_san(meilleur_coup)
+            fen_apres_meilleur_coup = board_meilleur.fen()
+        except Exception:
+            pass
+    reponse_adverse_coup_propose_texte = (
+        game_facts.build_reponse_adverse_obligee_texte(
+            "le coup proposé", fen_apres, _calculer_reponses_adverses(fen_apres), camp_alain,
+        ) if coup_propose_san and fen_apres != fen_avant else ""
+    )
+    reponse_adverse_meilleur_coup_texte = (
+        game_facts.build_reponse_adverse_obligee_texte(
+            "le meilleur coup", fen_apres_meilleur_coup,
+            _calculer_reponses_adverses(fen_apres_meilleur_coup), camp_alain,
+        ) if fen_apres_meilleur_coup else ""
+    )
+
+    return {
+        "pieces_depart_texte": pieces_depart_texte,
+        "pieces_actuelles_texte": pieces_actuelles_texte,
+        "materiel_resume_texte": materiel_resume_texte,
+        "pieces_clouees_texte": pieces_clouees_texte,
+        "menace_adverse_texte": menace_adverse_texte,
+        "idees_coup_propose_texte": idees_coup_propose_texte,
+        "idees_coup_reel_texte": idees_coup_reel_texte,
+        "idees_meilleur_coup_texte": idees_meilleur_coup_texte,
+        "coup_propose_description_mecanique": coup_propose_description_mecanique,
+        "coup_reel_description_mecanique": coup_reel_description_mecanique,
+        "meilleur_coup_description_mecanique": meilleur_coup_description_mecanique,
+        "pv_coup_propose_detail": pv_coup_propose_detail,
+        "pv_meilleur_coup_detail": pv_meilleur_coup_detail,
+        "pv_coup_propose_faits": pv_coup_propose_faits,
+        "pv_meilleur_coup_faits": pv_meilleur_coup_faits,
+        "reponse_adverse_coup_propose_texte": reponse_adverse_coup_propose_texte,
+        "reponse_adverse_meilleur_coup_texte": reponse_adverse_meilleur_coup_texte,
+    }
+
+
 def _log_analyse_erreur(mode: str, message: str) -> None:
     """Trace un échec du bouton "Analyser cette partie" (issue #77 point 1)
     dans ANALYSE_ERREURS_LOG_PATH : heure, mode d'origine, message — pour
@@ -2139,131 +2296,38 @@ def on_exercise_answer(data):
             "analyse_indisponible": analyse_indisponible,
         })
 
-    # Menace adverse (issue #80, point 1) : si Alain avait passé son tour,
-    # les meilleurs coups de l'adversaire et la perte d'avantage qu'ils
-    # provoqueraient — calculée une seule fois sur fen_avant, indépendamment
-    # du coup proposé (ne dépend que de la position de départ). Non calculée
-    # (disponible=False) si cette position est en échec ou si Stockfish est
-    # indisponible ; describe_menace_adverse le dit alors explicitement dans
-    # le texte transmis, plutôt que d'omettre silencieusement ce bloc.
-    menace_adverse_data = _calculer_menace_adverse(fen_avant)
-    menace_adverse_texte = game_facts.describe_menace_adverse(menace_adverse_data, fen_avant, camp_alain)
-
-    # Listes de pièces de la position de DÉPART et de la position ACTUELLE,
-    # case par case (issue #80, point 3) — jointes au contexte pour que le
-    # coach n'ait plus jamais à relire un FEN de mémoire (cf.
-    # llm_coach._EXERCISE_SYSTEM_ADDENDUM pour l'interdiction de le citer).
-    pieces_depart_texte = game_facts.describe_pieces_lists(fen_avant, camp_alain)
-    pieces_actuelles_texte = game_facts.describe_pieces_lists(fen_apres, camp_alain)
-    # Résumé du matériel par type de pièce, avec les absences dites
-    # explicitement (issue #87, point 1) — calculé sur la position de DÉPART
-    # de l'exercice, seule référence stable pour tout le fil de la
-    # conversation (coup_propose/coup_reel/meilleur_coup partent tous de
-    # cette même position).
-    materiel_resume_texte = game_facts.describe_material_summary(fen_avant, camp_alain)
-    # Pièces clouées de chaque camp (issue #92, tâche 2) — même référence
-    # stable que materiel_resume_texte ci-dessus (position de DÉPART de
-    # l'exercice). Calcul déterministe python-chess : constat réel ayant
-    # motivé cet ajout, le coach a affirmé qu'une dame restait "clouée" alors
-    # qu'aucune pièce blanche n'était clouée dans cette position.
-    pieces_clouees_texte = game_facts.describe_pieces_clouees(fen_avant, camp_alain)
-
-    # Idées détectées pour chacun des trois coups comparés (issue #80, point
-    # 5) : décomposition classique de l'évaluation Stockfish avant/après
-    # chaque coup, combinée aux idées mécaniques (parade de la menace
-    # ci-dessus, échec/mat, développement/centralisation) — [] sans erreur
-    # visible si Stockfish est indisponible ou si cette décomposition
-    # n'existe pas sur la version installée (cf. _calculer_idees_coup).
-    idees_coup_propose_texte = game_facts.format_idees_coup(
-        "le coup proposé",
-        _calculer_idees_coup(fen_avant, coup_propose_san, camp_alain, menace_adverse_data),
+    # Contexte coach commun (menace adverse, listes de pièces, clouages,
+    # idées détectées, descriptions mécaniques, détail des lignes, faits
+    # python-chess, réponses adverses alternatives) : construit par la
+    # fonction partagée avec _on_exercise_answer_lichess (issue #141, suite
+    # #140) — un seul endroit pour cette logique, quel que soit le chemin
+    # appelant. source="position_precise"/"mes_erreurs" se comportent
+    # identiquement ici (seul le texte de `messages` ci-dessous distingue
+    # les deux, cf. is_position_precise).
+    contexte_coup = _construire_contexte_coup_exercice(
+        fen_avant, camp_alain,
+        "position_precise" if is_position_precise else "mes_erreurs",
+        coup_propose_san, fen_apres, meilleur_coup,
+        pv_coup_propose=pv_coup_propose, pv_meilleur_coup=pv_meilleur_coup,
+        coup_reel=coup_reel,
     )
-    idees_coup_reel_texte = game_facts.format_idees_coup(
-        "le coup réellement joué à l'époque",
-        _calculer_idees_coup(fen_avant, coup_reel, camp_alain, menace_adverse_data),
-    )
-    idees_meilleur_coup_texte = game_facts.format_idees_coup(
-        "le meilleur coup selon Stockfish",
-        _calculer_idees_coup(fen_avant, meilleur_coup, camp_alain, menace_adverse_data),
-    )
-
-    # Description mécanique de chacun des trois coups comparés, tous les
-    # trois calculés depuis fen_avant (issue #73, en remplacement de l'ancien
-    # _move_details_fr qui ne donnait que le type de pièce jouée/capturée,
-    # sans défenseur ni solde net après reprise) — mêmes fonctions
-    # game_facts.describe_move_mechanically déjà utilisées par le mode
-    # "analyse_partie" (issue #66, cf. on_analyse_expliquer_coup).
-    coup_propose_description_mecanique = game_facts.describe_move_mechanically(
-        fen_avant, coup_propose_san, camp_alain
-    )
-    coup_reel_description_mecanique = game_facts.describe_move_mechanically(
-        fen_avant, coup_reel, camp_alain
-    )
-    meilleur_coup_description_mecanique = game_facts.describe_move_mechanically(
-        fen_avant, meilleur_coup, camp_alain
-    )
-
-    # Détail mécanique coup par coup des deux lignes principales (coup
-    # proposé / meilleur coup), avec le solde matériel CUMULÉ (convention
-    # Lichess, issue #128 : + = avantage Blancs, − = avantage Noirs)
-    # après chaque demi-coup (issue #75, point 3) — au moins les 4 premiers
-    # demi-coups. Sans ce détail, le coach racontait le bilan matériel d'une
-    # ligne de mémoire et s'est déjà trompé sur un simple échange (ex. "tu as
-    # gagné la dame contre rien" sur Qh8+ Ke7 Qxd8+ Kxd8, qui échange les
-    # deux dames, solde net 0).
-    pv_coup_propose_detail = game_facts.format_pv_with_balance(
-        "Détail coup par coup de la suite réellement calculée après le coup proposé",
-        game_facts.describe_pv_with_balance(fen_avant, pv_coup_propose, camp_alain, max_plies=4),
-    )
-    pv_meilleur_coup_detail = game_facts.format_pv_with_balance(
-        "Détail coup par coup de la suite réellement calculée pour le meilleur coup",
-        game_facts.describe_pv_with_balance(fen_avant, pv_meilleur_coup, camp_alain, max_plies=4),
-    )
-
-    # Faits python-chess par coup de la ligne calculée (issue #126)
-    # Pour chaque coup de la PV après le coup proposé et après le meilleur coup,
-    # calculer et ajouter au contexte un bloc de faits : coup légal en notation
-    # avec numéro, pièce capturée, échec, pièces adverses nouvellement attaquées,
-    # pièces attaquées et insuffisamment défendues, menaces de mat, clouages,
-    # solde matériel. Format compact, plafonné à 6 coups.
-    pv_coup_propose_faits = game_facts.format_pv_facts(
-        "Faits python-chess par coup après le coup proposé",
-        game_facts.describe_pv_facts(fen_avant, pv_coup_propose, camp_alain),
-        camp_alain,
-    )
-    pv_meilleur_coup_faits = game_facts.format_pv_facts(
-        "Faits python-chess par coup après le meilleur coup",
-        game_facts.describe_pv_facts(fen_avant, pv_meilleur_coup, camp_alain),
-        camp_alain,
-    )
-
-    # Réponses adverses alternatives (issue #91, point 1) : pour le coup
-    # proposé ET pour le meilleur coup, dit si la réponse adverse de la
-    # ligne principale ci-dessus est la SEULE qui évite une perte nette ou
-    # un mat (menace décrite mécaniquement), ou si plusieurs réponses se
-    # valent — sans cette donnée, le coach ne peut pas savoir qu'une
-    # réponse est forcée et en invente une fausse raison (cas réel,
-    # cf. coach_reliability.py en-tête de module). fen_apres_meilleur_coup
-    # recalculée séparément (meilleur_coup peut différer de coup_propose).
-    fen_apres_meilleur_coup = ""
-    if meilleur_coup:
-        try:
-            board_meilleur = chess.Board(fen_avant)
-            board_meilleur.push_san(meilleur_coup)
-            fen_apres_meilleur_coup = board_meilleur.fen()
-        except Exception:
-            pass
-    reponse_adverse_coup_propose_texte = (
-        game_facts.build_reponse_adverse_obligee_texte(
-            "le coup proposé", fen_apres, _calculer_reponses_adverses(fen_apres), camp_alain,
-        ) if coup_propose_san and fen_apres != fen_avant else ""
-    )
-    reponse_adverse_meilleur_coup_texte = (
-        game_facts.build_reponse_adverse_obligee_texte(
-            "le meilleur coup", fen_apres_meilleur_coup,
-            _calculer_reponses_adverses(fen_apres_meilleur_coup), camp_alain,
-        ) if fen_apres_meilleur_coup else ""
-    )
+    pieces_depart_texte = contexte_coup["pieces_depart_texte"]
+    pieces_actuelles_texte = contexte_coup["pieces_actuelles_texte"]
+    materiel_resume_texte = contexte_coup["materiel_resume_texte"]
+    pieces_clouees_texte = contexte_coup["pieces_clouees_texte"]
+    menace_adverse_texte = contexte_coup["menace_adverse_texte"]
+    idees_coup_propose_texte = contexte_coup["idees_coup_propose_texte"]
+    idees_coup_reel_texte = contexte_coup["idees_coup_reel_texte"]
+    idees_meilleur_coup_texte = contexte_coup["idees_meilleur_coup_texte"]
+    coup_propose_description_mecanique = contexte_coup["coup_propose_description_mecanique"]
+    coup_reel_description_mecanique = contexte_coup["coup_reel_description_mecanique"]
+    meilleur_coup_description_mecanique = contexte_coup["meilleur_coup_description_mecanique"]
+    pv_coup_propose_detail = contexte_coup["pv_coup_propose_detail"]
+    pv_meilleur_coup_detail = contexte_coup["pv_meilleur_coup_detail"]
+    pv_coup_propose_faits = contexte_coup["pv_coup_propose_faits"]
+    pv_meilleur_coup_faits = contexte_coup["pv_meilleur_coup_faits"]
+    reponse_adverse_coup_propose_texte = contexte_coup["reponse_adverse_coup_propose_texte"]
+    reponse_adverse_meilleur_coup_texte = contexte_coup["reponse_adverse_meilleur_coup_texte"]
 
     # Texte différent pour une « Position précise » (issue #83) : pas de
     # "partie d'origine" ni de "coup réellement joué" pour une position
@@ -2712,75 +2776,32 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None, mode_serie: b
             "niveau": niveau_affiche,
         })
 
-    coup_propose_description_mecanique = game_facts.describe_move_mechanically(
-        fen_avant, coup_propose_san, camp_alain
+    # Contexte coach commun (menace adverse, listes de pièces, clouages,
+    # idées détectées, descriptions mécaniques, détail des lignes, réponses
+    # adverses alternatives) : même fonction partagée que on_exercise_answer
+    # ci-dessus (issue #141, suite #140) — source="lichess" reproduit à
+    # l'identique les différences déjà présentes avant cette extraction (pas
+    # de coup_reel, libellé "la solution du problème", ligne détaillée du
+    # meilleur coup sur 8 demi-coups, aucun bloc de faits python-chess par
+    # coup de la PV).
+    contexte_coup = _construire_contexte_coup_exercice(
+        fen_avant, camp_alain, "lichess",
+        coup_propose_san, fen_apres, meilleur_coup,
+        pv_coup_propose=pv_coup_propose, pv_meilleur_coup=pv_meilleur_coup,
     )
-    meilleur_coup_description_mecanique = game_facts.describe_move_mechanically(
-        fen_avant, meilleur_coup, camp_alain
-    )
-
-    # Listes de pièces, menace adverse et idées détectées (issue #80) — même
-    # calcul que la source "mes erreurs" ci-dessus (_calculer_menace_adverse/
-    # _calculer_idees_coup sont mode-agnostiques) : sans ce bloc, le
-    # garde-fou "ne t'appuie que sur les listes fournies, ne cite jamais un
-    # FEN" de _EXERCISE_SYSTEM_ADDENDUM (commun aux deux sources) priverait
-    # le coach de toute donnée sur les pièces pour cette source.
-    menace_adverse_data = _calculer_menace_adverse(fen_avant)
-    menace_adverse_texte = game_facts.describe_menace_adverse(menace_adverse_data, fen_avant, camp_alain)
-    pieces_depart_texte = game_facts.describe_pieces_lists(fen_avant, camp_alain)
-    pieces_actuelles_texte = game_facts.describe_pieces_lists(fen_apres, camp_alain)
-    # Résumé du matériel par type de pièce (issue #87, point 1) — même
-    # raison que la source "mes erreurs" ci-dessus.
-    materiel_resume_texte = game_facts.describe_material_summary(fen_avant, camp_alain)
-    # Pièces clouées de chaque camp (issue #92, tâche 2) — même calcul que la
-    # source "mes erreurs"/"position précise" ci-dessus (describe_pieces_
-    # clouees est mode-agnostique), sur la position de DÉPART du problème.
-    pieces_clouees_texte = game_facts.describe_pieces_clouees(fen_avant, camp_alain)
-    idees_coup_propose_texte = game_facts.format_idees_coup(
-        "le coup proposé",
-        _calculer_idees_coup(fen_avant, coup_propose_san, camp_alain, menace_adverse_data),
-    )
-    idees_meilleur_coup_texte = game_facts.format_idees_coup(
-        "la solution du problème",
-        _calculer_idees_coup(fen_avant, meilleur_coup, camp_alain, menace_adverse_data),
-    )
-
-    # Réponse adverse alternative (issue #91, point 1 ; issue #92, tâche 1 —
-    # parité des sources) : même calcul que la source "mes erreurs"/"position
-    # précise" (on_exercise_answer ci-dessus) — jusqu'ici absent de cette
-    # source "Problèmes Lichess", alors que _build_context_text (llm_coach.py)
-    # sait déjà l'exploiter pour les deux autres sources. Sans ce champ, le
-    # coach ne pouvait pas savoir qu'une réponse adverse à un problème Lichess
-    # est forcée et pouvait en inventer une fausse raison (même risque que le
-    # cas réel ayant motivé l'issue #91, constaté ici sur une autre source).
-    reponse_adverse_coup_propose_texte = (
-        game_facts.build_reponse_adverse_obligee_texte(
-            "le coup proposé", fen_apres, _calculer_reponses_adverses(fen_apres), camp_alain,
-        ) if coup_propose_san and fen_apres != fen_avant else ""
-    )
-    fen_apres_meilleur_coup = ""
-    if meilleur_coup:
-        try:
-            board_meilleur = chess.Board(fen_avant)
-            board_meilleur.push_san(meilleur_coup)
-            fen_apres_meilleur_coup = board_meilleur.fen()
-        except Exception:
-            pass
-    reponse_adverse_meilleur_coup_texte = (
-        game_facts.build_reponse_adverse_obligee_texte(
-            "le meilleur coup", fen_apres_meilleur_coup,
-            _calculer_reponses_adverses(fen_apres_meilleur_coup), camp_alain,
-        ) if fen_apres_meilleur_coup else ""
-    )
-
-    pv_coup_propose_detail = game_facts.format_pv_with_balance(
-        "Détail coup par coup de la suite réellement calculée après le coup proposé",
-        game_facts.describe_pv_with_balance(fen_avant, pv_coup_propose, camp_alain, max_plies=4),
-    )
-    pv_meilleur_coup_detail = game_facts.format_pv_with_balance(
-        "Détail coup par coup de la solution du problème",
-        game_facts.describe_pv_with_balance(fen_avant, pv_meilleur_coup, camp_alain, max_plies=8),
-    )
+    pieces_depart_texte = contexte_coup["pieces_depart_texte"]
+    pieces_actuelles_texte = contexte_coup["pieces_actuelles_texte"]
+    materiel_resume_texte = contexte_coup["materiel_resume_texte"]
+    pieces_clouees_texte = contexte_coup["pieces_clouees_texte"]
+    menace_adverse_texte = contexte_coup["menace_adverse_texte"]
+    idees_coup_propose_texte = contexte_coup["idees_coup_propose_texte"]
+    idees_meilleur_coup_texte = contexte_coup["idees_meilleur_coup_texte"]
+    coup_propose_description_mecanique = contexte_coup["coup_propose_description_mecanique"]
+    meilleur_coup_description_mecanique = contexte_coup["meilleur_coup_description_mecanique"]
+    pv_coup_propose_detail = contexte_coup["pv_coup_propose_detail"]
+    pv_meilleur_coup_detail = contexte_coup["pv_meilleur_coup_detail"]
+    reponse_adverse_coup_propose_texte = contexte_coup["reponse_adverse_coup_propose_texte"]
+    reponse_adverse_meilleur_coup_texte = contexte_coup["reponse_adverse_meilleur_coup_texte"]
 
     themes = _current_exercise.get("themes") or []
     rating = _current_exercise.get("rating")
