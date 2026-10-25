@@ -147,8 +147,9 @@ fonction plutôt que dupliquer la logique. Détail : fiche
 contexte que l'exercice « Position précise »), `/api/club/eval` (Stockfish
 seul), `/api/club/jugement`. Journalisée avec `mode_origine="club"`, exclue
 par construction du filtre de `scripts/controle_avis.py`
-(`mode_origine=="exercice"`). Limites (40 avis/jour, 2 appels simultanés) et
-détail des routes : fiche `page_club`.
+(`mode_origine=="exercice"`). Limites (40 avis/jour, 2 appels simultanés),
+sélection hors-ligne des exercices (`scripts/selection_club.py`, issue #143)
+et détail des routes : fiche `page_club`.
 
 ## Mémoire du coach (coach_memory.json, dans DATA_DIR)
 Schéma : profil, patterns_erreurs (ouverture / milieu_de_partie / finale),
