@@ -59,6 +59,17 @@ ANALYSE_ERREURS_LOG_PATH = DATA_DIR / "logs" / "analyse_erreurs.log"
 # pattern que COACH_CALLS_LOG_PATH/ANALYSE_ERREURS_LOG_PATH).
 SIGNALEMENTS_LOG_PATH = DATA_DIR / "logs" / "signalements.log"
 
+# Page « club » (issue #142) : compteur d'avis du coach consommés aujourd'hui
+# par /api/club/avis ({"date": "AAAA-MM-JJ", "count": int}, remise à zéro
+# quand la date ne correspond plus au jour courant) — persisté sur disque
+# pour survivre à un redémarrage du serveur, cf. app.py CLUB_MAX_AVIS_PAR_JOUR.
+# Jugements portés sur ces avis (bouton à l'étape 4, hors périmètre ici) :
+# une ligne JSON par jugement, SÉPARÉ de coach_ratings.jsonl pour ne jamais
+# mélanger les notes d'Alain avec celles d'un visiteur du club. Les deux sous
+# DATA_DIR, donc gitignorés comme le reste des données.
+CLUB_AVIS_COMPTEUR_PATH = DATA_DIR / "club_avis_compteur.json"
+CLUB_JUGEMENTS_LOG_PATH = DATA_DIR / "logs" / "club_jugements.log"
+
 # Log des pannes du moteur Stockfish lui-même (issue #79) : heure, opération
 # en cours, message d'erreur, code de sortie du processus et dernières
 # lignes de son flux d'erreur standard quand ils sont disponibles, nombre de

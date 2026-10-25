@@ -142,6 +142,14 @@ ce contexte (page indépendante, autre point d'accès) doit appeler cette
 fonction plutôt que dupliquer la logique. Détail : fiche
 `contexte_coach_exercice`.
 
+**Page « club » (issue #142)** : `/club` (page statique), `/api/club/avis`
+(avis du coach sur un coup quelconque — Claude seul, jamais Mistral, même
+contexte que l'exercice « Position précise »), `/api/club/eval` (Stockfish
+seul), `/api/club/jugement`. Journalisée avec `mode_origine="club"`, exclue
+par construction du filtre de `scripts/controle_avis.py`
+(`mode_origine=="exercice"`). Limites (40 avis/jour, 2 appels simultanés) et
+détail des routes : fiche `page_club`.
+
 ## Mémoire du coach (coach_memory.json, dans DATA_DIR)
 Schéma : profil, patterns_erreurs (ouverture / milieu_de_partie / finale),
 repertoire_ouvertures (blancs / noirs), historique_sessions (résumés par
@@ -175,3 +183,6 @@ session, pas les parties complètes), objectifs_courants.
 - `docs/contexte/contexte_coach_exercice.md` — fonction partagée de
   construction du contexte coach en mode Exercice, paramètres, golden
   master.
+- `docs/contexte/page_club.md` — routes `/club`, `/api/club/avis`,
+  `/api/club/eval`, `/api/club/jugement`, limite d'appels, journalisation
+  `mode_origine="club"`.

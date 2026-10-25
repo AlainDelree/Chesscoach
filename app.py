@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 import chess
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO, emit
 
 import avis_format
@@ -2140,6 +2140,398 @@ def _on_exercise_new_position_precise(fen: str) -> None:
         "dernier_resultat": None,
         "source": "position_precise",
     })
+
+
+# ---------------------------------------------------------------------------
+# Page « club » (issue #142, étape 2/4 — suite #141) : montrer à quelqu'un du
+# club, sur son téléphone via Tailscale, l'avis du coach sur SON coup dans
+# une position donnée, pour comparer son raisonnement à celui du coach. La
+# page elle-même (plateau, barre d'évaluation, boutons de vue, jugements) est
+# l'objet d'une étape ultérieure (#4) — ici seulement le serveur : route de
+# page statique, avis du coach sur un coup quelconque, évaluation Stockfish
+# seule, et enregistrement d'un jugement porté sur un avis. Points d'accès
+# HTTP classiques (pas SocketIO) : la page est un fichier statique autonome,
+# sans connexion Socket.IO.
+# ---------------------------------------------------------------------------
+
+@app.route("/club")
+def club_page():
+    """Sert static/club.html (issue #142) — fichier statique autonome,
+    jamais de gabarit Jinja ici (plateau/barre d'éval/boutons de vue, étape
+    #4, hors périmètre de cette issue)."""
+    return app.send_static_file("club.html")
+
+
+# Limite d'appels au coach depuis la page club (issue #142, point 7) : Alain
+# contrôle ces appels (ils coûtent de l'argent), cette page n'étant utilisée
+# que pour montrer le coach à un visiteur de son club. Remise à zéro à
+# minuit HEURE LOCALE (cf. _club_verifier_et_incrementer_compteur,
+# comparaison de date par time.strftime), comptée et persistée sur disque
+# (config.CLUB_AVIS_COMPTEUR_PATH) pour survivre à un redémarrage du
+# serveur.
+CLUB_MAX_AVIS_PAR_JOUR = 40
+
+# Appels au coach simultanés acceptés par /api/club/avis (issue #142, point
+# 7) : au-delà, la requête est refusée immédiatement ("occupé") SANS jamais
+# appeler l'API — même esprit que MODE_SERIE_MAX_APPELS_SIMULTANES
+# ci-dessus, mais compteur strictement séparé (cette page n'est jamais
+# utilisée en même temps qu'une série d'exercices).
+CLUB_MAX_APPELS_SIMULTANES = 2
+
+_club_compteur_lock = threading.Lock()
+_club_appels_lock = threading.Lock()
+_club_appels_en_cours = 0
+
+
+def _club_charger_compteur() -> dict:
+    try:
+        brut = json.loads(config.CLUB_AVIS_COMPTEUR_PATH.read_text(encoding="utf-8"))
+        if isinstance(brut, dict) and isinstance(brut.get("date"), str) and isinstance(brut.get("count"), int):
+            return brut
+    except (OSError, ValueError, AttributeError):
+        pass
+    return {"date": "", "count": 0}
+
+
+def _club_sauvegarder_compteur(donnees: dict) -> None:
+    try:
+        config.CLUB_AVIS_COMPTEUR_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.CLUB_AVIS_COMPTEUR_PATH.write_text(json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        logger.error("Impossible d'écrire le compteur d'avis club", exc_info=True)
+
+
+def _club_verifier_et_incrementer_compteur() -> bool:
+    """Vérifie la limite quotidienne (CLUB_MAX_AVIS_PAR_JOUR) et incrémente
+    IMMÉDIATEMENT le compteur si elle n'est pas atteinte (issue #142, point
+    7) — lu/écrit sur disque à CHAQUE appel (fréquence faible : au plus une
+    quarantaine d'écritures par jour), jamais de compteur gardé seulement en
+    mémoire qui pourrait diverger du fichier après un redémarrage. Remise à
+    zéro automatique dès que la date du jour (heure locale) diffère de celle
+    enregistrée dans le fichier. Retourne False SANS incrémenter si la
+    limite est déjà atteinte pour aujourd'hui."""
+    aujourdhui = time.strftime("%Y-%m-%d")
+    with _club_compteur_lock:
+        donnees = _club_charger_compteur()
+        if donnees.get("date") != aujourdhui:
+            donnees = {"date": aujourdhui, "count": 0}
+        if donnees["count"] >= CLUB_MAX_AVIS_PAR_JOUR:
+            return False
+        donnees["count"] += 1
+        _club_sauvegarder_compteur(donnees)
+        return True
+
+
+def _club_essayer_occuper_slot() -> bool:
+    """Réserve un emplacement parmi CLUB_MAX_APPELS_SIMULTANES (issue #142,
+    point 7) — False sans effet si tous les emplacements sont déjà pris :
+    l'appelant répond alors "occupé" sans jamais appeler l'API."""
+    global _club_appels_en_cours
+    with _club_appels_lock:
+        if _club_appels_en_cours >= CLUB_MAX_APPELS_SIMULTANES:
+            return False
+        _club_appels_en_cours += 1
+        return True
+
+
+def _club_liberer_slot() -> None:
+    global _club_appels_en_cours
+    with _club_appels_lock:
+        _club_appels_en_cours = max(0, _club_appels_en_cours - 1)
+
+
+def _club_parser_coup(board: chess.Board, coup: str):
+    """Valide un coup transmis en notation SAN ou UCI (issue #142, point 8)
+    — détecte le format automatiquement : une chaîne syntaxiquement valide
+    en UCI (ex. "g1f3", "e7e8q") est traitée comme telle (sa syntaxe ne
+    coïncide jamais avec du SAN), sinon elle est interprétée comme du SAN
+    (ex. "Cf3"). Retourne (chess.Move, None) si légal, (None,
+    message_erreur) sinon — AVANT tout calcul Stockfish ou appel IA : un
+    coup illégal ou ambigu (plusieurs pièces peuvent le jouer) reçoit un
+    message dédié, prêt à afficher tel quel."""
+    coup = (coup or "").strip()
+    if not coup:
+        return None, "Aucun coup fourni."
+    try:
+        move = chess.Move.from_uci(coup)
+    except ValueError:
+        move = None
+    if move is not None:
+        if move in board.legal_moves:
+            return move, None
+        return None, "Ce coup n'est pas légal dans cette position."
+    try:
+        move = board.parse_san(coup)
+    except chess.AmbiguousMoveError:
+        return None, (
+            "Ce coup est ambigu dans cette position (plusieurs pièces "
+            "peuvent le jouer) : précisez la case de départ."
+        )
+    except chess.IllegalMoveError:
+        return None, "Ce coup n'est pas légal dans cette position."
+    except ValueError:
+        return None, "Notation de coup invalide (attendu : SAN comme « Cf3 » ou UCI comme « g1f3 »)."
+    return move, None
+
+
+@app.route("/api/club/avis", methods=["POST"])
+def api_club_avis():
+    """Avis du coach sur un coup quelconque, depuis la page « club » (issue
+    #142, point 2) — se comporte EXACTEMENT comme on_exercise_answer pour la
+    source "position_precise" (aucun coup de l'époque) : même calcul
+    Stockfish (_evaluate_move_for_coach), même contexte
+    (_construire_contexte_coup_exercice, réutilisée sans aucune
+    modification ni duplication), même prompt système/addendum d'exercice
+    et même vérificateur (llm_coach.get_coach_response, mode_exercice=True),
+    même convention de signe Lichess. Jamais Mistral (point 3) : seul
+    get_coach_response est appelé ici, quelle que soit config.MISTRAL_API_KEY
+    — Alain contrôle ses appels Mistral.
+
+    JSON attendu : {"fen": str, "coup": str (SAN ou UCI), "camp": "blancs"|
+    "noirs" (optionnel, par défaut le camp au trait dans `fen`)}.
+
+    Volontairement SANS emit()/_emit_usage_update()/
+    _handle_llm_model_indisponible_si_besoin ici (contrairement à
+    on_exercise_answer) : ce sont des fonctions Socket.IO, qui exigent un
+    contexte de requête Socket.IO actif — absent d'une requête HTTP REST
+    classique comme celle-ci. Le compteur de tokens est quand même mis à
+    jour sur disque (usage_path transmis à get_coach_response), simplement
+    pas re-poussé en direct à un client Socket.IO."""
+    data = request.get_json(silent=True) or {}
+    fen = (data.get("fen") or "").strip()
+    coup = data.get("coup") or ""
+    camp_demande = (data.get("camp") or "").strip().lower()
+
+    # Validation AVANT tout calcul Stockfish ou appel IA (issue #142, point
+    # 8) : une requête invalide ne consomme jamais la limite quotidienne.
+    board, erreur = _valider_fen_position_precise(fen)
+    if erreur:
+        return jsonify({"erreur": "fen_invalide", "message": erreur}), 400
+
+    if camp_demande not in ("", "blancs", "noirs"):
+        return jsonify({
+            "erreur": "camp_invalide",
+            "message": "Le champ « camp », s'il est fourni, doit valoir « blancs » ou « noirs ».",
+        }), 400
+
+    move, erreur = _club_parser_coup(board, coup)
+    if erreur:
+        return jsonify({"erreur": "coup_invalide", "message": erreur}), 400
+
+    camp_alain = camp_demande or ("blancs" if board.turn == chess.WHITE else "noirs")
+
+    if not _club_essayer_occuper_slot():
+        return jsonify({
+            "erreur": "occupe",
+            "message": "Le coach est déjà occupé par une autre demande d'avis, réessayez dans un instant.",
+        }), 503
+
+    try:
+        if not _club_verifier_et_incrementer_compteur():
+            return jsonify({
+                "erreur": "limite_quotidienne_atteinte",
+                "message": (
+                    f"Limite de {CLUB_MAX_AVIS_PAR_JOUR} avis du coach atteinte pour "
+                    "aujourd'hui. Réessayez après minuit, heure locale (remise à zéro "
+                    "automatique du compteur)."
+                ),
+            }), 429
+
+        fen_avant = board.fen()
+        coup_propose_san = board.san(move)
+        eval_result = _evaluate_move_for_coach(fen_avant, move)
+        board.push(move)
+        fen_apres = board.fen()
+        eval_blancs_cp, eval_blancs_mat = _eval_blancs_apres(board)
+
+        contexte_coup = _construire_contexte_coup_exercice(
+            fen_avant, camp_alain, "position_precise",
+            coup_propose_san, fen_apres, eval_result["meilleur_coup"],
+            pv_coup_propose=eval_result["pv_coup_propose"],
+            pv_meilleur_coup=eval_result["pv_meilleur_coup"],
+            coup_reel="",
+        )
+
+        # Texte identique à celui envoyé par on_exercise_answer pour la
+        # source "position_precise" (issue #83) — repris mot pour mot.
+        messages = [{
+            "role": "user",
+            "content": (
+                "Je m'entraîne sur une position précise que j'ai choisie "
+                "moi-même (pas une erreur de ma part, pas un problème "
+                "Lichess). Commente le coup que je propose pour cette "
+                "position : est-il bon ou mauvais, et pourquoi ? Si le "
+                "meilleur coup est différent, explique-le aussi. Sois "
+                "concis."
+            ),
+        }]
+        context = {
+            "fen_depart_exercice": fen_avant,
+            "fen": fen_apres,
+            "camp_alain": camp_alain,
+            "pieces_depart_texte": contexte_coup["pieces_depart_texte"],
+            "pieces_actuelles_texte": contexte_coup["pieces_actuelles_texte"],
+            "materiel_resume_texte": contexte_coup["materiel_resume_texte"],
+            "pieces_clouees_texte": contexte_coup["pieces_clouees_texte"],
+            "menace_adverse_texte": contexte_coup["menace_adverse_texte"],
+            "coup_propose": coup_propose_san,
+            "coup_propose_description_mecanique": contexte_coup["coup_propose_description_mecanique"],
+            "idees_coup_propose_texte": contexte_coup["idees_coup_propose_texte"],
+            "coup_reel": "",
+            "coup_reel_description_mecanique": "",
+            "idees_coup_reel_texte": "",
+            "meilleur_coup": eval_result["meilleur_coup"],
+            "meilleur_coup_description_mecanique": contexte_coup["meilleur_coup_description_mecanique"],
+            "idees_meilleur_coup_texte": contexte_coup["idees_meilleur_coup_texte"],
+            "pv_coup_propose": eval_result["pv_coup_propose"],
+            "pv_meilleur_coup": eval_result["pv_meilleur_coup"],
+            "pv_coup_propose_detail": contexte_coup["pv_coup_propose_detail"],
+            "pv_meilleur_coup_detail": contexte_coup["pv_meilleur_coup_detail"],
+            "pv_coup_propose_faits": contexte_coup["pv_coup_propose_faits"],
+            "pv_meilleur_coup_faits": contexte_coup["pv_meilleur_coup_faits"],
+            "reponse_adverse_coup_propose_texte": contexte_coup["reponse_adverse_coup_propose_texte"],
+            "reponse_adverse_meilleur_coup_texte": contexte_coup["reponse_adverse_meilleur_coup_texte"],
+            "eval_blancs_cp": eval_blancs_cp,
+            "eval_blancs_mat": eval_blancs_mat,
+            "verdict_qualite": eval_result.get("verdict_qualite_officiel") or eval_result["verdict_qualite"],
+            "verdict_qualite_officiel": eval_result.get("verdict_qualite_officiel"),
+            "verdict_qualite_ancien": eval_result["verdict_qualite"],
+            "verdict_delta_cp": eval_result["verdict_delta_cp"],
+            "eval_before_cp": eval_result["eval_before_cp"],
+            "eval_after_cp": eval_result["eval_after_cp"],
+            "win_prob_drop": eval_result["win_prob_drop"],
+            "profondeur_reeval": DEPTH_EXERCICE_TEMPS_REEL,
+            "mode_exercice": True,
+            # Mode d'origine DISTINCT de "exercice" (issue #142, point 6) :
+            # scripts/controle_avis.py ne retient que mode_origine=="exercice"
+            # pour les notes/avis d'Alain — "club" en est donc exclu par
+            # construction, sans toucher à ce script (vérifié dans son
+            # code : `d.get('mode_origine')=='exercice'`). "via_club"
+            # (booléen, dans ce même dict `context`, donc journalisé tel
+            # quel par _log_coach_call) permet de repérer ces entrées sans
+            # ambiguïté même si un futur mode_origine se mettait aussi à
+            # commencer par "club".
+            "mode_origine": "club",
+            "via_club": True,
+            "analyse_indisponible": eval_result["analyse_indisponible"],
+        }
+        llm_config = {
+            "llm_api_key": config.LLM_API_KEY,
+            "llm_model": config.LLM_MODEL,
+            "coach_log_path": config.COACH_CALLS_LOG_PATH,
+            "usage_path": config.USAGE_TOKENS_PATH,
+            "coach_timeout_s": config.COACH_TIMEOUT_REPONSE_S,
+        }
+
+        response, error, fiabilite, log_id = llm_coach.get_coach_response(
+            messages, context, coach_memory, llm_config
+        )
+        if error:
+            return jsonify({"erreur": error, "message": "Le coach n'a pas pu répondre."}), 502
+
+        avis_parse = avis_format.parser_avis(response)
+        return jsonify({
+            "text": response,
+            "avis_sections": avis_parse["sections"],
+            "avis_format_conforme": avis_parse["conforme"],
+            "avis_format_version": avis_format.FORMAT_AVIS_VERSION,
+            "verdict_qualite_officiel": eval_result.get("verdict_qualite_officiel"),
+            "verdict_delta_cp": eval_result["verdict_delta_cp"],
+            "meilleur_coup": eval_result["meilleur_coup"],
+            "eval_before_cp": eval_result["eval_before_cp"],
+            "eval_after_cp": eval_result["eval_after_cp"],
+            "fiabilite": fiabilite,
+            "log_id": log_id,
+            "fen": fen_avant,
+            "camp_alain": camp_alain,
+            "coup_propose": coup_propose_san,
+        })
+    finally:
+        _club_liberer_slot()
+
+
+@app.route("/api/club/eval", methods=["POST"])
+def api_club_eval():
+    """Évaluation Stockfish seule (issue #142, point 4), SANS aucun appel
+    IA : convention de Lichess (eval_blancs_cp/eval_blancs_mat) et les trois
+    meilleurs coups avec leur évaluation, via le gestionnaire de moteur déjà
+    lancé (engine_manager, get_multipv) — jamais de nouveau processus
+    Stockfish par requête."""
+    data = request.get_json(silent=True) or {}
+    fen = (data.get("fen") or "").strip()
+    board, erreur = _valider_fen_position_precise(fen)
+    if erreur:
+        return jsonify({"erreur": "fen_invalide", "message": erreur}), 400
+
+    if not engine_manager:
+        return jsonify({"erreur": "moteur_indisponible", "message": "Stockfish est indisponible."}), 503
+
+    eval_blancs_cp, eval_blancs_mat = _eval_blancs_apres(board, depth=DEPTH_EXERCICE_TEMPS_REEL)
+    multipv = engine_manager.get_multipv(board, n=3, depth=DEPTH_EXERCICE_TEMPS_REEL)
+    signe = 1 if board.turn == chess.WHITE else -1
+    meilleurs_coups = []
+    for entree in multipv:
+        try:
+            san = board.san(chess.Move.from_uci(entree["move"]))
+        except Exception:
+            san = entree["move"]
+        meilleurs_coups.append({
+            "coup": san,
+            "eval_blancs_cp": signe * entree["cp"] if entree["cp"] is not None else None,
+            "eval_blancs_mat": signe * entree["mate"] if entree["mate"] is not None else None,
+        })
+
+    return jsonify({
+        "eval_blancs_cp": eval_blancs_cp,
+        "eval_blancs_mat": eval_blancs_mat,
+        "meilleurs_coups": meilleurs_coups,
+    })
+
+
+_CLUB_JUGEMENTS_VALIDES = {"accord", "desaccord", "partiel"}
+
+
+@app.route("/api/club/jugement", methods=["POST"])
+def api_club_jugement():
+    """Enregistre le jugement porté sur un avis « club » (issue #142, point
+    5) dans config.CLUB_JUGEMENTS_LOG_PATH, une ligne JSON par jugement —
+    JAMAIS dans coach_ratings.jsonl (réservé aux notes d'Alain sur la
+    comparaison Claude/Mistral, cf. coach_ratings.py). JSON attendu :
+    {"log_id": str, "jugement": "accord"|"desaccord"|"partiel",
+    "etiquettes": [str, ...] (optionnel), "remarque": str (optionnel)}."""
+    data = request.get_json(silent=True) or {}
+    log_id = (data.get("log_id") or "").strip()
+    jugement = (data.get("jugement") or "").strip()
+    if not log_id:
+        return jsonify({"erreur": "log_id_manquant", "message": "log_id est requis."}), 400
+    if jugement not in _CLUB_JUGEMENTS_VALIDES:
+        return jsonify({
+            "erreur": "jugement_invalide",
+            "message": "jugement doit valoir « accord », « desaccord » ou « partiel ».",
+        }), 400
+
+    etiquettes = data.get("etiquettes") or []
+    if not isinstance(etiquettes, list):
+        etiquettes = []
+    remarque = (data.get("remarque") or "").strip()
+
+    entree = {
+        "id": uuid.uuid4().hex[:12],
+        "horodatage": datetime.now().isoformat(),
+        "log_id": log_id,
+        "jugement": jugement,
+        "etiquettes": [str(e) for e in etiquettes],
+        "remarque": remarque,
+    }
+    try:
+        config.CLUB_JUGEMENTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with config.CLUB_JUGEMENTS_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entree, ensure_ascii=False) + "\n")
+    except OSError:
+        logger.error("Impossible d'écrire dans CLUB_JUGEMENTS_LOG_PATH", exc_info=True)
+        return jsonify({"erreur": "ecriture_echouee", "message": "Le jugement n'a pas pu être enregistré."}), 500
+
+    return jsonify({"id": entree["id"]})
 
 
 @socketio.on("exercise_answer")
