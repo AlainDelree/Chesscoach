@@ -1913,11 +1913,11 @@ async function submitMove(san){
 async function saveJug(){
   var r=S.res[S.i],x=r.j;if(!x.v)return;
   x.saving=true;render();
-  var rr=await api("/api/club/jugement",{log_id:r.data.log_id,jugement:x.v,etiquettes:x.tags||[],remarque:x.rem||""},20000);
+  var rr=await api("/api/club/jugement",{log_id:r.data.log_id,jugement:x.v,etiquettes:x.tags||[],remarque:((S.name?"["+S.name+"] ":"")+(x.rem||"")).trim()},20000);
   x.saving=false;x.saved=!!rr.ok;x.err=rr.ok?"":errMsg(rr);render();
 }
 function summary(){
-  var L=["Résumé de la relecture ("+EXOS.length+" exercices)",""],lab={accord:"d’accord",partiel:"en partie d’accord",desaccord:"pas d’accord"};
+  var L=["Résumé de la relecture ("+EXOS.length+" exercices)"+(S.name?" — "+S.name:""),""],lab={accord:"d’accord",partiel:"en partie d’accord",desaccord:"pas d’accord"};
   EXOS.forEach(function(e,n){var r=S.res[n];
     if(!r){L.push((n+1)+". non joué | "+e.fen);return;}
     var x=r.j;L.push((n+1)+". coup "+r.san+" — "+verdictLine(r.data).replace("Verdict : ","")+" — avis : "+(lab[x.v]||"non jugé")+((x.tags||[]).length?" ["+x.tags.join(", ")+"]":"")+(x.rem?" — "+x.rem:"")+" | "+e.fen+" | id "+r.data.log_id);});
@@ -1925,14 +1925,15 @@ function summary(){
 }
 function render(){
   if(S.view==="start"){
-    app.innerHTML='<h1>Exercices du coach</h1><p class="mut">'+EXOS.length+' positions. Pour chacune : tu joues le coup que tu choisirais, le coach (le vrai, avec Stockfish) commente <b>ton coup</b>, puis tu dis si son avis te paraît juste. Chaque avis met 10 à 20 secondes à arriver. Pas besoin de refaire les lignes : seulement ton impression.</p><button class="pri" id="go" style="width:100%">Commencer</button>';
-    document.getElementById("go").onclick=function(){S.view="ex";S.i=0;S.pos="depart";render();};
+    app.innerHTML='<h1>Exercices du coach</h1><p class="mut">'+EXOS.length+' positions. Pour chacune : tu joues le coup que tu choisirais, le coach (le vrai, avec Stockfish) commente <b>ton coup</b>, puis tu dis si son avis te paraît juste. Chaque avis met 10 à 20 secondes à arriver. Pas besoin de refaire les lignes : seulement ton impression.</p><input id="who" type="text" maxlength="30" placeholder="Ton prénom ou tes initiales (facultatif)" style="width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);margin-bottom:8px"><button class="pri" id="go" style="width:100%">Commencer</button>';
+    document.getElementById("go").onclick=function(){S.name=(document.getElementById("who").value||"").trim().slice(0,30);S.view="ex";S.i=0;S.pos="depart";render();};
     return;
   }
   if(S.view==="end"){
-    app.innerHTML='<h1>Résumé</h1><div class="mut">Copie ce texte et colle-le dans la conversation avec Claude.</div><div class="card"><textarea id="sum" rows="14" readonly>'+esc(summary())+'</textarea><button class="pri" id="copy" style="width:100%;margin-top:8px">Copier le résumé</button><div id="ok" class="mut"></div></div><div class="row"><button id="back">◀ Retour</button></div>';
+    app.innerHTML='<h1>Résumé</h1><div class="mut">Copie ce texte et colle-le dans la conversation avec Claude.</div><div class="card"><textarea id="sum" rows="14" readonly>'+esc(summary())+'</textarea><button class="pri" id="copy" style="width:100%;margin-top:8px">Copier le résumé</button><div id="ok" class="mut"></div></div><div class="row"><button id="back">◀ Retour</button><button id="newp">Nouvelle personne</button></div>';
     document.getElementById("copy").onclick=function(){var t=document.getElementById("sum");t.select();var d=false;try{if(navigator.clipboard){navigator.clipboard.writeText(t.value);d=true;}}catch(e){}if(!d){try{d=document.execCommand("copy");}catch(e){}}document.getElementById("ok").textContent=d?"Copié.":"Sélectionne le texte et copie-le à la main.";};
     document.getElementById("back").onclick=function(){S.view="ex";S.i=EXOS.length-1;render();};
+    document.getElementById("newp").onclick=function(){S.res={};S.i=0;S.pos="depart";S.view="start";S.name="";S.err="";S.busy=false;S.pending=null;S.sel=null;S.gameFen="";render();};
     return;
   }
   ensureGame();
