@@ -2162,6 +2162,20 @@ def club_page():
     return app.send_static_file("club.html")
 
 
+# Clé API Anthropic utilisée par api_club_avis (issue #144) : None par
+# défaut (port 5000, app.py lancé seul) => config.LLM_API_KEY, la clé
+# principale, exactement comme avant. app_club.py (second point d'entrée,
+# dédié au club) réassigne cette variable à CLUB_ANTHROPIC_API_KEY (.env)
+# avant de servir la moindre requête — jamais l'inverse, jamais de repli
+# automatique sur la clé principale si CLUB_ANTHROPIC_API_KEY est absente
+# (app_club.py refuse alors de démarrer, cf. sa docstring).
+_club_llm_api_key: str | None = None
+
+
+def _club_get_llm_api_key() -> str:
+    return _club_llm_api_key if _club_llm_api_key is not None else config.LLM_API_KEY
+
+
 # Limite d'appels au coach depuis la page club (issue #142, point 7) : Alain
 # contrôle ces appels (ils coûtent de l'argent), cette page n'étant utilisée
 # que pour montrer le coach à un visiteur de son club. Remise à zéro à
@@ -2416,7 +2430,7 @@ def api_club_avis():
             "analyse_indisponible": eval_result["analyse_indisponible"],
         }
         llm_config = {
-            "llm_api_key": config.LLM_API_KEY,
+            "llm_api_key": _club_get_llm_api_key(),
             "llm_model": config.LLM_MODEL,
             "coach_log_path": config.COACH_CALLS_LOG_PATH,
             "usage_path": config.USAGE_TOKENS_PATH,

@@ -118,3 +118,74 @@ Sortie : fichier JSON (défaut `data/club_selection.json`, gitignoré comme
 le reste de `DATA_DIR`) et résumé lisible dans le terminal. Tests :
 `test_issue143_selection_club.py` (jeu de données fabriqué, jamais
 `data/erreurs_detectees.json` réel).
+
+## Accès externe protégé (`app_club.py`, issue #144)
+
+Pour montrer la page club à un membre du club via un lien public Tailscale
+Funnel (sans exposer tout le reste du coach à Internet), `app_club.py` est
+un SECOND point d'entrée HTTP, sur une instance Flask à part — pas le même
+`app.py`/port 5000 qu'Alain utilise. Cette instance ne connaît QUE les
+quatre routes ci-dessus (`add_url_rule`, vues réutilisées depuis `app.py`
+sans duplication, `static_folder=None`) : toute autre URL y reçoit le 404
+standard de Flask « par construction », jamais par détection de l'origine
+de la requête. `app.py` et le port 5000 restent strictement inchangés —
+l'alias `coach` d'Alain continue de fonctionner comme avant.
+
+Deux variables obligatoires dans `.env` (jamais lues/affichées/journalisées
+en clair par le code) :
+- `CLUB_JETON` : jeton secret partagé dans le lien
+  (`https://.../club?t=<jeton>`). Absente ou vide → `app_club.creer_app_club`
+  lève `RuntimeError` et l'entrée club refuse de démarrer (jamais d'accès
+  ouvert par défaut). Comparé en temps constant (`hmac.compare_digest`) à
+  CHAQUE requête (page comprise) via `before_request` ; un jeton absent ou
+  faux déclenche `abort(404)` — le même 404 qu'une route inexistante,
+  aucune indication de la vraie raison. Repris dans la page par
+  `static/club.html` (`URLSearchParams` sur `location.search`) et renvoyé
+  dans l'en-tête `X-Club-Jeton` de chaque appel aux 3 points d'accès, pour
+  que le visiteur n'ait jamais à le ressaisir et que sa valeur n'apparaisse
+  plus dans aucune URL après le chargement initial. Le journal d'accès de
+  Werkzeug (qui journalise la ligne de requête complète, donc le `?t=...`
+  de la requête initiale) est désactivé sur ce process
+  (`logging.getLogger("werkzeug").setLevel(logging.ERROR)`), pour ne jamais
+  écrire le jeton dans un journal.
+- `CLUB_ANTHROPIC_API_KEY` : clé Anthropic DÉDIÉE aux avis du coach depuis
+  cette entrée. Absente ou vide → même refus de démarrage, JAMAIS de repli
+  sur `config.LLM_API_KEY` (la clé principale d'Alain, utilisée par
+  `app.py`/port 5000). Techniquement : `app._club_llm_api_key` (`None` par
+  défaut, donc `app._club_get_llm_api_key()` renvoie `config.LLM_API_KEY`
+  comme avant) est réassignée à `CLUB_ANTHROPIC_API_KEY` par
+  `creer_app_club` avant de servir la moindre requête ; `api_club_avis`
+  relit cette fonction à chaque appel.
+
+Limites existantes (40 avis/jour, 2 appels simultanés, `mode_origine="club"`)
+inchangées : ce sont les MÊMES compteurs/fonctions de `app.py` (vues
+réutilisées telles quelles). Journal minimal des accès refusés (compteur en
+mémoire, aucune donnée sensible) : `logger.warning` dans `app_club.py` à
+chaque jeton invalide, avec le nombre cumulé de refus depuis le démarrage
+du process — pour qu'Alain voie dans les journaux si le lien est sondé.
+
+Mode debug toujours désactivé sur cette entrée (`club.config["DEBUG"]`/
+`["TESTING"]` forcés à `False`, `app_club.run(..., debug=False)`) —
+indépendant de `CHESSCOACH_DEBUG_DEV`, qui ne concerne que `app.py`/le port
+5000 et n'est jamais lu par `app_club.py`.
+
+Lancement (commande, jamais exécutée par CCL) :
+```
+CLUB_JETON=... CLUB_ANTHROPIC_API_KEY=... python3 app_club.py
+```
+(ou valeurs exportées depuis `.env` par le shell, comme pour `app.py` ;
+port modifiable via `CLUB_PORT`, 5001 par défaut). Côté Tailscale, commande
+lancée par Alain lui-même (jamais par CCL) :
+```
+tailscale funnel 5001
+```
+Changer le jeton ou révoquer la clé : modifier `CLUB_JETON`/
+`CLUB_ANTHROPIC_API_KEY` dans `.env` puis relancer `app_club.py` (pas de
+rechargement à chaud — cohérent avec le mode debug désactivé).
+
+Tests : `test_issue144_club_acces_externe.py` (jeton absent/faux/valide,
+404 par construction sur toute route hors club même avec jeton valide,
+refus de construire sans `CLUB_JETON`/`CLUB_ANTHROPIC_API_KEY`, clé dédiée
+jamais remplacée par la clé principale, mode debug désactivé) — via
+`app_club.creer_app_club(...).test_client()`, aucun processus serveur réel
+lancé par ces tests.

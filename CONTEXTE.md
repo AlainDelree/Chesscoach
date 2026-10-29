@@ -142,14 +142,20 @@ ce contexte (page indépendante, autre point d'accès) doit appeler cette
 fonction plutôt que dupliquer la logique. Détail : fiche
 `contexte_coach_exercice`.
 
-**Page « club » (issue #142)** : `/club` (page statique), `/api/club/avis`
+**Page « club » (issues #142/#144)** : `/club` (page statique), `/api/club/avis`
 (avis du coach sur un coup quelconque — Claude seul, jamais Mistral, même
 contexte que l'exercice « Position précise »), `/api/club/eval` (Stockfish
 seul), `/api/club/jugement`. Journalisée avec `mode_origine="club"`, exclue
 par construction du filtre de `scripts/controle_avis.py`
 (`mode_origine=="exercice"`). Limites (40 avis/jour, 2 appels simultanés),
-sélection hors-ligne des exercices (`scripts/selection_club.py`, issue #143)
-et détail des routes : fiche `page_club`.
+sélection hors-ligne des exercices (`scripts/selection_club.py`, issue #143).
+Accès externe (issue #144) : second point d'entrée dédié `app_club.py`
+(port 5001 par défaut), qui ne sert QUE ces routes — toute autre URL y
+répond 404 par construction — derrière un jeton obligatoire (`CLUB_JETON`
+du `.env`) et une clé Anthropic dédiée (`CLUB_ANTHROPIC_API_KEY` du `.env`,
+jamais de repli sur la clé principale). `app.py`/port 5000 restent
+inchangés. Détail des routes, de l'entrée dédiée et lancement : fiche
+`page_club`.
 
 ## Mémoire du coach (coach_memory.json, dans DATA_DIR)
 Schéma : profil, patterns_erreurs (ouverture / milieu_de_partie / finale),
@@ -186,4 +192,5 @@ session, pas les parties complètes), objectifs_courants.
   master.
 - `docs/contexte/page_club.md` — routes `/club`, `/api/club/avis`,
   `/api/club/eval`, `/api/club/jugement`, limite d'appels, journalisation
-  `mode_origine="club"`.
+  `mode_origine="club"`, et entrée externe dédiée `app_club.py` (jeton
+  `CLUB_JETON`, clé `CLUB_ANTHROPIC_API_KEY`, lancement, Tailscale Funnel).

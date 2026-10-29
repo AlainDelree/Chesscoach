@@ -1847,10 +1847,16 @@ function turnOf(fen){return String(fen).split(" ")[1]==="b"?"b":"w";}
 function ensureGame(){var f=E().fen;if(S.gameFen!==f){S.gameFen=f;S.sel=null;try{S.game=new Chess(f);}catch(x){S.game=null;}}}
 function applySan(fen,san){try{var g=new Chess(fen),m=g.move(String(san),{sloppy:true});return m?{fen:g.fen(),from:m.from,to:m.to}:null;}catch(x){return null;}}
 function num(x){return typeof x==="number"?x:null;}
+// Jeton d'accès (issue #144) : repris depuis l'URL du lien partagé
+// (?t=<jeton>) et renvoyé dans l'en-tête X-Club-Jeton de chaque appel aux
+// 3 points d'accès, SANS que le visiteur n'ait à le ressaisir — jamais à
+// nouveau dans une URL, pour ne laisser aucune trace de sa valeur dans un
+// journal d'accès HTTP (cf. app_club.py).
+var JETON=new URLSearchParams(location.search).get("t")||"";
 async function api(path,body,ms){
   var ctl=new AbortController(),t=setTimeout(function(){ctl.abort();},ms||60000);
   try{
-    var r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:ctl.signal});
+    var r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json","X-Club-Jeton":JETON},body:JSON.stringify(body),signal:ctl.signal});
     var j=null;try{j=await r.json();}catch(e){}
     return {ok:r.ok,status:r.status,json:j};
   }catch(e){return {net:true};}finally{clearTimeout(t);}
