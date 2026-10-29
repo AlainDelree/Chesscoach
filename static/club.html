@@ -44,6 +44,17 @@ button.sel{outline:3px solid var(--acc)}
 .err{background:#fde8e4;color:#7a1f12;border-radius:8px;padding:8px 10px;margin:6px 0}
 .verd{font-weight:600;margin:6px 0}.v-bon{color:var(--ok)}.v-imprecision{color:var(--warn)}.v-erreur,.v-gaffe{color:var(--bad)}
 textarea{width:100%;box-sizing:border-box;font:14px/1.4 system-ui,sans-serif;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px}
+.board-card{position:sticky;top:0;z-index:2;background:var(--card);box-shadow:0 4px 8px -6px rgba(0,0,0,.35)}
+@media (max-width:420px){
+.board-card.compact{padding:8px 10px}
+.board-card.compact .board{width:min(46vw,190px)}
+.board-card.compact .sq{font-size:min(4.8vw,20px)}
+.board-card.compact .evcol{width:20px}
+.board-card.compact .evalbar{width:14px}
+.board-card.compact .evlab{font-size:.62rem}
+.board-card.compact .leg span{font-size:.75rem;margin-right:6px}
+.board-card.compact .chip{font-size:.8rem;padding:3px 8px;min-height:30px}
+}
 </style>
 </head>
 <body>
@@ -1944,7 +1955,7 @@ function render(){
   }
   ensureGame();
   var e=E(),r=S.res[S.i],st=shown(),cp=turnOf(e.fen)==="b"?"Noirs":"Blancs",h="";
-  h+='<h1>Exercice '+(S.i+1)+" / "+EXOS.length+'</h1><div class="bar"><i style="width:'+(100*(S.i+1)/EXOS.length)+'%"></i></div><div class="card">';
+  h+='<h1>Exercice '+(S.i+1)+" / "+EXOS.length+'</h1><div class="bar"><i style="width:'+(100*(S.i+1)/EXOS.length)+'%"></i></div><div class="card board-card'+(r?" compact":"")+'">';
   var pend=(!r&&S.busy&&S.pending&&S.pending.i===S.i)?S.pending.san:null;
   h+='<div class="mut">'+(r?"Les "+cp+" jouaient. Ton coup : <b>"+esc(r.san)+"</b>":(pend?"Ton coup : <b>"+esc(pend)+"</b>":"Les "+cp+" jouent. Touche une pièce, puis la case où tu la joues."))+"</div>";
   h+=boardHtml(st,!r&&!S.busy&&!S.err);
