@@ -41,6 +41,14 @@ Lancement (jamais par CCL) :
 modifiable via CLUB_PORT. Ensuite, côté Tailscale (commande lancée par
 Alain, jamais par CCL) :
     tailscale funnel 5001
+
+Liaison réseau (issue #146) : écoute sur 127.0.0.1 par défaut — Funnel
+atteint ce serveur uniquement via l'adresse locale de la machine (jamais
+par 0.0.0.0 directement), donc une liaison large n'apporte rien à Funnel
+et laisse seulement le port 5001 joignable depuis le réseau local, avec
+CLUB_JETON comme seule barrière. CLUB_OUVRIR_RESEAU=1 réécoute sur
+0.0.0.0 en connaissance de cause (ex. test depuis un autre appareil du
+réseau local) — absente ou toute autre valeur : 127.0.0.1 uniquement.
 """
 
 import hmac
@@ -142,6 +150,17 @@ def creer_app_club(club_jeton: str | None = None, club_api_key: str | None = Non
     return club
 
 
+def _club_host_par_defaut() -> str:
+    """127.0.0.1 par défaut (issue #146) : Tailscale Funnel atteint cette
+    entrée exclusivement via l'adresse locale de la machine (jamais besoin
+    d'une liaison large pour que `tailscale funnel 5001` fonctionne, cf.
+    docs/contexte/page_club.md). CLUB_OUVRIR_RESEAU=1 réécoute sur
+    0.0.0.0, en connaissance de cause, pour ouvrir l'écoute plus
+    largement (ex. test depuis un autre appareil du réseau local) — toute
+    autre valeur (absente, vide, "0"...) garde la liaison locale."""
+    return "0.0.0.0" if os.environ.get("CLUB_OUVRIR_RESEAU", "") == "1" else "127.0.0.1"
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     # Jamais le jeton dans un journal (issue #144, point 2) : le journal
@@ -156,8 +175,9 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
     port = int(os.environ.get("CLUB_PORT", "5001"))
-    # host="0.0.0.0" (comme app.py, issue #49) : joignable depuis le réseau
-    # Tailscale d'Alain et, via `tailscale funnel`, depuis le lien public
-    # partagé au club — le jeton ci-dessus est ici la vraie barrière, cette
-    # entrée ne servant par construction que /club et ses 3 points d'accès.
-    app_club.run(host="0.0.0.0", port=port, debug=False)
+    # host local par défaut (issue #146) : Funnel atteint ce serveur via
+    # l'adresse locale de la machine, jamais besoin de 0.0.0.0 pour cela —
+    # CLUB_OUVRIR_RESEAU=1 élargit l'écoute en connaissance de cause. Le
+    # jeton ci-dessus reste la vraie barrière applicative, cette entrée ne
+    # servant par construction que /club et ses 3 points d'accès.
+    app_club.run(host=_club_host_par_defaut(), port=port, debug=False)

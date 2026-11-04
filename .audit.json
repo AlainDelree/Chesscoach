@@ -2,5 +2,12 @@
   "cas": ["C2", "C3", "C5", "C6"],
   "cas_latents": [],
   "donnees_personnelles": ["data"],
-  "dossiers_depot": ["data/pgn_import"]
+  "dossiers_depot": ["data/pgn_import"],
+  "exceptions": [
+    {
+      "regle": "SEC-013",
+      "raison": "app.py lie 0.0.0.0:5000 pour rester joignable depuis le telephone via Tailscale ; filtre d'adresses applicatif (_FiltreAccesDistant)",
+      "date": "2026-11-04"
+    }
+  ]
 }

@@ -153,9 +153,16 @@ Accès externe (issue #144) : second point d'entrée dédié `app_club.py`
 (port 5001 par défaut), qui ne sert QUE ces routes — toute autre URL y
 répond 404 par construction — derrière un jeton obligatoire (`CLUB_JETON`
 du `.env`) et une clé Anthropic dédiée (`CLUB_ANTHROPIC_API_KEY` du `.env`,
-jamais de repli sur la clé principale). `app.py`/port 5000 restent
-inchangés. Détail des routes, de l'entrée dédiée et lancement : fiche
-`page_club`.
+jamais de repli sur la clé principale). Liaison réseau locale par défaut
+(`127.0.0.1`, issue #146) — Funnel atteint ce serveur via l'adresse locale
+de la machine, jamais besoin d'une liaison large ; `CLUB_OUVRIR_RESEAU=1`
+l'élargit en connaissance de cause. Les 3 routes POST refusent
+explicitement (415/400) tout corps qui n'est pas du JSON bien formé, sur
+`app.py`/port 5000 comme sur `app_club.py`. `app.py`/port 5000 restent
+inchangés (liaison large documentée comme exception `SEC-013` dans
+`.audit.json` : accès depuis le téléphone via Tailscale, filtre
+`_FiltreAccesDistant`). Détail des routes, de l'entrée dédiée et
+lancement : fiche `page_club`.
 
 ## Mémoire du coach (coach_memory.json, dans DATA_DIR)
 Schéma : profil, patterns_erreurs (ouverture / milieu_de_partie / finale),

@@ -2288,6 +2288,30 @@ def _club_parser_coup(board: chess.Board, coup: str):
     return move, None
 
 
+def _club_lire_json_requis():
+    """Lit le corps JSON d'une des 3 routes POST du club (issue #146) —
+    AVANT tout calcul Stockfish, appel IA, écriture du journal des
+    jugements ou consommation de la limite quotidienne. Refuse
+    explicitement (plutôt que de se reposer sur la tolérance du
+    navigateur) : 415 si le Content-Type n'est pas JSON, 400 si le corps
+    est vide ou illisible comme JSON ou si le JSON lu n'est pas un objet.
+    Retourne (dict, None) si le corps est un objet JSON valide, (None,
+    reponse_erreur) sinon — `reponse_erreur` est prêt à être retourné tel
+    quel par la route appelante."""
+    if not request.is_json:
+        return None, (jsonify({
+            "erreur": "content_type_invalide",
+            "message": "Cette requête doit être envoyée avec Content-Type: application/json.",
+        }), 415)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return None, (jsonify({
+            "erreur": "corps_json_invalide",
+            "message": "Corps de requête vide ou JSON illisible.",
+        }), 400)
+    return data, None
+
+
 @app.route("/api/club/avis", methods=["POST"])
 def api_club_avis():
     """Avis du coach sur un coup quelconque, depuis la page « club » (issue
@@ -2311,7 +2335,9 @@ def api_club_avis():
     classique comme celle-ci. Le compteur de tokens est quand même mis à
     jour sur disque (usage_path transmis à get_coach_response), simplement
     pas re-poussé en direct à un client Socket.IO."""
-    data = request.get_json(silent=True) or {}
+    data, erreur_json = _club_lire_json_requis()
+    if erreur_json:
+        return erreur_json
     fen = (data.get("fen") or "").strip()
     coup = data.get("coup") or ""
     camp_demande = (data.get("camp") or "").strip().lower()
@@ -2471,7 +2497,9 @@ def api_club_eval():
     meilleurs coups avec leur évaluation, via le gestionnaire de moteur déjà
     lancé (engine_manager, get_multipv) — jamais de nouveau processus
     Stockfish par requête."""
-    data = request.get_json(silent=True) or {}
+    data, erreur_json = _club_lire_json_requis()
+    if erreur_json:
+        return erreur_json
     fen = (data.get("fen") or "").strip()
     board, erreur = _valider_fen_position_precise(fen)
     if erreur:
@@ -2513,7 +2541,9 @@ def api_club_jugement():
     comparaison Claude/Mistral, cf. coach_ratings.py). JSON attendu :
     {"log_id": str, "jugement": "accord"|"desaccord"|"partiel",
     "etiquettes": [str, ...] (optionnel), "remarque": str (optionnel)}."""
-    data = request.get_json(silent=True) or {}
+    data, erreur_json = _club_lire_json_requis()
+    if erreur_json:
+        return erreur_json
     log_id = (data.get("log_id") or "").strip()
     jugement = (data.get("jugement") or "").strip()
     if not log_id:

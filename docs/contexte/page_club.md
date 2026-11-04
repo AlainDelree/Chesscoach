@@ -169,6 +169,30 @@ Mode debug toujours désactivé sur cette entrée (`club.config["DEBUG"]`/
 indépendant de `CHESSCOACH_DEBUG_DEV`, qui ne concerne que `app.py`/le port
 5000 et n'est jamais lu par `app_club.py`.
 
+Liaison réseau (issue #146) : `127.0.0.1` par défaut
+(`app_club._club_host_par_defaut`) — Tailscale Funnel atteint ce serveur
+exclusivement via l'adresse locale de la machine (`tailscale funnel 5001`
+proxifie vers le port local, jamais besoin d'écouter sur toutes les
+interfaces pour cela), donc une liaison large n'apporte rien à Funnel et
+laisse seulement le port 5001 joignable depuis le réseau local, avec
+`CLUB_JETON` comme seule barrière. `CLUB_OUVRIR_RESEAU=1` réécoute sur
+`0.0.0.0` en connaissance de cause (ex. test depuis un autre appareil du
+réseau local) — absente ou toute autre valeur : liaison locale uniquement.
+Contrairement à `app.py`/port 5000 (qui doit rester joignable depuis le
+téléphone via Tailscale, derrière `_FiltreAccesDistant` : exception
+`SEC-013` déclarée dans `.audit.json`), cette entrée n'a pas de filtre
+d'adresses — la liaison locale par défaut en tient lieu.
+
+Les 3 routes POST (`/api/club/avis`, `/api/club/eval`, `/api/club/jugement`,
+partagées avec `app.py`) refusent désormais explicitement (issue #146) tout
+corps qui n'est pas en `Content-Type: application/json` (415) et tout corps
+vide ou illisible comme JSON, ou qui n'est pas un objet JSON (400) — AVANT
+tout calcul Stockfish, appel IA, consommation de la limite quotidienne ou
+écriture dans le journal des jugements (`app._club_lire_json_requis`). Les
+requêtes JSON valides ne sont pas affectées ; `static/club.html` envoie déjà
+`Content-Type: application/json` pour ses 3 appels, aucun changement côté
+page.
+
 Lancement (commande, jamais exécutée par CCL) :
 ```
 CLUB_JETON=... CLUB_ANTHROPIC_API_KEY=... python3 app_club.py
@@ -188,4 +212,7 @@ Tests : `test_issue144_club_acces_externe.py` (jeton absent/faux/valide,
 refus de construire sans `CLUB_JETON`/`CLUB_ANTHROPIC_API_KEY`, clé dédiée
 jamais remplacée par la clé principale, mode debug désactivé) — via
 `app_club.creer_app_club(...).test_client()`, aucun processus serveur réel
-lancé par ces tests.
+lancé par ces tests. `test_issue146_club_securite_reseau.py` (liaison
+locale par défaut/`CLUB_OUVRIR_RESEAU`, refus 415/400 des 3 routes POST
+sur les deux entrées, absence de mutation d'état/d'appel IA pour une
+requête refusée, non-régression des requêtes valides).
