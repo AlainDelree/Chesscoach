@@ -6,8 +6,7 @@
   "exceptions": [
     {
       "regle": "SEC-013",
-      "raison": "app.py lie 0.0.0.0:5000 pour rester joignable depuis le telephone via Tailscale ; filtre d'adresses applicatif (_FiltreAccesDistant)",
-      "date": "2026-11-04"
+      "raison": "2026-11-04 - seul app.py lie toutes les interfaces sur son port pour rester joignable depuis le telephone via Tailscale, avec un filtre d'adresses applicatif ; l'entree club (app_club.py) n'est pas concernee et doit rester en liaison locale par defaut ; l'exception est caduque des que cette liaison n'est plus necessaire a app.py."
     }
   ]
 }
