@@ -6,14 +6,28 @@ Exercice d'Alain ni mélanger ces avis avec les siens. L'affichage (plateau,
 barre d'évaluation, boutons de vue, jugements) est l'objet de l'étape #4 ;
 cette issue ne fournit que le serveur.
 
+**Depuis l'issue #149, ces quatre routes n'existent QUE sur l'entrée club**
+(`app_club.py`, cf. section « Accès externe protégé » ci-dessous) — y
+compris pour un essai personnel d'Alain, jeton compris. Les fonctions
+Python ci-dessous (`app.club_page`/`api_club_avis`/`api_club_eval`/
+`api_club_jugement`) existent toujours dans `app.py`, mais plus aucun
+décorateur `@app.route` ne les enregistre sur cette application : le port
+5000 y répond le 404 standard de Flask, comme n'importe quelle route
+inexistante. Avant l'issue #149, les mêmes fonctions étaient enregistrées
+sur les DEUX applications (deux `@app.route` distincts), ce qui laissait
+`app.py`/port 5000 répondre sans jeton, avec la clé Anthropic principale,
+et avec un second compteur de concurrence (`_club_appels_en_cours`)
+indépendant de celui du processus `app_club.py` — ce découplage est
+corrigé par le retrait.
+
 ## Routes
 
 - `GET /club` — sert `static/club.html` tel quel (`app.send_static_file`,
   jamais de gabarit Jinja). Fichier minimal pour l'instant (« Page club : en
-  construction »), remplacé à l'étape #4. Aucun code d'accès (décision
-  d'Alain : usage uniquement depuis son téléphone sur le réseau Tailscale,
-  cf. `syzygy_tailscale`) ; aucun changement de `app.run`/d'interface
-  d'écoute.
+  construction »), remplacé à l'étape #4. Aucun changement de
+  `app.run`/d'interface d'écoute. Protégée par le jeton de l'entrée club
+  (issue #144, précisé #149) — jamais un accès ouvert, même pour Alain
+  depuis son téléphone sur le réseau Tailscale.
 - `POST /api/club/avis` — `{"fen": str, "coup": str (SAN ou UCI),
   "camp": "blancs"|"noirs" (optionnel, par défaut le camp au trait)}`. Se
   comporte EXACTEMENT comme `on_exercise_answer` pour la source
@@ -59,6 +73,13 @@ réponse.
   503 (`erreur: "occupe"`) SANS appeler l'API. Compteur en mémoire
   (`_club_appels_en_cours`), remis à zéro à chaque redémarrage (pas besoin de
   persistance : la concurrence ne survit pas à un redémarrage par nature).
+  Un seul compteur depuis l'issue #149 : ces routes ne tournant plus que
+  dans le processus `app_club.py`, il n'existe plus qu'une seule instance
+  de `_club_appels_en_cours` pour toute la page club (avant l'issue #149,
+  `app.py`/port 5000 servait aussi ces routes avec sa PROPRE instance du
+  même compteur, dans son propre processus — deux compteurs de 2
+  indépendants, donc jusqu'à 4 appels simultanés réellement possibles tous
+  processus confondus).
 
 ## Journal
 
@@ -119,17 +140,24 @@ le reste de `DATA_DIR`) et résumé lisible dans le terminal. Tests :
 `test_issue143_selection_club.py` (jeu de données fabriqué, jamais
 `data/erreurs_detectees.json` réel).
 
-## Accès externe protégé (`app_club.py`, issue #144)
+## Accès externe protégé (`app_club.py`, issue #144, seul point d'entrée depuis #149)
 
 Pour montrer la page club à un membre du club via un lien public Tailscale
 Funnel (sans exposer tout le reste du coach à Internet), `app_club.py` est
-un SECOND point d'entrée HTTP, sur une instance Flask à part — pas le même
+un point d'entrée HTTP à part, sur une instance Flask dédiée — pas le même
 `app.py`/port 5000 qu'Alain utilise. Cette instance ne connaît QUE les
 quatre routes ci-dessus (`add_url_rule`, vues réutilisées depuis `app.py`
 sans duplication, `static_folder=None`) : toute autre URL y reçoit le 404
 standard de Flask « par construction », jamais par détection de l'origine
-de la requête. `app.py` et le port 5000 restent strictement inchangés —
-l'alias `coach` d'Alain continue de fonctionner comme avant.
+de la requête. `app.py` et le port 5000 restent strictement inchangés pour
+tout le reste — l'alias `coach` d'Alain continue de fonctionner comme avant.
+
+Depuis l'issue #149, `app_club.py` n'est plus seulement un second point
+d'entrée réservé à l'accès externe : c'est le SEUL endroit où ces quatre
+routes existent. `app.py`/port 5000 ne les enregistre plus du tout (aucun
+`@app.route` pour elles) — même un essai personnel d'Alain, depuis son
+téléphone sur le réseau Tailscale, passe désormais par cette entrée et son
+jeton, comme un visiteur du club.
 
 Deux variables obligatoires dans `.env` (jamais lues/affichées/journalisées
 en clair par le code) :
@@ -159,7 +187,9 @@ en clair par le code) :
 
 Limites existantes (40 avis/jour, 2 appels simultanés, `mode_origine="club"`)
 inchangées : ce sont les MÊMES compteurs/fonctions de `app.py` (vues
-réutilisées telles quelles). Journal minimal des accès refusés (compteur en
+réutilisées telles quelles) — et depuis l'issue #149, un SEUL compteur de
+concurrence pour toute la page club (`app_club.py` étant désormais le seul
+processus à les servir). Journal minimal des accès refusés (compteur en
 mémoire, aucune donnée sensible) : `logger.warning` dans `app_club.py` à
 chaque jeton invalide, avec le nombre cumulé de refus depuis le démarrage
 du process — pour qu'Alain voie dans les journaux si le lien est sondé.
@@ -183,8 +213,8 @@ téléphone via Tailscale, derrière `_FiltreAccesDistant` : exception
 `SEC-013` déclarée dans `.audit.json`), cette entrée n'a pas de filtre
 d'adresses — la liaison locale par défaut en tient lieu.
 
-Les 3 routes POST (`/api/club/avis`, `/api/club/eval`, `/api/club/jugement`,
-partagées avec `app.py`) refusent désormais explicitement (issue #146) tout
+Les 3 routes POST (`/api/club/avis`, `/api/club/eval`, `/api/club/jugement`)
+refusent désormais explicitement (issue #146) tout
 corps qui n'est pas en `Content-Type: application/json` (415) et tout corps
 vide ou illisible comme JSON, ou qui n'est pas un objet JSON (400) — AVANT
 tout calcul Stockfish, appel IA, consommation de la limite quotidienne ou
@@ -214,5 +244,12 @@ jamais remplacée par la clé principale, mode debug désactivé) — via
 `app_club.creer_app_club(...).test_client()`, aucun processus serveur réel
 lancé par ces tests. `test_issue146_club_securite_reseau.py` (liaison
 locale par défaut/`CLUB_OUVRIR_RESEAU`, refus 415/400 des 3 routes POST
-sur les deux entrées, absence de mutation d'état/d'appel IA pour une
-requête refusée, non-régression des requêtes valides).
+sur l'entrée club, absence de mutation d'état/d'appel IA pour une requête
+refusée, non-régression des requêtes valides). `test_issue142_page_club.py`
+(comportement détaillé des 4 routes — contexte identique à l'exercice
+« Position précise », limite quotidienne, concurrence, Mistral jamais
+appelé — atteintes via `app_club.creer_app_club(...).test_client()` avec un
+jeton de test, depuis l'issue #149). `test_issue149_club_routes_app_principale.py`
+(404 standard sur les 4 adresses côté `app.py`/port 5000, accès normal
+inchangé côté entrée club, non-régression d'une autre route HTTP et d'un
+événement Socket.IO de l'application principale).

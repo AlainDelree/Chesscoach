@@ -6,26 +6,37 @@ qui jugent un coup quelconque (avis du coach, évaluation Stockfish seule,
 jugement sur un avis, limite d'appels quotidienne et concurrence).
 
 Exécute le VRAI code (routes Flask /club, /api/club/avis, /api/club/eval,
-/api/club/jugement) via le client de test Flask (app.test_client()), en
-réutilisant l'infrastructure d'isolation de test_issue128.py (chemins de
-données redirigés vers un dossier temporaire — AUCUN fichier personnel
-d'Alain n'est lu ni écrit par ce test). Les appels à l'API Claude sont
-simulés au niveau le plus bas possible (llm_coach._call_claude), comme
+/api/club/jugement) via le client de test Flask, en réutilisant
+l'infrastructure d'isolation de test_issue128.py (chemins de données
+redirigés vers un dossier temporaire — AUCUN fichier personnel d'Alain
+n'est lu ni écrit par ce test). Les appels à l'API Claude sont simulés au
+niveau le plus bas possible (llm_coach._call_claude), comme
 test_issue140_mode_serie_ia_arriere_plan.py, pour que get_coach_response
 s'exécute réellement de bout en bout (vérificateur de fiabilité,
 vérificateur d'affirmations factuelles, écriture au journal).
+
+Depuis l'issue #149 : ces quatre routes n'existent plus que sur l'entrée
+club (app_club.py) — l'application principale y répond 404 (vérifié par
+test_issue149_club_routes_app_principale.py). Ce fichier atteint donc
+désormais ces routes via app_club.creer_app_club(...).test_client(), avec
+un jeton de test (self.JETON), exactement comme le ferait n'importe quel
+appelant réel — jamais via app.app.test_client() directement. Les
+événements Socket.IO (exercise_answer, etc.) restent testés directement
+sur app.py/self.socketio_client, puisqu'ils ne sont pas concernés par
+cette issue.
 
 Issue #142, vérification (d) : aucun test de ce fichier n'est ignoré,
 désactivé ou conditionné par une variable d'environnement — Stockfish
 absent de la machine fait ÉCHOUER setUpClass (RuntimeError), il n'est
 jamais sauté.
 
-Ce fichier importe app.py comme test_issue128.py/test_issue134.py/
-test_issue135.py/test_issue137_signe_eval_lichess.py/
+Ce fichier importe app.py (via app_club.py) comme test_issue128.py/
+test_issue134.py/test_issue135.py/test_issue137_signe_eval_lichess.py/
 test_issue139_mode_serie.py/test_issue140_mode_serie_ia_arriere_plan.py/
-test_issue141_golden_master.py : ne JAMAIS l'exécuter dans le même process
-que l'un de ces fichiers (même contrainte, voir leurs en-têtes) — invoquer
-séparément :
+test_issue141_golden_master.py/test_issue144_club_acces_externe.py/
+test_issue146_club_securite_reseau.py : ne JAMAIS l'exécuter dans le même
+process que l'un de ces fichiers (même contrainte, voir leurs en-têtes) —
+invoquer séparément :
     python3 -m unittest test_issue142_page_club
 """
 
@@ -45,10 +56,37 @@ from engine_stockfish import find_stockfish
 from test_issue128 import _patch_config_paths_vers_tmp, _restaure_config_paths
 
 
+class _ClientAvecJeton:
+    """Enveloppe un client de test Flask de l'entrée club (issue #149) pour
+    y injecter automatiquement l'en-tête X-Club-Jeton à chaque appel — ces
+    routes n'existant plus sur l'application principale, un test qui veut
+    les atteindre doit désormais fournir un jeton, comme tout appelant
+    réel."""
+
+    def __init__(self, test_client, jeton: str):
+        self._client = test_client
+        self._jeton = jeton
+
+    def get(self, chemin, **kwargs):
+        return self._appeler("get", chemin, **kwargs)
+
+    def post(self, chemin, **kwargs):
+        return self._appeler("post", chemin, **kwargs)
+
+    def _appeler(self, methode, chemin, **kwargs):
+        entetes = dict(kwargs.pop("headers", None) or {})
+        entetes.setdefault("X-Club-Jeton", self._jeton)
+        return getattr(self._client, methode)(chemin, headers=entetes, **kwargs)
+
+
 class TestPageClub(unittest.TestCase):
     """Fait tourner les routes /club, /api/club/avis, /api/club/eval,
-    /api/club/jugement via un VRAI client de test Flask, API Claude simulée
-    AU NIVEAU RÉSEAU (llm_coach._call_claude), jamais d'appel réel."""
+    /api/club/jugement via un VRAI client de test Flask de l'entrée club
+    (app_club.creer_app_club), API Claude simulée AU NIVEAU RÉSEAU
+    (llm_coach._call_claude), jamais d'appel réel."""
+
+    JETON = "jeton-de-test-issue142"
+    CLE_CLUB = "fake-club-anthropic-key-issue142"
 
     @classmethod
     def setUpClass(cls):
@@ -73,19 +111,30 @@ class TestPageClub(unittest.TestCase):
         config_module.CLUB_AVIS_COMPTEUR_PATH = tmp_dir / "club_avis_compteur.tmp.json"
         config_module.CLUB_JUGEMENTS_LOG_PATH = tmp_dir / "logs" / "club_jugements.tmp.log"
 
-        if "app" in sys.modules:
+        if "app" in sys.modules or "app_club" in sys.modules:
             raise RuntimeError(
-                "app.py était déjà importé avant ce test : l'isolation des "
-                "chemins de données ne peut plus être garantie (même "
-                "contrainte que test_issue128.py — ne jamais exécuter ces "
-                "fichiers dans le même process)."
+                "app.py ou app_club.py était déjà importé avant ce test : "
+                "l'isolation des chemins de données ne peut plus être "
+                "garantie (même contrainte que test_issue128.py — ne jamais "
+                "exécuter ces fichiers dans le même process)."
             )
-        cls.app_module = importlib.import_module("app")
-        cls.client = cls.app_module.app.test_client()
+        cls.app_club_module = importlib.import_module("app_club")
+        cls.app_module = cls.app_club_module.app_principale
+        cls.club = cls.app_club_module.creer_app_club(
+            club_jeton=cls.JETON, club_api_key=cls.CLE_CLUB,
+        )
+        cls.client = _ClientAvecJeton(cls.club.test_client(), cls.JETON)
         cls.socketio_client = cls.app_module.socketio.test_client(cls.app_module.app)
 
     @classmethod
     def tearDownClass(cls):
+        # Arrêt explicite du moteur Stockfish AVANT la fin du process
+        # (issue #149, même précaution que test_issue144_club_acces_externe.py/
+        # test_issue146_club_securite_reseau.py) : sans cet appel, Python
+        # attend indéfiniment la fin des threads non-démons du moteur avant
+        # d'exécuter les callbacks atexit de app.py.
+        if cls.app_module.engine_manager:
+            cls.app_module.engine_manager.quit()
         _restaure_config_paths(cls._config_module, cls._anciens_config)
         cls._tmp.cleanup()
 
@@ -355,7 +404,21 @@ class TestPageClub(unittest.TestCase):
         avant = self.app_module._club_charger_compteur()
         self.assertEqual(avant["count"], 2)
 
+        # Moteur d'AVANT le rechargement (issue #149, point 4 : arrêt
+        # explicite des moteurs) : importlib.reload exécute à nouveau le
+        # module, qui réassigne app.engine_manager à une NOUVELLE instance
+        # (son propre processus Stockfish) — sans quoi l'ANCIENNE instance
+        # resterait un processus orphelin, jamais arrêté ni par
+        # tearDownClass (qui ne quitte que l'engine_manager COURANT) ni par
+        # l'atexit de app.py (qui attend la fin des threads non-démons du
+        # moteur, donc ne s'exécute jamais tant que ce processus n'a pas
+        # déjà reçu .quit()).
+        ancien_engine_manager = self.app_module.engine_manager
+
         importlib.reload(self.app_module)
+
+        if ancien_engine_manager:
+            ancien_engine_manager.quit()
 
         apres = self.app_module._club_charger_compteur()
         self.assertEqual(apres["count"], 2, "le compteur doit survivre à un rechargement du module")
@@ -387,7 +450,7 @@ class TestPageClub(unittest.TestCase):
         resultats = {}
 
         def _requete(nom: str) -> None:
-            client_thread = self.app_module.app.test_client()
+            client_thread = _ClientAvecJeton(self.club.test_client(), self.JETON)
             reponse = client_thread.post("/api/club/avis", json={
                 "fen": self.FEN_GAFFE_BLANCS, "coup": self.UCI_GAFFE_BLANCS,
             })

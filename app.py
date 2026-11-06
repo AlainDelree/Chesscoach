@@ -2152,13 +2152,26 @@ def _on_exercise_new_position_precise(fen: str) -> None:
 # seule, et enregistrement d'un jugement porté sur un avis. Points d'accès
 # HTTP classiques (pas SocketIO) : la page est un fichier statique autonome,
 # sans connexion Socket.IO.
+#
+# Depuis l'issue #149 : les quatre fonctions ci-dessous ne sont PLUS
+# enregistrées comme routes de l'application principale (aucun décorateur
+# @app.route) — elles ne restent QUE des fonctions ordinaires, enregistrées
+# exclusivement par app_club.py (add_url_rule) derrière son jeton
+# obligatoire. L'application principale (port 5000) répond donc le 404
+# standard de Flask sur /club et les trois points d'accès ci-dessous ;
+# seule l'entrée club les sert, comme avant.
 # ---------------------------------------------------------------------------
 
-@app.route("/club")
 def club_page():
     """Sert static/club.html (issue #142) — fichier statique autonome,
     jamais de gabarit Jinja ici (plateau/barre d'éval/boutons de vue, étape
-    #4, hors périmètre de cette issue)."""
+    #4, hors périmètre de cette issue).
+
+    Jamais enregistrée sur l'application principale (issue #149) : aucun
+    décorateur @app.route ici — seule l'entrée club (app_club.py,
+    add_url_rule) sert cette fonction, derrière son jeton obligatoire. Sur
+    l'application principale, "/club" répond donc le 404 standard de
+    Flask, comme n'importe quelle route inexistante."""
     return app.send_static_file("club.html")
 
 
@@ -2312,7 +2325,6 @@ def _club_lire_json_requis():
     return data, None
 
 
-@app.route("/api/club/avis", methods=["POST"])
 def api_club_avis():
     """Avis du coach sur un coup quelconque, depuis la page « club » (issue
     #142, point 2) — se comporte EXACTEMENT comme on_exercise_answer pour la
@@ -2490,7 +2502,6 @@ def api_club_avis():
         _club_liberer_slot()
 
 
-@app.route("/api/club/eval", methods=["POST"])
 def api_club_eval():
     """Évaluation Stockfish seule (issue #142, point 4), SANS aucun appel
     IA : convention de Lichess (eval_blancs_cp/eval_blancs_mat) et les trois
@@ -2533,7 +2544,6 @@ def api_club_eval():
 _CLUB_JUGEMENTS_VALIDES = {"accord", "desaccord", "partiel"}
 
 
-@app.route("/api/club/jugement", methods=["POST"])
 def api_club_jugement():
     """Enregistre le jugement porté sur un avis « club » (issue #142, point
     5) dans config.CLUB_JUGEMENTS_LOG_PATH, une ligne JSON par jugement —

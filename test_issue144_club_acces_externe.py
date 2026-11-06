@@ -9,16 +9,17 @@ Anthropic dédiée jamais remplacée par la clé principale, mode debug
 désactivé.
 
 Utilise app_club.creer_app_club(...).test_client() (comme
-test_issue142_page_club.py utilise app.app.test_client()) — aucun
-processus serveur réel n'est lancé par ces tests (ni app_club.run, ni
-tailscale funnel), donc rien à arrêter après coup.
+test_issue142_page_club.py, depuis l'issue #149) — aucun processus serveur
+réel n'est lancé par ces tests (ni app_club.run, ni tailscale funnel), donc
+rien à arrêter après coup.
 
 Ce fichier importe app.py (via app_club.py) comme test_issue128.py/
 test_issue134.py/test_issue135.py/test_issue137_signe_eval_lichess.py/
 test_issue139_mode_serie.py/test_issue140_mode_serie_ia_arriere_plan.py/
-test_issue141_golden_master.py/test_issue142_page_club.py : ne JAMAIS
-l'exécuter dans le même process que l'un de ces fichiers — invoquer
-séparément :
+test_issue141_golden_master.py/test_issue142_page_club.py/
+test_issue146_club_securite_reseau.py/
+test_issue149_club_routes_app_principale.py : ne JAMAIS l'exécuter dans le
+même process que l'un de ces fichiers — invoquer séparément :
     python3 -m unittest test_issue144_club_acces_externe
 """
 

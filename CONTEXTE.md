@@ -142,24 +142,33 @@ ce contexte (page indépendante, autre point d'accès) doit appeler cette
 fonction plutôt que dupliquer la logique. Détail : fiche
 `contexte_coach_exercice`.
 
-**Page « club » (issues #142/#144)** : `/club` (page statique), `/api/club/avis`
-(avis du coach sur un coup quelconque — Claude seul, jamais Mistral, même
-contexte que l'exercice « Position précise »), `/api/club/eval` (Stockfish
-seul), `/api/club/jugement`. Journalisée avec `mode_origine="club"`, exclue
-par construction du filtre de `scripts/controle_avis.py`
-(`mode_origine=="exercice"`). Limites (40 avis/jour, 2 appels simultanés),
-sélection hors-ligne des exercices (`scripts/selection_club.py`, issue #143).
-Accès externe (issue #144) : second point d'entrée dédié `app_club.py`
-(port 5001 par défaut), qui ne sert QUE ces routes — toute autre URL y
-répond 404 par construction — derrière un jeton obligatoire (`CLUB_JETON`
-du `.env`) et une clé Anthropic dédiée (`CLUB_ANTHROPIC_API_KEY` du `.env`,
-jamais de repli sur la clé principale). Liaison réseau locale par défaut
-(`127.0.0.1`, issue #146) — Funnel atteint ce serveur via l'adresse locale
-de la machine, jamais besoin d'une liaison large ; `CLUB_OUVRIR_RESEAU=1`
-l'élargit en connaissance de cause. Les 3 routes POST refusent
-explicitement (415/400) tout corps qui n'est pas du JSON bien formé, sur
-`app.py`/port 5000 comme sur `app_club.py`. `app.py`/port 5000 restent
-inchangés (liaison large documentée comme exception `SEC-013` dans
+**Page « club » (issues #142/#144/#149)** : `/club` (page statique),
+`/api/club/avis` (avis du coach sur un coup quelconque — Claude seul, jamais
+Mistral, même contexte que l'exercice « Position précise »), `/api/club/eval`
+(Stockfish seul), `/api/club/jugement`. Journalisée avec `mode_origine="club"`,
+exclue par construction du filtre de `scripts/controle_avis.py`
+(`mode_origine=="exercice"`). Limites (40 avis/jour, 1 seul compteur
+d'appels simultanés — issue #149, voir ci-dessous), sélection hors-ligne des
+exercices (`scripts/selection_club.py`, issue #143). Depuis l'issue #149, ces
+quatre routes (fonctions `app.club_page`/`api_club_avis`/`api_club_eval`/
+`api_club_jugement`) n'existent QUE sur l'entrée dédiée `app_club.py`
+(`add_url_rule`, port 5001 par défaut) : plus aucun `@app.route` pour elles
+sur `app.py`/port 5000, qui y répond désormais le 404 standard de Flask —
+même Alain, pour un essai personnel, passe par l'entrée club et son jeton.
+Avant l'issue #149, ces routes étaient enregistrées sur LES DEUX
+applications (deux `@app.route` distincts partageant les mêmes fonctions),
+ce qui laissait `app.py`/port 5000 y répondre sans jeton, avec la clé
+Anthropic principale et un second compteur de concurrence indépendant de
+celui de l'entrée club — corrigé par ce retrait. `app_club.py` ne sert QUE
+ces routes — toute autre URL y répond 404 par construction — derrière un
+jeton obligatoire (`CLUB_JETON` du `.env`) et une clé Anthropic dédiée
+(`CLUB_ANTHROPIC_API_KEY` du `.env`, jamais de repli sur la clé principale).
+Liaison réseau locale par défaut (`127.0.0.1`, issue #146) — Funnel atteint
+ce serveur via l'adresse locale de la machine, jamais besoin d'une liaison
+large ; `CLUB_OUVRIR_RESEAU=1` l'élargit en connaissance de cause. Les 3
+routes POST refusent explicitement (415/400) tout corps qui n'est pas du
+JSON bien formé. `app.py`/port 5000 reste par ailleurs inchangé pour tout le
+reste (liaison large documentée comme exception `SEC-013` dans
 `.audit.json` : accès depuis le téléphone via Tailscale, filtre
 `_FiltreAccesDistant`). Détail des routes, de l'entrée dédiée et
 lancement : fiche `page_club`.

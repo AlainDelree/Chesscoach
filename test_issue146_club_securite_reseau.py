@@ -6,24 +6,31 @@ Tests pour :
    — SANS lancer de vrai serveur (la fonction est testée directement).
 2. Le refus explicite (415/400) des requêtes non JSON, vides ou illisibles
    sur les 3 routes POST du club (`/api/club/avis`, `/api/club/eval`,
-   `/api/club/jugement`), sur les DEUX entrées (`app.py`/port 5000 ET
-   `app_club.py`/port 5001) — sans modification d'état (compteur
-   quotidien, journal des jugements) ni appel IA/Stockfish.
+   `/api/club/jugement`) sur l'entrée club (`app_club.py`/port 5001) —
+   sans modification d'état (compteur quotidien, journal des jugements) ni
+   appel IA/Stockfish.
 3. La non-régression des requêtes valides sur ces mêmes routes.
 
-Utilise app.app.test_client() et app_club.creer_app_club(...).test_client()
-(comme test_issue142_page_club.py et test_issue144_club_acces_externe.py) :
-aucun processus serveur réel n'est lancé par ce fichier. Une seule classe
-de test, avec un seul import de app_club (donc de app.py) dans
-setUpClass, APRÈS le patch des chemins de configuration vers un dossier
-temporaire — importer app_club une deuxième fois ailleurs (ex. dans une
-classe séparée exécutée avant) importerait app.py avec ses VRAIS chemins
-de données, cf. la garde dans setUpClass.
+Depuis l'issue #149 : ces quatre routes (page + 3 points d'accès) n'existent
+plus que sur l'entrée club — `app.py`/port 5000 y répond 404. Ce fichier
+ne les atteint donc plus via `app.app.test_client()` (voir
+`_entrees()` ci-dessous, réduite à une seule entrée) ; la vérification du
+404 côté application principale est faite séparément par
+`test_issue149_club_routes_app_principale.py`.
+
+Utilise app_club.creer_app_club(...).test_client() (comme
+test_issue142_page_club.py et test_issue144_club_acces_externe.py) : aucun
+processus serveur réel n'est lancé par ce fichier. Une seule classe de
+test, avec un seul import de app_club (donc de app.py) dans setUpClass,
+APRÈS le patch des chemins de configuration vers un dossier temporaire —
+importer app_club une deuxième fois ailleurs (ex. dans une classe séparée
+exécutée avant) importerait app.py avec ses VRAIS chemins de données, cf.
+la garde dans setUpClass.
 
 Ce fichier importe app.py (via app_club.py) comme test_issue128.py/
-test_issue142_page_club.py/test_issue144_club_acces_externe.py : ne JAMAIS
-l'exécuter dans le même process que l'un de ces fichiers — invoquer
-séparément :
+test_issue142_page_club.py/test_issue144_club_acces_externe.py/
+test_issue149_club_routes_app_principale.py : ne JAMAIS l'exécuter dans le
+même process que l'un de ces fichiers — invoquer séparément :
     python3 -m unittest test_issue146_club_securite_reseau
 """
 
@@ -143,10 +150,14 @@ class TestRefusRequetesNonJson(unittest.TestCase):
         return captures
 
     def _entrees(self):
-        """Les deux entrées équivalentes pour une route club : (nom, client,
-        en-têtes additionnels requis par cette entrée)."""
+        """Seule entrée qui sert encore les routes club depuis l'issue
+        #149 : (nom, client, en-têtes additionnels requis). Conservée sous
+        forme de liste (plutôt qu'un client unique en dur) pour garder la
+        boucle `for nom, client, entetes in self._entrees():` inchangée
+        dans les tests ci-dessous — `app.py`/port 5000 ne répond plus à ces
+        routes (vérifié par test_routes_club_404_sur_application_principale
+        ci-dessous et par test_issue149_club_routes_app_principale.py)."""
         return [
-            ("port_5000", self.port_5000, {}),
             ("port_5001", self.port_5001, {"X-Club-Jeton": self.JETON}),
         ]
 
@@ -228,10 +239,10 @@ class TestRefusRequetesNonJson(unittest.TestCase):
 
     # -- Non-régression : requêtes valides inchangées ------------------------
 
-    def test_avis_valide_inchange_sur_les_deux_entrees(self):
+    def test_avis_valide_inchange_sur_lentree_club(self):
         for nom, client, entetes in self._entrees():
             with self.subTest(entree=nom):
-                self._reset_etat_avis()  # repartir d'un compteur à zéro entre les deux entrées
+                self._reset_etat_avis()
                 self._patch_claude_rapide()
                 reponse = client.post(
                     "/api/club/avis",
@@ -243,7 +254,7 @@ class TestRefusRequetesNonJson(unittest.TestCase):
                 self.assertIn("text", corps)
                 self.assertEqual(corps["verdict_qualite_officiel"], "gaffe")
 
-    def test_eval_valide_inchange_sur_les_deux_entrees(self):
+    def test_eval_valide_inchange_sur_lentree_club(self):
         fen = "4k3/8/8/8/3Q4/8/8/4K3 w - - 0 1"
         for nom, client, entetes in self._entrees():
             with self.subTest(entree=nom):
@@ -251,7 +262,7 @@ class TestRefusRequetesNonJson(unittest.TestCase):
                 self.assertEqual(reponse.status_code, 200, reponse.get_json())
                 self.assertTrue(reponse.get_json()["meilleurs_coups"])
 
-    def test_jugement_valide_inchange_sur_les_deux_entrees(self):
+    def test_jugement_valide_inchange_sur_lentree_club(self):
         for nom, client, entetes in self._entrees():
             with self.subTest(entree=nom):
                 try:
@@ -266,6 +277,27 @@ class TestRefusRequetesNonJson(unittest.TestCase):
                 self.assertEqual(reponse.status_code, 200, reponse.get_json())
                 self.assertIn("id", reponse.get_json())
                 self.assertTrue(self.app_module.config.CLUB_JUGEMENTS_LOG_PATH.exists())
+
+    # -- Issue #149 : ces routes n'existent plus sur l'application principale
+
+    def test_routes_club_404_sur_application_principale(self):
+        # app.py/port 5000 ne connaît plus ces quatre routes (issue #149) :
+        # 404 standard de Flask, qu'un jeton soit fourni ou non — il n'y a
+        # plus de filtre de jeton à déjouer, la route elle-même n'existe
+        # plus sur cette application.
+        compteur_avant = self.app_module._club_charger_compteur().get("count", 0)
+
+        reponse = self.port_5000.get("/club")
+        self.assertEqual(reponse.status_code, 404)
+        for route in ("/api/club/avis", "/api/club/eval", "/api/club/jugement"):
+            with self.subTest(route=route):
+                reponse = self.port_5000.post(route, json={"fen": self.FEN_GAFFE_BLANCS})
+                self.assertEqual(reponse.status_code, 404)
+
+        self.assertEqual(
+            self.app_module._club_charger_compteur().get("count", 0), compteur_avant,
+            "une route 404 ne doit jamais consommer la limite quotidienne",
+        )
 
 
 if __name__ == "__main__":
