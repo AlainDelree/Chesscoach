@@ -212,7 +212,8 @@ def preparer(chemin_csv: Path) -> tuple[list, dict]:
     # Échantillonnage par (catégorie, tranche de note) — un problème peut
     # être retenu via plusieurs catégories différentes, il n'est stocké
     # qu'une seule fois dans le pool final (ensemble d'index retenus).
-    rng = random.Random(GRAINE_ECHANTILLONNAGE)
+    # Échantillonnage de jeu du pool de puzzles, jamais fabrication d'un secret
+    rng = random.Random(GRAINE_ECHANTILLONNAGE)  # noqa: S311  # nosec B311
     par_case = {}  # (categorie, tranche) -> [index]
     for idx, entree in enumerate(candidats):
         tranche = _tranche(entree["rating"])

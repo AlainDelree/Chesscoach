@@ -287,7 +287,8 @@ def tirer_probleme(pool: list, phase_theme: str | None, niveaux: dict, historiqu
             return None, None, None
         categories_ok = list(compatibles.keys())
         poids = [_poids_categorie(niveau_categorie(niveaux, c)) for c in categories_ok]
-        categorie = random.choices(categories_ok, weights=poids, k=1)[0]
+        # Tirage de jeu (choix pondéré d'une catégorie), jamais fabrication d'un secret
+        categorie = random.choices(categories_ok, weights=poids, k=1)[0]  # noqa: S311  # nosec B311
         candidats_categorie = compatibles[categorie]
 
     niveau = niveau_categorie(niveaux, categorie)

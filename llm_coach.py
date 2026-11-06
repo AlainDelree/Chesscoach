@@ -2430,7 +2430,8 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
     # #105 : au-delà, le socket est abandonné, pas seulement une alerte
     # visuelle côté interface.
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        # URL constante en https, jamais saisie par l'utilisateur
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310  # nosec B310
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         # Solde de crédit épuisé (issue #54, détection élargie issue #60) :
@@ -2472,7 +2473,8 @@ def _call_claude(prompt_sys: str, messages, api_key: str, model: str, usage_path
                 method="POST",
             )
             try:
-                with urllib.request.urlopen(req_sans_temp, timeout=timeout_s) as resp:
+                # URL constante en https, jamais saisie par l'utilisateur
+                with urllib.request.urlopen(req_sans_temp, timeout=timeout_s) as resp:  # noqa: S310  # nosec B310
                     data = json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError:
                 # Si le réessai échoue aussi, propager l'erreur originale
@@ -2592,7 +2594,8 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        # URL constante en https, jamais saisie par l'utilisateur
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310  # nosec B310
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         # Erreur HTTP : lire le corps pour le logging, puis propager
@@ -2625,7 +2628,8 @@ def _call_mistral(prompt_sys: str, messages, api_key: str, model: str, usage_pat
                 method="POST",
             )
             try:
-                with urllib.request.urlopen(req_sans_temp, timeout=timeout_s) as resp:
+                # URL constante en https, jamais saisie par l'utilisateur
+                with urllib.request.urlopen(req_sans_temp, timeout=timeout_s) as resp:  # noqa: S310  # nosec B310
                     data = json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError:
                 # Si le réessai échoue aussi, propager l'erreur originale

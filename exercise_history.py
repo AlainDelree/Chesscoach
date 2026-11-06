@@ -175,4 +175,5 @@ def choisir_exercice(pool: list, historique: dict, dernier_sous_type: str | None
         if sans_repetition:
             candidats = sans_repetition
 
-    return random.choice(candidats)
+    # Tirage de jeu (choix d'un exercice), jamais fabrication d'un secret
+    return random.choice(candidats)  # noqa: S311  # nosec B311

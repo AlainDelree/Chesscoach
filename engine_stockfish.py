@@ -1025,7 +1025,8 @@ class EngineManager:
         if not fen:
             return None
         try:
-            proc = subprocess.run(
+            # Binaire et arguments fixes, sans shell, aucune entrée utilisateur
+            proc = subprocess.run(  # noqa: S603  # nosec B603
                 [self._engine_path],
                 input=f"position fen {fen}\neval\nquit\n",
                 capture_output=True, text=True, timeout=timeout,

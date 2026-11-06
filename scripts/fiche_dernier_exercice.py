@@ -107,7 +107,8 @@ def fabriquer(args):
         if s.get("log_id") and (s.get("commentaire") or "").strip():
             signalements.setdefault(s["log_id"], []).append(s["commentaire"].strip())
 
-    rnd = random.Random()
+    # Mélange de jeu de l'ordre de relecture, jamais fabrication d'un secret
+    rnd = random.Random()  # noqa: S311  # nosec B311
     md, cle_ab = ["# Fiches de relecture : 1 = juste, 0 = au moins une erreur sur la position, la suite des coups, ou autre", "",
                   "Règle de notation : une seule ligne « Note: » par avis, avec 0 ou 1 (0,5 toléré). Le reste va dans « Commentaires: ».", ""], {}
     for k, (fen, coup) in enumerate(cles, 1):

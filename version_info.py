@@ -47,7 +47,8 @@ def _get_git_commit_hash(repo_path: Path) -> str:
     """
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--short=7", "HEAD"],
+            # Git lancé via le PATH, arguments fixes, sans shell
+            ["git", "rev-parse", "--short=7", "HEAD"],  # noqa: S607  # nosec B607
             cwd=repo_path,
             capture_output=True,
             text=True,
@@ -71,7 +72,8 @@ def _get_git_commit_message(repo_path: Path) -> str:
     """
     try:
         result = subprocess.run(
-            ["git", "log", "-1", "--pretty=format:%s"],
+            # Git lancé via le PATH, arguments fixes, sans shell
+            ["git", "log", "-1", "--pretty=format:%s"],  # noqa: S607  # nosec B607
             cwd=repo_path,
             capture_output=True,
             text=True,
@@ -96,7 +98,8 @@ def _is_git_repo_modified(repo_path: Path) -> bool:
     try:
         # Vérifier les modifications (fichiers modifiés ou supprimés)
         result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            # Git lancé via le PATH, arguments fixes, sans shell
+            ["git", "status", "--porcelain"],  # noqa: S607  # nosec B607
             cwd=repo_path,
             capture_output=True,
             text=True,
@@ -128,8 +131,10 @@ def _find_last_issue_in_commits(repo_path: Path, num_commits: int = NUM_COMMITS_
     """
     try:
         # Récupérer les messages des derniers commits
-        result = subprocess.run(
-            ["git", "log", f"-n{num_commits}", "--pretty=format:%s"],
+        # Nombre de commits interne (pas une entrée utilisateur), sans shell
+        result = subprocess.run(  # noqa: S603  # nosec B603
+            # Git lancé via le PATH, arguments fixes, sans shell
+            ["git", "log", f"-n{num_commits}", "--pretty=format:%s"],  # noqa: S607  # nosec B607
             cwd=repo_path,
             capture_output=True,
             text=True,
