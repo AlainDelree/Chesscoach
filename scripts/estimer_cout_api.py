@@ -13,12 +13,15 @@ Affiche un avertissement si des prix utilisés sont marqués "à vérifier".
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
+
+logger = logging.getLogger("chesscoach.estimer_cout_api")
 
 # Chemin vers le fichier de prix (relatif au script ou chemin absolu)
 DEFAULT_PRICES_PATH = Path(__file__).parent.parent / "data" / "token_prices.json"
@@ -106,7 +109,7 @@ def parser_date(date_str: str) -> datetime | None:
     try:
         return datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
-        pass
+        logger.debug("parser_date : date %r illisible", date_str, exc_info=True)
     return None
 
 
@@ -126,7 +129,7 @@ def extraire_date_de_fichier(fichier: Path) -> datetime | None:
         try:
             return datetime.strptime(date_str, "%Y-%m")
         except ValueError:
-            pass
+            logger.debug("extraire_date_de_fichier : date %r illisible", date_str, exc_info=True)
     return None
 
 

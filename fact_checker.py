@@ -27,11 +27,14 @@ Les affirmations que le vérificateur ne sait pas interpréter sont ignorées
 sans bruit.
 """
 
+import logging
 import re
 import chess
 from typing import List, Dict, Tuple, Optional, Set
 
 import avis_format
+
+logger = logging.getLogger("chesscoach.fact_checker")
 
 
 # Motifs regex pour détecter les affirmations à vérifier
@@ -253,8 +256,8 @@ def _get_all_positions_candidates(context: Dict) -> List[str]:
             move = board.parse_san(coup_propose) if board.parse_san(coup_propose) else board.parse_uci(coup_propose)
             board.push(move)
             positions.append(board.fen())
-        except:
-            pass
+        except Exception:
+            logger.debug("_get_all_positions_candidates : coup_propose illisible", exc_info=True)
     
     # Ligne calculée pour le coup proposé
     pv_coup_propose = context.get('pv_coup_propose', '')
@@ -267,15 +270,17 @@ def _get_all_positions_candidates(context: Dict) -> List[str]:
                     move = board.parse_san(move_san)
                     board.push(move)
                     positions.append(board.fen())
-                except:
+                except Exception:
+                    logger.debug("_get_all_positions_candidates : coup illisible dans pv_coup_propose (SAN)", exc_info=True)
                     try:
                         move = board.parse_uci(move_san)
                         board.push(move)
                         positions.append(board.fen())
-                    except:
+                    except Exception:
+                        logger.debug("_get_all_positions_candidates : coup illisible dans pv_coup_propose (SAN/UCI)", exc_info=True)
                         break
-        except:
-            pass
+        except Exception:
+            logger.debug("_get_all_positions_candidates : échec sur pv_coup_propose", exc_info=True)
     
     # Ligne du meilleur coup
     pv_meilleur_coup = context.get('pv_meilleur_coup', '')
@@ -288,15 +293,17 @@ def _get_all_positions_candidates(context: Dict) -> List[str]:
                     move = board.parse_san(move_san)
                     board.push(move)
                     positions.append(board.fen())
-                except:
+                except Exception:
+                    logger.debug("_get_all_positions_candidates : coup illisible dans pv_meilleur_coup (SAN)", exc_info=True)
                     try:
                         move = board.parse_uci(move_san)
                         board.push(move)
                         positions.append(board.fen())
-                    except:
+                    except Exception:
+                        logger.debug("_get_all_positions_candidates : coup illisible dans pv_meilleur_coup (SAN/UCI)", exc_info=True)
                         break
-        except:
-            pass
+        except Exception:
+            logger.debug("_get_all_positions_candidates : échec sur pv_meilleur_coup", exc_info=True)
     
     # Supprimer les doublons
     return list(set(positions))
@@ -381,7 +388,8 @@ def _verifier_piece_en_case(
                         if piece_type == expected_type:
                             piece_trouvee_dans_une_position = True
                             break
-            except:
+            except Exception:
+                logger.debug("_verifier_piece_en_case : position candidate illisible", exc_info=True)
                 continue
         
         # Si la pièce n'a pas été trouvée dans AUCUNE position candidate,
@@ -465,7 +473,8 @@ def _verifier_piece_case_sans_preposition(
                         if piece_type == expected_type:
                             piece_trouvee_dans_une_position = True
                             break
-            except:
+            except Exception:
+                logger.debug("_verifier_piece_case_sans_preposition : position candidate illisible", exc_info=True)
                 continue
         
         if not piece_trouvee_dans_une_position:
@@ -513,7 +522,8 @@ def _verifier_pion_attaque_avec_piece(
         # Un pion attaque diagonalement en avant d'une case
         try:
             pion_square = chess.parse_square(pion_case)
-        except:
+        except Exception:
+            logger.debug("_verifier_pion_attaque_avec_piece : case du pion illisible", exc_info=True)
             continue
         
         if couleur == chess.WHITE:
@@ -550,7 +560,8 @@ def _verifier_pion_attaque_avec_piece(
                     
                     if attaque_valide_dans_une_position:
                         break
-            except:
+            except Exception:
+                logger.debug("_verifier_pion_attaque_avec_piece : position candidate illisible", exc_info=True)
                 continue
         
         if not attaque_valide_dans_une_position:
@@ -598,7 +609,8 @@ def _verifier_pion_attaque_case_seule(
         # Vérifier que le pion existe et attaque bien quelque chose
         try:
             pion_square = chess.parse_square(pion_case)
-        except:
+        except Exception:
+            logger.debug("_verifier_pion_attaque_case_seule : case du pion illisible", exc_info=True)
             continue
         
         # Vérifier dans toutes les positions candidates
@@ -627,7 +639,8 @@ def _verifier_pion_attaque_case_seule(
                     
                     if pion_existe_et_attaque:
                         break
-            except:
+            except Exception:
+                logger.debug("_verifier_pion_attaque_case_seule : position candidate illisible", exc_info=True)
                 continue
         
         # Si le pion n'existe pas OU n'attaque rien dans AUCUNE position candidate
@@ -669,7 +682,8 @@ def _verifier_case_pour_menacer_piece(
         try:
             attaquant_square = chess.parse_square(case_attaquante)
             attaquee_square = chess.parse_square(case_attaquee)
-        except:
+        except Exception:
+            logger.debug("_verifier_case_pour_menacer_piece : case attaquante/attaquée illisible", exc_info=True)
             continue
         
         # Vérifier dans toutes les positions candidates
@@ -710,7 +724,8 @@ def _verifier_case_pour_menacer_piece(
                             if piece_attaquee_obj and piece_attaquee_obj.piece_type == expected_type:
                                 attaque_valide_dans_une_position = True
                                 break
-            except:
+            except Exception:
+                logger.debug("_verifier_case_pour_menacer_piece : position candidate illisible", exc_info=True)
                 continue
         
         if not attaque_valide_dans_une_position:
@@ -786,7 +801,8 @@ def _verifier_ce_pion_attaque_pieces(
         # Vérifier la géométrie d'attaque du pion
         try:
             pion_square = chess.parse_square(pion_case)
-        except:
+        except Exception:
+            logger.debug("_verifier_ce_pion_attaque_pieces : case du pion illisible", exc_info=True)
             continue
         
         if couleur == chess.WHITE:
@@ -824,7 +840,8 @@ def _verifier_ce_pion_attaque_pieces(
                     if expected_type1 in pieces_trouvees and expected_type2 in pieces_trouvees:
                         attaque_valide_dans_une_position = True
                         break
-            except:
+            except Exception:
+                logger.debug("_verifier_ce_pion_attaque_pieces : position candidate illisible", exc_info=True)
                 continue
         
         if not attaque_valide_dans_une_position:
@@ -873,7 +890,8 @@ def _verifier_piece_attaquee_par_pion(
         try:
             pion_square = chess.parse_square(pion_case)
             piece_square = chess.parse_square(piece_case)
-        except:
+        except Exception:
+            logger.debug("_verifier_piece_attaquee_par_pion : case du pion/de la pièce illisible", exc_info=True)
             continue
         
         # Calculer les cases qu'un pion de cette couleur attaquerait
@@ -913,7 +931,8 @@ def _verifier_piece_attaquee_par_pion(
                 if piece_square in attaques_possibles:
                     attaque_valide_dans_une_position = True
                     break
-            except:
+            except Exception:
+                logger.debug("_verifier_piece_attaquee_par_pion : position candidate illisible", exc_info=True)
                 continue
         
         if not attaque_valide_dans_une_position:

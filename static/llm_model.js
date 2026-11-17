@@ -48,6 +48,24 @@ function _llmModelRenderIndisponible(modeleRefuse, nouveauLabel) {
   history.scrollTop = history.scrollHeight;
 }
 
+// Échec de la persistance du choix de modèle (issue #154, error=echec_sauvegarde) :
+// le changement est actif pour la session (le serveur a déjà basculé), mais ne
+// survivra pas à un redémarrage — même conteneur/palette que les autres messages
+// système du chat, pour qu'Alain le voie sans avoir à ouvrir la console.
+function _llmModelRenderEchecSauvegarde() {
+  const history = document.getElementById("coach-history");
+  if (!history) return;
+  const empty = document.getElementById("coach-empty");
+  if (empty) empty.style.display = "none";
+  const bubble = document.createElement("div");
+  bubble.className = "coach-bubble error";
+  bubble.textContent =
+    "Le modèle a bien changé pour cette session, mais ce choix n'a pas pu être " +
+    "enregistré (échec d'écriture) — il ne sera pas conservé au prochain démarrage.";
+  history.appendChild(bubble);
+  history.scrollTop = history.scrollHeight;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll("#llm-model-selector .llm-model-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -67,6 +85,7 @@ if (typeof socket !== "undefined") {
   socket.on("llm_model_error", (data) => {
     _llmModelSetBusy(false);
     console.warn("[modèle Claude] changement refusé", data);
+    if (data && data.error === "echec_sauvegarde") _llmModelRenderEchecSauvegarde();
   });
 
   socket.on("llm_model_indisponible", (data) => {

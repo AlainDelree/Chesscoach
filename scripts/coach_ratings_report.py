@@ -23,6 +23,7 @@ Issue #124 : Suite #120 — enregistrer la version du code et une étiquette de 
 
 import argparse
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -32,6 +33,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
+
+logger = logging.getLogger("chesscoach.coach_ratings_report")
 
 RATINGS_PATH = os.path.join(config.DATA_DIR, "coach_ratings.jsonl")
 
@@ -97,7 +100,7 @@ def _get_timestamp(rating: dict) -> datetime | None:
         try:
             return datetime.fromisoformat(timestamp_str)
         except (ValueError, TypeError):
-            pass
+            logger.debug("_get_timestamp : timestamp illisible", exc_info=True)
     return None
 
 

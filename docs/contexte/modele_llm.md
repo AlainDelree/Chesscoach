@@ -31,12 +31,23 @@ absent ou invalide), reprend `CHESSCOACH_LLM_MODEL` si sa valeur correspond à
 l'un des deux choix connus, sinon Sonnet par défaut (jeu sérieux plutôt que
 test).
 
+Échec d'écriture de ce fichier (disque plein, permissions — issue #154) :
+`set_llm_model` trace un avertissement et renvoie `False`, mais applique
+quand même le changement en mémoire (effet immédiat conservé pour la
+session) — le choix ne survivra simplement pas à un redémarrage. Les deux
+appelants (`on_set_llm_model` et le filet `_handle_llm_model_indisponible_si_besoin`,
+tous deux dans app.py) ne testent le retour que pour en informer
+l'utilisateur, jamais pour annuler le changement déjà appliqué.
+
 Côté interface, le clic sur un bouton émet l'événement SocketIO
 `set_llm_model` (`{"model": "..."}`) ; le serveur répond `llm_model_changed`
-(bascule le bouton actif) ou, si `model_id` n'est ni Haiku ni Sonnet,
-`llm_model_error` (n'arrive pas en usage normal, les deux boutons envoient
-toujours un id connu — filet de sécurité défensif). Logique dans
-static/llm_model.js.
+(bascule le bouton actif) puis, selon le cas : `llm_model_error` avec
+`error: "modele_invalide"` si `model_id` n'est ni Haiku ni Sonnet (n'arrive
+pas en usage normal, les deux boutons envoient toujours un id connu — filet
+de sécurité défensif), ou `error: "echec_sauvegarde"` si la persistance sur
+disque a échoué (issue #154 — affiche alors un message dans le chat,
+`_llmModelRenderEchecSauvegarde`, pour qu'Alain ne croie pas à une
+sauvegarde réussie). Logique dans static/llm_model.js.
 
 Refus par l'API (modèle introuvable ou indisponible, HTTP 404
 `not_found_error`) : `_call_claude` (llm_coach.py) lève désormais

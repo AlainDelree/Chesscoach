@@ -21,10 +21,13 @@ Le dict de version contient :
   - serie : étiquette de série depuis CHESSCOACH_SERIE (tronquée à 50 chars) ou ""
 """
 
+import logging
 import os
 import re
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger("chesscoach.version_info")
 
 # Variable globale pour mémoriser la version (calculée une fois au démarrage)
 VERSION_INFO: dict | None = None
@@ -57,7 +60,7 @@ def _get_git_commit_hash(repo_path: Path) -> str:
         if result.returncode == 0:
             return result.stdout.strip()
     except Exception:
-        pass
+        logger.debug("_get_git_commit_hash : git indisponible", exc_info=True)
     return "inconnue"
 
 
@@ -82,7 +85,7 @@ def _get_git_commit_message(repo_path: Path) -> str:
         if result.returncode == 0:
             return result.stdout.strip()
     except Exception:
-        pass
+        logger.debug("_get_git_commit_message : git indisponible", exc_info=True)
     return "inconnue"
 
 
@@ -109,7 +112,7 @@ def _is_git_repo_modified(repo_path: Path) -> bool:
             # Si la sortie n'est pas vide, il y a des modifications
             return len(result.stdout.strip()) > 0
     except Exception:
-        pass
+        logger.debug("_is_git_repo_modified : git indisponible", exc_info=True)
     return False
 
 
@@ -166,7 +169,7 @@ def _find_last_issue_in_commits(repo_path: Path, num_commits: int = NUM_COMMITS_
             
             return str(last_issue) if last_issue is not None else None
     except Exception:
-        pass
+        logger.debug("_find_last_issue_in_commits : git indisponible", exc_info=True)
     return None
 
 

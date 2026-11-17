@@ -23,11 +23,14 @@ Issue #124 : Suite #120 — enregistrer la version du code et une étiquette de 
 """
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 
 import config
+
+logger = logging.getLogger("chesscoach.coach_ratings")
 
 RATINGS_PATH = os.path.join(config.DATA_DIR, "coach_ratings.jsonl")
 
@@ -80,6 +83,7 @@ def _get_version_info_from_log_id(log_id: str) -> dict:
                                     }
             except Exception:
                 # Ignorer les erreurs de lecture et continuer avec le fichier suivant
+                logger.debug("_get_version_info_from_log_id : lecture de %s", log_path, exc_info=True)
                 continue
     
     # Si aucune entrée n'est trouvée, retourner "inconnue"
@@ -132,7 +136,7 @@ def record_rating(agent, model, rating, log_id, fen, coup_propose, mode="exercic
                     if line:
                         existing_ratings.append(json.loads(line))
         except Exception:
-            pass
+            logger.debug("record_rating : lecture de %s", RATINGS_PATH, exc_info=True)
     
     # Supprimer l'ancienne note pour ce log_id si elle existe
     existing_ratings = [
@@ -186,7 +190,7 @@ def get_all_ratings():
                     if line:
                         ratings.append(json.loads(line))
         except Exception:
-            pass
+            logger.debug("get_all_ratings : lecture de %s", RATINGS_PATH, exc_info=True)
     return ratings
 
 

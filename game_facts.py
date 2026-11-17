@@ -1122,6 +1122,7 @@ def build_coup_interroge_bloc(coup_str: str, positions: list, camp_alain: str = 
         try:
             board = chess.Board(fen)
         except Exception:
+            logger.debug("build_reponse_adverse_obligee_texte : FEN illisible (%s)", label, exc_info=True)
             continue
         resultat = resolve_coup_sur_position(board, coup_str)
         if resultat["ambigu"]:
@@ -2269,7 +2270,7 @@ def build_game_facts_text(pgn_text: str, camp_alain: str, flagged_moves: list | 
                         f"{camp_label(False, camp_alain)} : {_liste_pieces(board_position_avant, False)}"
                     )
                 except Exception:
-                    pass
+                    logger.debug("build_game_facts_text : fen_avant illisible pour le coup %s", numero, exc_info=True)
 
             # Description mécanique de chaque coup cité (issue #66, point 1)
             # — jamais laissée à la charge du modèle, qui reconstituait de

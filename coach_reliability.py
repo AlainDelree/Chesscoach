@@ -904,6 +904,7 @@ def _construire_candidats(fen_reference: str, fen_reference2: str = "",
             try:
                 b.push_san(coup)
             except Exception:
+                logger.debug("[COACH_RELIABILITY] coup %r (%s) injouable depuis board_depart", coup, label, exc_info=True)
                 continue
             candidats.append((label, b))
 

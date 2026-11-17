@@ -5,9 +5,13 @@ La clé API Claude n'est jamais codée en dur, uniquement lue depuis
 l'environnement.
 """
 
+import contextlib
 import json
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = Path.home() / "ChessCoach" / "data"
 ENGINES_DIR = Path.home() / "ChessCoach" / "engines"
@@ -166,13 +170,11 @@ def _charger_choix_modele_llm() -> str:
     À défaut (premier lancement, fichier absent ou invalide), reprend
     CHESSCOACH_LLM_MODEL si sa valeur correspond à l'un des deux choix
     connus, sinon Sonnet par défaut (jeu sérieux plutôt que test)."""
-    try:
+    with contextlib.suppress(OSError, ValueError, AttributeError):
         brut = json.loads(LLM_MODEL_CHOICE_PATH.read_text(encoding="utf-8"))
         choix = brut.get("model")
         if choix in LLM_MODEL_CHOICES:
             return choix
-    except (OSError, ValueError, AttributeError):
-        pass
     env_model = os.environ.get("CHESSCOACH_LLM_MODEL", "")
     return env_model if env_model in LLM_MODEL_CHOICES else LLM_MODEL_SONNET
 
@@ -185,7 +187,11 @@ def set_llm_model(model_id: str) -> bool:
     suivants — app.py relit l'attribut config.LLM_MODEL à chaque appel, jamais
     une copie figée au démarrage — et persistance dans LLM_MODEL_CHOICE_PATH.
     Le .env n'est jamais modifié. Retourne False sans aucun effet si model_id
-    n'est pas l'un des deux choix valides."""
+    n'est pas l'un des deux choix valides. Retourne aussi False (issue #154)
+    si l'écriture sur disque échoue — l'effet immédiat en mémoire a alors
+    quand même lieu (le modèle actif change pour la session en cours), mais
+    le choix ne survivra pas à un redémarrage ; l'appelant doit en informer
+    l'utilisateur plutôt que de laisser croire à une sauvegarde réussie."""
     global LLM_MODEL
     if model_id not in LLM_MODEL_CHOICES:
         return False
@@ -196,7 +202,11 @@ def set_llm_model(model_id: str) -> bool:
             json.dumps({"model": model_id}, ensure_ascii=False), encoding="utf-8"
         )
     except OSError:
-        pass
+        logger.warning(
+            "set_llm_model : échec d'écriture de LLM_MODEL_CHOICE_PATH, "
+            "le choix de modèle ne sera pas persisté"
+        )
+        return False
     return True
 
 # Délai maximal d'une réponse du coach (issue #105) — valeurs à modifier ICI,

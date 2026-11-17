@@ -203,15 +203,21 @@ def on_set_llm_model(data):
     démarrage), persisté dans un fichier local hors du .env
     (config.set_llm_model), sans redémarrage ni effet sur la partie ou le
     chat en cours. model_id invalide (autre chose que les deux choix connus)
-    → no-op signalé au client, pas de changement silencieux."""
+    → no-op signalé au client, pas de changement silencieux. Si la
+    persistance sur disque échoue (issue #154), le changement reste actif
+    pour la session mais le client en est prévenu (error=echec_sauvegarde)
+    plutôt que de laisser croire à une sauvegarde réussie."""
     model_id = (data or {}).get("model", "")
-    if not config.set_llm_model(model_id):
+    if model_id not in config.LLM_MODEL_CHOICES:
         emit("llm_model_error", {"error": "modele_invalide", "model": model_id})
         return
+    sauvegarde_ok = config.set_llm_model(model_id)
     emit("llm_model_changed", {
         "model": model_id,
         "label": config.LLM_MODEL_CHOICES.get(model_id, model_id),
     })
+    if not sauvegarde_ok:
+        emit("llm_model_error", {"error": "echec_sauvegarde", "model": model_id})
 
 
 def _handle_llm_model_indisponible_si_besoin(error: str) -> None:
@@ -441,7 +447,7 @@ def _evaluate_move_for_coach(fen_avant: str, move: chess.Move) -> dict:
             except Exception:
                 result["meilleur_coup"] = meilleur_coup_uci
     except Exception:
-        pass
+        logger.debug("_eval_coup_pour_coach : évaluation indisponible", exc_info=True)
     return result
 
 
@@ -816,7 +822,7 @@ def _construire_contexte_coup_exercice(
             board_meilleur.push_san(meilleur_coup)
             fen_apres_meilleur_coup = board_meilleur.fen()
         except Exception:
-            pass
+            logger.debug("meilleur_coup non jouable depuis fen_avant", exc_info=True)
     reponse_adverse_coup_propose_texte = (
         game_facts.build_reponse_adverse_obligee_texte(
             "le coup proposé", fen_apres, _calculer_reponses_adverses(fen_apres), camp_alain,
@@ -2691,7 +2697,7 @@ def on_exercise_answer(data):
             fen_apres = board.fen()
             eval_blancs_cp, eval_mat = _eval_blancs_apres(board)
     except Exception:
-        pass
+        logger.debug("on_exercise_answer : coup illégal ou évaluation indisponible", exc_info=True)
 
     # Historique des exercices (issue #76) : réussi si le premier coup
     # proposé reçoit le verdict "bon" (cf. exercise_history.enregistrer_resultat
@@ -3160,7 +3166,10 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None, mode_serie: b
             else:
                 verdict_final = "bon" if coup_reussi else "erreur"
     except Exception:
-        pass
+        logger.debug(
+            "_on_exercise_answer_lichess : coup illégal ou évaluation indisponible",
+            exc_info=True,
+        )
 
     categorie = _current_exercise.get("categorie_tirage")
     cle_historique = _current_exercise.get("cle_historique")
@@ -3191,7 +3200,10 @@ def _on_exercise_answer_lichess(uci: str, exercise_id: str = None, mode_serie: b
             meilleur_coup = sans_solution[0]
             pv_meilleur_coup = " ".join(sans_solution)
         except Exception:
-            pass
+            logger.debug(
+                "_on_exercise_answer_lichess : solution Lichess injouable depuis fen_avant",
+                exc_info=True,
+            )
 
     # Mode série, étape 2 (issue #140, suite #139) : même principe que
     # on_exercise_answer ci-dessus — la ligne de verdict est émise

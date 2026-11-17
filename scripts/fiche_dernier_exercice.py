@@ -11,10 +11,12 @@ et data/fiches_dernier_exercice_cle.json (qui est A, qui est B : ne pas l'ouvrir
 Ne modifie ni l'appli ni les journaux.
 """
 import argparse
+import contextlib
 import glob
 import json
 import os
 import random
+import tempfile
 
 import chess
 
@@ -22,14 +24,28 @@ RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(RACINE, "data")
 
 
+def _ecrire_atomique(chemin, texte):
+    """Écrit `texte` dans `chemin` via un fichier temporaire du même dossier
+    puis un remplacement atomique (os.replace, issue #154) : une coupure en
+    cours d'écriture laisse alors l'ancien contenu intact plutôt qu'un
+    fichier tronqué."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(chemin) or ".", prefix=".tmp_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(texte)
+        os.replace(tmp, chemin)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
 def lire_jsonl(motif):
     lignes = []
     for f in sorted(glob.glob(os.path.join(DATA, motif))):
         for ligne in open(f, encoding="utf-8"):
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 lignes.append(json.loads(ligne))
-            except Exception:
-                continue
     return lignes
 
 
@@ -154,8 +170,11 @@ def fabriquer(args):
                    "------------------------------------------------------------", ""]
         md += ["### Préférence sur cette fiche", "Meilleur avis (A / B / égal):", "Pourquoi (facultatif):", ""]
     chemin = os.path.join(DATA, "fiches_dernier_exercice.md")
-    open(chemin, "w", encoding="utf-8").write("\n".join(md))
-    json.dump(cle_ab, open(os.path.join(DATA, "fiches_dernier_exercice_cle.json"), "w", encoding="utf-8"), indent=1)
+    _ecrire_atomique(chemin, "\n".join(md))
+    _ecrire_atomique(
+        os.path.join(DATA, "fiches_dernier_exercice_cle.json"),
+        json.dumps(cle_ab, indent=1),
+    )
     print("%d fiche(s) écrite(s) : %s" % (len(cles), chemin))
     print("(clé A/B : data/fiches_dernier_exercice_cle.json, ne pas l'ouvrir avant d'avoir noté)")
 

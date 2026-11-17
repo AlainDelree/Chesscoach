@@ -40,6 +40,7 @@ ajouter un nouveau cas.
 
 import argparse
 import json
+import logging
 import re
 import sys
 import unicodedata
@@ -52,6 +53,8 @@ import config
 import game_facts
 import llm_coach
 from engine_stockfish import DEPTH_EXERCICE_TEMPS_REEL, EngineManager, find_stockfish
+
+logger = logging.getLogger("chesscoach.non_regression_coach")
 
 RACINE = Path(__file__).resolve().parent
 CAS_DIR = RACINE / "tests" / "cas_coach"
@@ -346,7 +349,7 @@ def construire_contexte(engine_manager, cas: dict) -> tuple:
             board_meilleur.push_san(meilleur_coup)
             fen_apres_meilleur_coup = board_meilleur.fen()
         except Exception:
-            pass
+            logger.debug("meilleur_coup non jouable depuis fen_avant", exc_info=True)
     reponse_adverse_coup_propose_texte = (
         game_facts.build_reponse_adverse_obligee_texte(
             "le coup proposé", fen_apres, _calculer_reponses_adverses(engine_manager, fen_apres), camp_alain,
@@ -777,7 +780,7 @@ def creer_cas_depuis_signalement(id_signalement: str, nouvel_id: str, signalemen
     try:
         camp_alain = "blancs" if chess.Board(fen).turn == chess.WHITE else "noirs"
     except Exception:
-        pass
+        logger.debug("FEN illisible pour déterminer camp_alain : %r", fen, exc_info=True)
 
     # Attention (issue #93) : le parseur de cas (parser_cas) ne reconnaît que
     # des lignes de COMMENTAIRE ENTIÈRES ("#..." en début de ligne) — jamais

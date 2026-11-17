@@ -17,6 +17,7 @@ Ce script crée un dépôt git temporaire avec différents scénarios et teste :
 """
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -31,6 +32,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import version_info
 import coach_ratings
 import config
+
+logger = logging.getLogger("chesscoach.test_issue124")
 
 
 def create_test_git_repo(repo_path: Path, commits_spec: list) -> Path:
@@ -378,6 +381,7 @@ def test_new_log_entries():
                                                 "serie": "",
                                             }
                     except Exception:
+                        logger.debug("get_version_info_from_log_id_temp : lecture de %s", log_path, exc_info=True)
                         continue
             return {
                 "commit_hash": "inconnue",

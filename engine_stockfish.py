@@ -152,7 +152,7 @@ def _code_sortie_moteur(engine: chess.engine.SimpleEngine) -> int | None:
         if engine.returncode.done():
             return engine.returncode.result()
     except Exception:
-        pass
+        logger.debug("_code_sortie_moteur : returncode indisponible", exc_info=True)
     return None
 
 
@@ -652,7 +652,7 @@ class EngineManager:
                 try:
                     engine.close()
                 except Exception:
-                    pass
+                    logger.debug("relance moteur : fermeture de l'ancien moteur", exc_info=True)
                 try:
                     nouveau = creer()
                 except Exception as e_creation:
@@ -1582,7 +1582,7 @@ class EngineManager:
                 try:
                     engine.quit()
                 except Exception:
-                    pass
+                    logger.debug("EngineManager.quit() : arrêt d'un moteur", exc_info=True)
         self._engine_play = None
         self._engine_eval = None
         self._engine_pedagogique = None
