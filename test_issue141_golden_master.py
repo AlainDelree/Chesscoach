@@ -352,6 +352,12 @@ class TestGoldenMasterIssue141(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        # Arrêt explicite du moteur Stockfish AVANT la fin du process
+        # (issue #153) : sans lui, Python attend la fin des threads
+        # non-démons du moteur à la fermeture de l'interpréteur et le
+        # process ne se termine jamais (atexit de app.py ne suffit pas).
+        if cls.app_module.engine_manager:
+            cls.app_module.engine_manager.quit()
         _restaure_config_paths(cls._config_module, cls._anciens_config)
         cls._tmp.cleanup()
 
