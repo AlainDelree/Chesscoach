@@ -37,32 +37,77 @@ def test_css_rating_button():
         return False
 
 
+def _extract_block(content, start_marker, end_markers):
+    """Isole le code d'une fonction entre `start_marker` et le premier des
+    `end_markers` rencontré après lui (issue #155 : extraction utilitaire
+    partagée par plusieurs tests pour cibler précisément une fonction)."""
+    start = content.find(start_marker)
+    if start == -1:
+        return None
+    end = -1
+    for marker in end_markers:
+        pos = content.find(marker, start + len(start_marker))
+        if pos != -1 and (end == -1 or pos < end):
+            end = pos
+    if end == -1:
+        return content[start:]
+    return content[start:end]
+
+
 def test_board_js_signal_button():
-    """Test 2 : Vérifier que le bouton Signaler utilise socket.emit"""
+    """Test 2 : Vérifier que le bouton Signaler utilise socket.emit
+
+    Issue #122 a remplacé le bouton "Signaler" codé en direct dans
+    _coachRenderBubbleWithAgent par une délégation à la fonction partagée
+    _coachBuildSignalerUI (classe "coach-signaler-btn", variable locale
+    `btn`, champ de justification). Le test vérifie donc la délégation côté
+    bulle Claude et le comportement réel (socket.emit + passage à "Signalé")
+    côté fonction partagée, au lieu des noms littéraux `signalBtn`/
+    "coach-signal-btn" devenus obsolètes.
+    """
     print("\nTest 2 : Vérification du bouton Signaler dans _coachRenderBubbleWithAgent...")
     js_file = PROJECT_DIR / "static" / "board.js"
     content = js_file.read_text()
-    
-    # Vérifier que socket.emit est utilisé
-    if "socket.emit(\"signalement_envoyer\"" in content:
+
+    signaler_ui = _extract_block(
+        content, "function _coachBuildSignalerUI", ["function showBoardToast"]
+    )
+    if signaler_ui is None:
+        print("  ✗ _coachBuildSignalerUI non trouvée")
+        return False
+
+    # Vérifier que socket.emit est utilisé pour envoyer le signalement
+    if "socket.emit(\"signalement_envoyer\"" in signaler_ui:
         print("  ✓ socket.emit('signalement_envoyer') est présent")
-        
-        # Vérifier que _coachSignalClick n'est plus appelé
-        if "_coachSignalClick(signalData)" in content:
-            print("  ✗ _coachSignalClick est encore appelé")
-            return False
-        else:
-            print("  ✓ _coachSignalClick n'est plus appelé")
-        
-        # Vérifier que le bouton est marqué comme "Signalé"
-        if 'signalBtn.textContent = "Signalé"' in content:
-            print("  ✓ Le bouton est marqué comme 'Signalé' après clic")
-            return True
-        else:
-            print("  ✗ Le bouton n'est pas marqué comme 'Signalé'")
-            return False
     else:
         print("  ✗ socket.emit('signalement_envoyer') non trouvé")
+        return False
+
+    # Vérifier que _coachSignalClick n'est plus appelé (ancien gestionnaire
+    # pré-issue #122, remplacé par un socket.emit direct)
+    if "_coachSignalClick(signalData)" in content:
+        print("  ✗ _coachSignalClick est encore appelé")
+        return False
+    print("  ✓ _coachSignalClick n'est plus appelé")
+
+    # Vérifier que le bouton est marqué comme "Signalé" et désactivé après clic
+    if 'btn.textContent = "Signalé"' in signaler_ui and "btn.disabled = true" in signaler_ui:
+        print("  ✓ Le bouton est marqué comme 'Signalé' et désactivé après clic")
+    else:
+        print("  ✗ Le bouton n'est pas marqué comme 'Signalé'/désactivé")
+        return False
+
+    # Vérifier que _coachRenderBubbleWithAgent délègue bien à _coachBuildSignalerUI
+    bubble_func = _extract_block(
+        content,
+        "function _coachRenderBubbleWithAgent",
+        ["function _coachRenderMistralBubbleWithAgent"],
+    )
+    if bubble_func and "_coachBuildSignalerUI(bubble" in bubble_func:
+        print("  ✓ _coachRenderBubbleWithAgent délègue la construction du bouton à _coachBuildSignalerUI")
+        return True
+    else:
+        print("  ✗ _coachRenderBubbleWithAgent n'appelle plus _coachBuildSignalerUI")
         return False
 
 
@@ -93,37 +138,46 @@ def test_mistral_bubble_agent():
 
 
 def test_mistral_signal_button():
-    """Test 4 : Vérifier que le bouton Signaler est ajouté sous Mistral"""
+    """Test 4 : Vérifier que le bouton Signaler est ajouté sous Mistral
+
+    Issue #122 : le bouton n'est plus construit en direct (classe
+    "coach-signal-btn") dans _coachRenderMistralBubbleWithAgent, il est
+    délégué à _coachBuildSignalerUI (classe "coach-signaler-btn", champ de
+    justification). Le test vérifie donc la délégation avec les bonnes
+    métadonnées (fen, coup, log_id) côté bulle Mistral, et le comportement
+    réel (bouton "Signaler" + socket.emit) côté fonction partagée.
+    """
     print("\nTest 4 : Vérification du bouton Signaler sous Mistral...")
     js_file = PROJECT_DIR / "static" / "board.js"
     content = js_file.read_text()
-    
-    # Trouver la fonction _coachRenderMistralBubbleWithAgent
-    start = content.find("function _coachRenderMistralBubbleWithAgent")
-    if start == -1:
+
+    func_content = _extract_block(
+        content,
+        "function _coachRenderMistralBubbleWithAgent",
+        ["function _coachRenderMistralErrorWithAgent", "// Issue #113 : Afficher une erreur"],
+    )
+    if func_content is None:
         print("  ✗ Fonction _coachRenderMistralBubbleWithAgent non trouvée")
         return False
-    
-    # Trouver la fin de la fonction
-    end = content.find("function _coachRenderMistralErrorWithAgent", start)
-    if end == -1:
-        end = content.find("// Issue #113 : Afficher une erreur", start)
-    
-    func_content = content[start:end]
-    
-    # Vérifier que le bouton Signaler est créé
-    if "coach-signal-btn" in func_content and "Signaler" in func_content:
-        print("  ✓ Bouton Signaler est créé dans _coachRenderMistralBubbleWithAgent")
-        
-        # Vérifier que socket.emit est appelé
-        if "socket.emit(\"signalement_envoyer\"" in func_content:
-            print("  ✓ socket.emit est appelé pour le signalement")
-            return True
-        else:
-            print("  ✗ socket.emit n'est pas appelé")
-            return False
+
+    # Vérifier que la bulle Mistral délègue la construction du bouton Signaler
+    # à _coachBuildSignalerUI, avec les métadonnées nécessaires au signalement
+    if "_coachBuildSignalerUI(bubble" in func_content and "log_id: logId" in func_content:
+        print("  ✓ _coachRenderMistralBubbleWithAgent délègue à _coachBuildSignalerUI avec ses métadonnées")
     else:
-        print("  ✗ Bouton Signaler non trouvé dans _coachRenderMistralBubbleWithAgent")
+        print("  ✗ Bouton Signaler non délégué à _coachBuildSignalerUI dans _coachRenderMistralBubbleWithAgent")
+        return False
+
+    # Vérifier que la fonction partagée construit bien un bouton "Signaler"
+    # qui envoie le signalement via socket.emit
+    signaler_ui = _extract_block(
+        content, "function _coachBuildSignalerUI", ["function showBoardToast"]
+    )
+    if signaler_ui and "Signaler" in signaler_ui and "socket.emit(\"signalement_envoyer\"" in signaler_ui:
+        print("  ✓ _coachBuildSignalerUI crée le bouton 'Signaler' et appelle socket.emit")
+        return True
+    else:
+        print("  ✗ _coachBuildSignalerUI ne crée pas le bouton 'Signaler'/n'appelle pas socket.emit")
         return False
 
 

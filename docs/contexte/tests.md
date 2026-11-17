@@ -47,10 +47,7 @@ fichier fait `importlib.reload(app)` en cours de test, arrêter aussi
 l'ANCIEN `engine_manager` juste après le reload (la nouvelle instance
 remplace l'ancienne, qui resterait sinon orpheline).
 
-## Limites connues (non corrigées par l'issue #153, hors périmètre)
-- `test_issue121.py` échoue (4/6, préexistant, étranger à cette issue :
-  deux vérifications statiques sur `static/*.js` ne correspondent plus au
-  code actuel).
+## Limites connues
 - `test_lichess_formula.py` et `test_issue114.py` sont des scripts de
   simulation sans réelle assertion d'échec (le premier calcule un
   résultat `all_passed` mais ne le propage pas au code de sortie ; le
