@@ -12,8 +12,9 @@ informatif, pas d'erreur), même pattern que le livre Polyglot (issue #9).
 L'historique du correctif qui a mené le moteur du mode "travail de finales"
 à tourner en pleine force (avant l'issue #32, il réutilisait par erreur le
 moteur Elo limité du mode partie libre) est dans le changelog de l'issue #32
-— uniquement l'état actuel (moteur dédié, pleine force) est un invariant
-vivant, documenté dans le noyau CONTEXTE.md.
+— l'état actuel (moteur dédié, pleine force) est l'invariant vivant,
+documenté dans cette fiche (plus dans le noyau CONTEXTE.md depuis l'issue
+#151, qui se contente d'y renvoyer).
 
 # Accès distant via Tailscale (issue #49)
 
@@ -25,8 +26,10 @@ filtrage sont inchangés côté ThinkPad : l'alias `coach` continue d'ouvrir le
 navigateur en local comme avant.
 
 Pour ouvrir l'appli depuis le GSM (Tailscale actif des deux côtés) :
-`http://100.92.48.81:5000` (adresse Tailscale du ThinkPad thinkpadcarbon7).
-Le chat temps réel (Socket.IO) fonctionne aussi par cette adresse : la
+`http://<adresse-tailscale-du-thinkpad>:5000` (visible dans l'admin
+Tailscale d'Alain ou via `tailscale ip` sur la machine — non documentée en
+dur ici, dépôt public). Le chat temps réel (Socket.IO) fonctionne aussi par
+cette adresse : la
 vérification d'origine intégrée à Socket.IO compare l'Origin du navigateur
 au Host de la requête, donc elle s'aligne automatiquement sur l'adresse
 utilisée (locale ou Tailscale) sans configuration supplémentaire.
