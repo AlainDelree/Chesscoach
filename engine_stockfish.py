@@ -13,8 +13,8 @@ d'analyse assistée par Stockfish) :
     (find_lc0, find_maia_weights, maia_available, find_rodent,
     rodent_available, _ensure_executable, RODENT_*, MAIA_LEVELS).
 
-Seul changement fonctionnel : l'import de ENGINES_DIR, à câbler côté
-ChessCoach (voir NOTES_EXPORT.md).
+Seul changement fonctionnel : l'import de ENGINES_DIR, câblé depuis
+config.py.
 """
 
 import chess
