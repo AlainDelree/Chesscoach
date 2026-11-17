@@ -7,10 +7,14 @@ fichier personnel d'Alain n'est lu ni écrit : le jeu de données est fabriqué
 ici même (positions construites et validées par python-chess), jamais lu
 depuis data/erreurs_detectees.json réel.
 
-Issue #143, vérification (c) : aucun test de ce fichier n'est ignoré,
-désactivé ou conditionné par une variable d'environnement — Stockfish
-absent de la machine fait ÉCHOUER setUpClass (RuntimeError), il n'est
-jamais sauté (même convention que test_issue142_page_club.py).
+Issue #143, vérification (c) : Stockfish absent de la machine fait
+ÉCHOUER setUpClass (RuntimeError), il n'est jamais sauté pour cette
+raison (même convention que test_issue142_page_club.py). Seule exception
+(issue #153) : ce fichier est lent (~3 min, vrai Stockfish sur chaque
+position) et peut être sauté explicitement via la variable d'environnement
+CHESSCOACH_SKIP_SLOW_TESTS=1 (mode rapide du script
+scripts/lancer_tests.py) — ce saut-là est un choix de vitesse, pas un
+contournement de l'absence de Stockfish.
 
 Indépendant de app.py (jamais importé) : scripts/selection_club.py est un
 script autonome, sans route Flask ni appel IA.
@@ -20,6 +24,7 @@ Exécution isolée, comme les autres fichiers test_issue*.py de ce dépôt :
 """
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -128,6 +133,12 @@ def _fixture_erreurs() -> list:
     ]
 
 
+@unittest.skipIf(
+    os.environ.get("CHESSCOACH_SKIP_SLOW_TESTS") == "1",
+    "test lent sauté (CHESSCOACH_SKIP_SLOW_TESTS=1) : ~3 min de vrai "
+    "Stockfish — lancer sans cette variable, ou scripts/lancer_tests.py "
+    "--complet, pour l'exécuter (issue #153).",
+)
 class TestSelectionClub(unittest.TestCase):
 
     @classmethod

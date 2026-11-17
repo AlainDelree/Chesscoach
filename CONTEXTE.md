@@ -9,10 +9,9 @@
 - Suppression d'une alerte de sécurité (outil d'audit, grep de sécurité) :
   uniquement si faux positif déjà jugé, raison en clair + code précis dans
   `.audit.json` (`exceptions`) — jamais de suppression silencieuse.
-- Pas de suite de tests unique : chaque `test_*.py` se lance séparément
-  (`python3 -m unittest <fichier>`) — lancés ensemble, certains processus
-  ne se terminent pas proprement. `python3 -m py_compile <fichier>` pour
-  une vérification syntaxique rapide.
+- Suite de tests : `python3 scripts/lancer_tests.py` (`--rapide` pour
+  sauter les tests lents) — voir `docs/contexte/tests.md`.
+  `python3 -m py_compile <fichier>` pour une vérification rapide.
 - Toute modification de code passe par une issue Bridge_Agent
   (PROJET | chesscoach), même petite. CCL committe en local uniquement.
 
@@ -63,3 +62,4 @@ couleur) ; un nom de champ n'a qu'un sens — sinon le dire.
 - `page_club` — avant de toucher la page club ou `app_club.py`.
 - `lignes_calculees` — avant de toucher la longueur des lignes calculées
   (PV) ou le calcul de ce qui est « en prise ».
+- `tests` — avant d'ajouter un test ou de toucher le lanceur.
