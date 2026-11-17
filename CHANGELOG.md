@@ -11134,7 +11134,7 @@ demandées :
   `400 "Not an accepted origin."` toute origine tierce (vérifié par test
   manuel, cf. rapport de clôture de l'issue).
 - `CONTEXTE.md` : section ajoutée expliquant l'adresse à utiliser depuis le
-  GSM (`http://100.92.48.81:5000`, adresse Tailscale du ThinkPad
+  GSM (`http://<adresse-tailscale>:5000`, adresse Tailscale du ThinkPad
   thinkpadcarbon7) et le mécanisme de filtrage.
 - Rien ne change côté ThinkPad : l'alias `coach` continue d'ouvrir le
   navigateur en local (127.0.0.1 reste dans la liste blanche), même port
