@@ -17,9 +17,9 @@ Retiré par rapport à l'original :
 Ajouté pour ChessCoach :
   - `load_coach_memory` / `_build_memory_text` : un fichier de contexte JSON
     externe (mémoire du coach) est chargé et injecté dans le system prompt,
-    en plus du PGN/FEN de la partie du jour. Le schéma de ce fichier est
-    laissé libre côté ChessCoach (voir NOTES_EXPORT.md) — ce module se
-    contente de le sérialiser tel quel dans le prompt.
+    en plus du PGN/FEN de la partie du jour. Le schéma de ce fichier reste
+    libre côté ChessCoach — ce module se contente de le sérialiser tel quel
+    dans le prompt.
 """
 
 import json
